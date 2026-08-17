@@ -125,9 +125,9 @@ INVENTED_WEIGHT_PREFIXES = ("classifier", "bert.pooler")
 # The files a bundle this exporter published carries. `--out` is removed at the start of a
 # run so that a refusal cannot leave the previous approved ZIP beside a rejected directory,
 # so the predicate that decides what may be removed matters more than the list itself:
-# five of these are what `save_pretrained` leaves in a CHECKPOINT, and `--out` pointed at
-# one was measured deleting ~440 MB of trained weights. So removal requires the two
-# markers only this exporter writes, and any checkpoint member refuses the removal.
+# five of these are what `save_pretrained` leaves in a CHECKPOINT of ~440 MB, which a
+# predicate written over this list accepts. So removal requires the two markers only this
+# exporter writes, and any of the six `CHECKPOINT_MEMBERS` names, at any depth, refuses it.
 BUNDLE_MEMBERS = (
     "onnx/model_int8.onnx",
     "config.json",
@@ -148,6 +148,20 @@ CHECKPOINT_MEMBERS = (
 )
 FP32_STAGING_DIRECTORY = "_fp32"
 
+# What the staging directory holds at every instant of the ASSEMBLY: `_fp32` is created
+# first and is removed only after `onnx/model_int8.onnx` and `config.json` are written
+# (`build_bundle_into_staging`), so a run that died mid-assembly still carries one of the
+# two. The converse does NOT follow — a path carrying neither can be this exporter's own:
+# it is empty between `staging.mkdir` and the first write, and the failure path removes it
+# with `shutil.rmtree(..., ignore_errors=True)`, which does not guarantee the path is gone.
+# So the empty case is carved out as reusable (`assert_a_member_is_present`) and a NON-EMPTY
+# directory carrying neither is PRESERVED, not removed. Fail-closed on purpose, and the cost
+# is that this exporter's own leftovers can outlive it and have to be deleted by hand.
+#
+# The rest of `BUNDLE_MEMBERS` cannot be in this pair: `config.json` and `vocab.txt` alone
+# are names any model directory on disk carries, and a match here authorizes a removal.
+STAGING_DIRECTORY_MARKERS = (FP32_STAGING_DIRECTORY, "onnx/model_int8.onnx")
+
 # The parity gate's tolerance, and the floor the score spread has to clear.
 #
 # PARITY IS A CHECK OF SELF-CONSISTENCY, NOT OF VALIDITY, AND A DEGENERATE MODEL MAXIMIZES
@@ -162,6 +176,9 @@ FP32_STAGING_DIRECTORY = "_fp32"
 # satisfies it. The spread is therefore compared against the same tolerance the deltas are
 # compared against, and it is measured as an INTERQUARTILE spread: max − min is defeated by
 # one outlier, and 119 scores at 0.5 with one at 0.9 passed the gate with meanAbsDelta 0.
+#
+# What this reading does NOT catch, measured and left open: 72 scores at 0.5 with 28 at 0.9
+# have an interquartile spread of 0.4 and pass.
 PARITY_MEAN_DELTA_TOLERANCE = 0.02
 
 # The two labels of the sealed dataset, and what the parity sample has to carry of each.
@@ -237,7 +254,8 @@ def assert_config_declares_a_binary_classification_head(
 
     This does NOT prove the head was trained — nothing readable from `config.json` does.
     It refuses the checkpoint that has no head at all, the one whose head is not binary,
-    and the one whose labels are named in the inverted order.
+    the one whose labels are named in the inverted order, and the one that declares the
+    class COUNT without the order: `num_labels: 2` says nothing about which index is P(ai).
     """
     architectures = config.get("architectures")
     if architectures != [SEQUENCE_CLASSIFICATION_ARCHITECTURE]:
@@ -271,18 +289,24 @@ def assert_config_declares_a_binary_classification_head(
                 f"checkpoint {checkpoint} declares {field} {value!r}: the sealed head is "
                 "binary ({human: 0, ai: 1}), and the parity gate reads index 1 as P(ai)"
             )
-    if labels is not None:
-        named = {str(key): value for key, value in labels.items()}
-        if named != BINARY_LABEL_CONTRACT:
-            raise ValueError(
-                f"checkpoint {checkpoint} declares id2label {named!r} and not the sealed "
-                f"contract {BINARY_LABEL_CONTRACT!r}: train_detector.py writes the named "
-                f"order into the checkpoint, so neither an inverted mapping nor the "
-                f"{TRANSFORMERS_DEFAULT_LABELS!r} pair num_labels=2 leaves behind comes "
-                "from the sealed producer — and scripts/package-own-model.mjs stamps the "
-                "sealed contract into the served config, so the divergence would be "
-                "overwritten by a claim the weights contradict"
-            )
+    if labels is None:
+        raise ValueError(
+            f"checkpoint {checkpoint} declares num_labels {declared_labels!r} and no "
+            f"id2label, and the sealed contract is {BINARY_LABEL_CONTRACT!r}: the class "
+            "count says nothing about the ORDER, the runtime reads index 1 as P(ai), and "
+            "an undeclared order cannot be compared against that contract"
+        )
+    named = {str(key): value for key, value in labels.items()}
+    if named != BINARY_LABEL_CONTRACT:
+        raise ValueError(
+            f"checkpoint {checkpoint} declares id2label {named!r} and not the sealed "
+            f"contract {BINARY_LABEL_CONTRACT!r}: train_detector.py writes the named "
+            f"order into the checkpoint, so neither an inverted mapping nor the "
+            f"{TRANSFORMERS_DEFAULT_LABELS!r} pair num_labels=2 leaves behind comes "
+            "from the sealed producer — and scripts/package-own-model.mjs stamps the "
+            "sealed contract into the served config, so the divergence would be "
+            "overwritten by a claim the weights contradict"
+        )
 
 
 def count_vocabulary_entries(vocab_path: Path) -> int:
@@ -391,8 +415,9 @@ def assert_the_head_came_from_the_checkpoint(
         raise ValueError(
             f"checkpoint {checkpoint} did not carry {list(offenders)}: "
             "AutoModelForSequenceClassification built them at random and only warned, so "
-            "this artifact would score every text alike — meanAbsDelta 0, zero verdict "
-            "flips, parity PASS, and a constant detector in the ZIP"
+            "this artifact would score every text alike — meanAbsDelta 0 and zero verdict "
+            "flips, which is the reading the delta bound cannot separate from a faithful "
+            "quantization"
         )
     return offenders
 
@@ -536,17 +561,31 @@ def build_parity_report(
 
 
 def assert_no_checkpoint_is_at(directory: Path, what: str) -> None:
-    """Refuse to delete a directory that holds trained weights.
+    """Refuse to delete a directory where one of `CHECKPOINT_MEMBERS` appears, at any depth.
 
-    The measured accident: `--out bertimbau/best` carries `config.json`, `vocab.txt`,
-    `tokenizer.json` and two more of the bundle's own names, so a predicate written over
-    the bundle's file list accepts a checkpoint as a previous publication — and the weights
-    beside them cost another GPU run.
+    A `save_pretrained` directory carries `config.json`, `vocab.txt`, `tokenizer.json`,
+    `tokenizer_config.json` and `special_tokens_map.json` — five of the bundle's seven
+    names — so a predicate written over the bundle's file list accepts a checkpoint as a
+    previous publication. `shutil.rmtree` takes a subdirectory with it, so a checkpoint
+    below the top level is the same loss and the search is recursive.
+
+    The list is CLOSED, and weights under any other name do not stop the removal:
+    `save_pretrained` shards above `max_shard_size` (5 GB by default) into
+    `model-00001-of-00002.safetensors`, which is not one of the six. Declared residue,
+    accepted: the sealed backbone's checkpoint is ~440 MB, an order below that threshold,
+    so it is saved as a single `model.safetensors`; and `--out` aimed at or inside the
+    checkpoint is refused by `assert_out_is_not_the_checkpoint` before this predicate is
+    consulted at all.
     """
     if not directory.is_dir():
         raise ValueError(f"{what} {directory} exists and is not a directory")
     intruder = next(
-        (member for member in CHECKPOINT_MEMBERS if (directory / member).exists()), None
+        (
+            found.relative_to(directory).as_posix()
+            for member in CHECKPOINT_MEMBERS
+            for found in directory.rglob(member)
+        ),
+        None,
     )
     if intruder is not None:
         raise ValueError(
@@ -596,11 +635,32 @@ def assert_out_is_not_the_checkpoint(out: Path, checkpoint: Path) -> None:
 
 
 def assert_archive_is_ours_to_remove(archive: Path) -> None:
-    """The ZIP path is derived from `--out`, so a file there that is not a ZIP is not ours."""
-    if archive.exists() and not zipfile.is_zipfile(archive):
+    """The ZIP path is derived from `--out`, so what sits there has to carry the markers.
+
+    `zipfile.is_zipfile` reads whether the bytes are a ZIP, which any ZIP at that path
+    satisfies. The members this exporter writes are prefixed with the bundle's directory
+    name (see `zip_bundle`), so the markers are looked for as SUFFIXES of a member.
+    """
+    if not archive.exists():
+        return
+    if not zipfile.is_zipfile(archive):
         raise ValueError(
             f"{archive} exists and is not a ZIP: this run would delete it. Point --out at "
             "a fresh path"
+        )
+    with zipfile.ZipFile(archive) as handle:
+        names = handle.namelist()
+    absent = [
+        marker
+        for marker in PUBLISHED_BUNDLE_MARKERS
+        if not any(
+            name == marker or name.endswith(f"/{marker}") for name in names
+        )
+    ]
+    if absent:
+        raise ValueError(
+            f"the ZIP at {archive} carries no {absent}: this run would delete it. Point "
+            "--out at a fresh path"
         )
 
 
@@ -623,11 +683,11 @@ def clear_previous_publication(out: Path, archive: Path, staging: Path) -> list[
         removed.append(str(archive))
     if staging.exists():
         # A run that died in the middle leaves a PARTIAL bundle in staging, so this
-        # directory is recognized by ANY member it may hold at any step — including the
-        # fp32 scratch directory — and not by the published markers.
+        # directory is recognized by ANY member of the pair that spans the assembly, and
+        # not by the published markers.
         assert_no_checkpoint_is_at(staging, "the staging directory")
         assert_a_member_is_present(
-            staging, (*BUNDLE_MEMBERS, FP32_STAGING_DIRECTORY), "the staging directory"
+            staging, STAGING_DIRECTORY_MARKERS, "the staging directory"
         )
         shutil.rmtree(staging)
         removed.append(str(staging))
@@ -837,7 +897,17 @@ def draw_a_balanced_parity_sample(
             "score spread, and over a single class a trained detector is as flat as a "
             "constant one — the sample cannot tell them apart"
         )
-    per_label = min(limit // 2, min(len(found) for found in positions.values()))
+    scarcest = min(len(found) for found in positions.values())
+    per_label = min(limit // 2, scarcest)
+    if per_label * 2 < limit:
+        # The sample SHRINKS instead of refusing, because equal counts are what the floor
+        # needs and the file cannot be made to have more of its scarcer class. What the
+        # report would otherwise carry silently is `samples` below --parity-samples.
+        print(
+            f"  amostra de paridade reduzida a {per_label * 2} linhas de "
+            f"--parity-samples {limit}: --eval {path} carrega {scarcest} linhas da "
+            "classe menos numerosa"
+        )
     chosen = sorted(
         index
         for label in DATASET_LABELS

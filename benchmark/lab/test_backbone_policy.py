@@ -21,6 +21,7 @@ import json
 import shutil
 import sys
 import tempfile
+import types
 import unittest
 import zipfile
 from pathlib import Path
@@ -568,6 +569,19 @@ class ClassificationHeadContract(unittest.TestCase):
         self.assertIn("id2label", message)
         self.assertIn("index 1 as P(ai)", message)
 
+    def test_it_refuses_a_head_whose_label_order_is_not_declared(self) -> None:
+        # `num_labels: 2` declares the class COUNT and leaves the order out of the config.
+        # The runtime reads index 1 as P(ai), so the order has to be declared to be
+        # compared against the contract at all.
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = write_checkpoint(Path(tmp), "bert", drop=("id2label",))
+            with self.assertRaises(ValueError) as caught:
+                export_onnx.assert_checkpoint_matches_sealed_backbone(checkpoint)
+        message = str(caught.exception)
+        self.assertIn("id2label", message)
+        self.assertIn("num_labels 2", message)
+        self.assertIn(str(export_onnx.BINARY_LABEL_CONTRACT), message)
+
     def test_it_refuses_a_head_that_is_not_binary(self) -> None:
         for overrides in (
             {"num_labels": 3, "id2label": {"0": "a", "1": "b", "2": "c"}},
@@ -643,12 +657,29 @@ class ClassificationHeadContract(unittest.TestCase):
         self.assertEqual(train_detector.ID_TO_LABEL, {0: "human", 1: "ai"})
         self.assertEqual(train_detector.LABEL_TO_ID, {"human": 0, "ai": 1})
 
-    def test_the_training_script_writes_the_label_order_into_the_checkpoint(
-        self,
-    ) -> None:
-        source = inspect.getsource(train_detector.main)
-        self.assertIn("id2label=ID_TO_LABEL", source)
-        self.assertIn("label2id=LABEL_TO_ID", source)
+    def test_the_training_script_asks_for_the_sealed_head(self) -> None:
+        # Measured on the mapping the script hands `from_pretrained`, not on the text of
+        # the call: what the export gate reads is the SAVED order, and these three kwargs
+        # are what put it in the config.
+        kwargs = train_detector.sealed_head_kwargs()
+        self.assertEqual(kwargs["num_labels"], 2)
+        self.assertEqual(kwargs["id2label"], {0: "human", 1: "ai"})
+        self.assertEqual(kwargs["label2id"], {"human": 0, "ai": 1})
+        self.assertEqual(
+            {str(index): name for index, name in kwargs["id2label"].items()},
+            export_onnx.BINARY_LABEL_CONTRACT,
+        )
+        self.assertNotEqual(
+            kwargs["id2label"], export_onnx.TRANSFORMERS_DEFAULT_LABELS
+        )
+
+    def test_the_head_the_script_asks_for_is_the_one_main_loads(self) -> None:
+        # The call SITE, as text: this catches the kwargs being dropped from the call and
+        # cannot see a rebind. What the loader was HANDED is measured in
+        # `TrainMainWritesTheReceipt`, which drives `main` over a fake torch stack.
+        self.assertIn(
+            "**sealed_head_kwargs()", inspect.getsource(train_detector.main)
+        )
 
     def test_a_head_the_loader_invented_is_refused_naming_the_weights(self) -> None:
         with self.assertRaises(ValueError) as caught:
@@ -820,6 +851,42 @@ class TrainDetectorRefusals(unittest.TestCase):
 
     def test_the_receipt_is_what_main_writes(self) -> None:
         self.assertIn("training_receipt(", inspect.getsource(train_detector.main))
+
+    def test_the_metrics_file_reads_back_as_json(self) -> None:
+        receipt = train_detector.training_receipt(
+            SEALED_BACKBONE,
+            SEALED_SEED,
+            1,
+            {"auc": 0.9, "fpr_at_recall60": 0.01, "threshold": 0.7},
+            sealed_policy.read_sealed_policy(),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = train_detector.write_metrics(Path(tmp), receipt)
+            self.assertEqual(path.name, "metrics.json")
+            self.assertEqual(json.loads(path.read_bytes().decode("utf-8")), receipt)
+
+    def test_a_receipt_carrying_the_loaded_model_writes_no_file(self) -> None:
+        # The value the receipt used to be handed: `json.dumps` raises on it, the file is
+        # never created, and the line is only reached on an epoch that improved AUC — after
+        # `save_pretrained` has already written the weights.
+        class NotSerializable:
+            pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(TypeError):
+                train_detector.write_metrics(
+                    Path(tmp), {"model": NotSerializable(), "seed": SEALED_SEED}
+                )
+            self.assertFalse((Path(tmp) / "metrics.json").exists())
+
+    def test_the_receipt_is_handed_the_backbone_name_and_not_the_loaded_model(
+        self,
+    ) -> None:
+        # `main` cannot be run here (the receipt is written after an epoch of training), so
+        # the name the call passes is read from the source.
+        source = inspect.getsource(train_detector.main)
+        self.assertIn("training_receipt(backbone,", source)
+        self.assertNotIn("model = AutoModelForSequenceClassification", source)
 
 
 class ExportOnnxRefusals(unittest.TestCase):
@@ -1092,6 +1159,19 @@ class ParityIsNotEvidenceOfValidity(unittest.TestCase):
             export_onnx.build_parity_report(wider, list(wider))["degenerate"]
         )
 
+    def test_a_sample_flat_over_seventy_two_of_a_hundred_rows_still_passes(self) -> None:
+        # The measured LIMIT of the interquartile reading, recorded and not closed: the
+        # first and third quartiles straddle the two modes, so 72 rows at 0.5 and 28 at 0.9
+        # read as a spread of 0.4. Tightening the floor to the 5th-70th percentile pair
+        # refuses this sample, and moves the refusal boundary to between recall 0.50 and
+        # 0.60 on a balanced sample — beside the product metric's own floor.
+        scores = [0.5] * 72 + [0.9] * 28
+        report = export_onnx.build_parity_report(scores, list(scores))
+        self.assertAlmostEqual(report["torchScoreIqr"], 0.4)
+        self.assertEqual(report["meanAbsDelta"], 0.0)
+        self.assertFalse(report["degenerate"])
+        self.assertTrue(report["pass"])
+
     def test_a_flat_int8_side_is_degenerate_even_with_a_live_torch_side(self) -> None:
         report = export_onnx.build_parity_report(
             [0.0, 0.0, 1.0, 1.0, 1.0], [0.5] * 5
@@ -1201,6 +1281,28 @@ class ParitySampleCarriesBothClasses(unittest.TestCase):
         self.assertEqual(
             export_onnx.count_sample_labels(sample), {"0": 3, "1": 3}
         )
+
+    def test_a_sample_smaller_than_the_limit_names_both_numbers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_eval(Path(tmp) / "dev.jsonl", self.grouped(5, 3))
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                sample = export_onnx.read_parity_samples(path, 120)
+        announced = printed.getvalue()
+        self.assertEqual(len(sample), 6)
+        self.assertIn("6", announced)
+        self.assertIn("120", announced)
+        self.assertIn("3", announced)
+        self.assertIn(str(path), announced)
+
+    def test_a_sample_that_fills_the_limit_announces_no_reduction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_eval(Path(tmp) / "dev.jsonl", self.grouped(2640, 1478))
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                sample = export_onnx.read_parity_samples(path, 120)
+        self.assertEqual(len(sample), 120)
+        self.assertEqual(printed.getvalue(), "")
 
     def test_the_dev_split_in_this_checkout_is_grouped(self) -> None:
         # The measurement the guard exists for. `dev.jsonl` is gitignored, so what always
@@ -1443,6 +1545,20 @@ class BundleIsPublishedOnlyAfterEveryGuard(unittest.TestCase):
         # `vocab.txt`, `tokenizer.json`, `tokenizer_config.json` and
         # `special_tokens_map.json` — five of the bundle's seven names — so a predicate
         # written over that list accepted it and `shutil.rmtree` took the weights with it.
+        self.assertEqual(
+            [
+                name
+                for name in export_onnx.BUNDLE_MEMBERS
+                if name not in export_onnx.PUBLISHED_BUNDLE_MARKERS
+            ],
+            [
+                "config.json",
+                "vocab.txt",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "special_tokens_map.json",
+            ],
+        )
         for member in ("model.safetensors", "pytorch_model.bin", "training_args.bin"):
             with self.subTest(member=member):
                 if self.out.exists():
@@ -1463,6 +1579,157 @@ class BundleIsPublishedOnlyAfterEveryGuard(unittest.TestCase):
                 self.assertIn(member, message)
                 self.assertIn("training checkpoint", message)
                 self.assertTrue((self.out / member).is_file())
+
+    def test_a_nested_training_checkpoint_is_preserved(self) -> None:
+        # Both published markers at the top level and the weights one directory down: the
+        # marker check accepts the path as a previous publication, so the checkpoint search
+        # is what has to reach `backup/`.
+        self.out.mkdir()
+        (self.out / "onnx").mkdir()
+        (self.out / "onnx" / "model_int8.onnx").write_bytes(b"\x00")
+        (self.out / "parity_report.json").write_bytes(b"{}\n")
+        (self.out / "backup").mkdir()
+        (self.out / "backup" / "model.safetensors").write_bytes(b"\x00")
+        with self.assertRaises(ValueError) as caught:
+            self.publish(FakeBackend())
+        message = str(caught.exception)
+        self.assertIn("backup/model.safetensors", message)
+        self.assertIn("training checkpoint", message)
+        self.assertTrue((self.out / "backup" / "model.safetensors").is_file())
+
+    def test_a_weights_file_outside_the_named_list_does_not_stop_the_removal(
+        self,
+    ) -> None:
+        # DECLARED RESIDUE, ACCEPTED. The search is over the six `CHECKPOINT_MEMBERS`
+        # names, not over "weights": `save_pretrained` shards above `max_shard_size` (5 GB
+        # by default) into `model-00001-of-00002.safetensors`, and a directory carrying the
+        # two published markers plus a shard is removed. Out of reach for the sealed
+        # backbone — ~440 MB, one shard, `model.safetensors` — and `main` refuses earlier
+        # when `--out` is the checkpoint or sits inside it.
+        shard = "model-00001-of-00002.safetensors"
+        self.assertNotIn(shard, export_onnx.CHECKPOINT_MEMBERS)
+        self.out.mkdir()
+        (self.out / "onnx").mkdir()
+        (self.out / "onnx" / "model_int8.onnx").write_bytes(b"\x00")
+        (self.out / "parity_report.json").write_bytes(b"{}\n")
+        (self.out / shard).write_bytes(b"\x00")
+        self.publish(FakeBackend())
+        self.assertFalse((self.out / shard).exists())
+        self.assertTrue(self.archive.is_file())
+
+    def test_a_foreign_valid_zip_is_preserved(self) -> None:
+        # `zipfile.is_zipfile` answers whether the bytes are a ZIP, which any ZIP at that
+        # path satisfies. What separates ours is the two markers this exporter writes.
+        with zipfile.ZipFile(self.archive, "w") as foreign:
+            foreign.writestr("tese/capitulo-1.txt", "nao e um bundle\n")
+        preserved = self.archive.read_bytes()
+        with self.assertRaises(ValueError) as caught:
+            self.publish(FakeBackend())
+        message = str(caught.exception)
+        self.assertIn("onnx/model_int8.onnx", message)
+        self.assertIn("parity_report.json", message)
+        self.assertEqual(self.archive.read_bytes(), preserved)
+
+    def test_a_zip_carrying_one_of_the_two_markers_is_preserved(self) -> None:
+        with zipfile.ZipFile(self.archive, "w") as half:
+            half.writestr("cleanfeed-ptbr-v1/parity_report.json", "{}\n")
+        preserved = self.archive.read_bytes()
+        with self.assertRaises(ValueError) as caught:
+            self.publish(FakeBackend())
+        message = str(caught.exception)
+        self.assertIn("onnx/model_int8.onnx", message)
+        self.assertNotIn("'parity_report.json'", message)
+        self.assertEqual(self.archive.read_bytes(), preserved)
+
+    def test_a_staging_archive_left_by_a_crashed_run_is_removed(self) -> None:
+        # The second call site of the same predicate, and the one that fixes how the
+        # markers are matched: `zip_bundle` writes them under the bundle's directory name,
+        # so the members are `cleanfeed-ptbr-v1/onnx/model_int8.onnx` and not the bare
+        # marker.
+        staging_archive = self.archive.with_name(
+            f"{self.archive.stem}.staging{self.archive.suffix}"
+        )
+        with zipfile.ZipFile(staging_archive, "w") as leftover:
+            leftover.writestr("cleanfeed-ptbr-v1/onnx/model_int8.onnx", "\x00")
+            leftover.writestr("cleanfeed-ptbr-v1/parity_report.json", "{}\n")
+        self.publish(FakeBackend())
+        self.assertTrue(self.archive.is_file())
+        self.assertFalse(staging_archive.exists())
+
+    def test_a_staging_path_carrying_only_names_any_model_directory_has_is_refused(
+        self,
+    ) -> None:
+        # `config.json` and `vocab.txt` are members of the bundle AND of every model
+        # directory on disk, so neither can be what identifies this exporter's staging.
+        self.staging.mkdir()
+        (self.staging / "config.json").write_bytes(b"{}\n")
+        (self.staging / "vocab.txt").write_bytes(b"tok0\n")
+        with self.assertRaises(ValueError) as caught:
+            self.publish(FakeBackend())
+        self.assertIn("the staging directory", str(caught.exception))
+        self.assertTrue((self.staging / "config.json").is_file())
+
+    def test_a_staging_directory_left_after_the_fp32_scratch_was_removed_is_removed(
+        self,
+    ) -> None:
+        # The other end of the assembly: `_fp32` is deleted only once the int8 graph and
+        # the config are in place, so a run that died after that leaves this state.
+        (self.staging / "onnx").mkdir(parents=True)
+        (self.staging / "onnx" / "model_int8.onnx").write_bytes(b"\x00")
+        (self.staging / "config.json").write_bytes(b"{}\n")
+        self.publish(FakeBackend())
+        self.assertTrue(self.archive.is_file())
+        self.assertFalse(self.staging.exists())
+
+    def test_one_of_the_staging_markers_is_present_at_every_step(self) -> None:
+        # The pair only recognizes the staging directory if one of the two is always there,
+        # which is what makes `_fp32` and `onnx/model_int8.onnx` the pair: the scratch
+        # directory is created first and deleted only once the int8 graph is written.
+        staging = self.staging
+        observed: list[tuple[str, bool]] = []
+
+        def recognized() -> bool:
+            if not staging.is_dir() or not any(staging.iterdir()):
+                return True
+            return any(
+                (staging / marker).exists()
+                for marker in export_onnx.STAGING_DIRECTORY_MARKERS
+            )
+
+        class Watching(FakeBackend):
+            def export_fp32(self, fp32_dir: Path) -> Path:
+                observed.append(("export_fp32", recognized()))
+                return super().export_fp32(fp32_dir)
+
+            def quantize(self, source: Path, target: Path) -> None:
+                observed.append(("quantize", recognized()))
+                super().quantize(source, target)
+
+            def save_tokenizer(self, bundle: Path) -> None:
+                observed.append(("save_tokenizer", recognized()))
+                super().save_tokenizer(bundle)
+
+            def graph_inputs(self, model_path: Path) -> tuple[str, ...]:
+                observed.append(("graph_inputs", recognized()))
+                return super().graph_inputs(model_path)
+
+            def score(self, text: str) -> tuple[float, float]:
+                observed.append(("score", recognized()))
+                return super().score(text)
+
+        self.publish(Watching())
+        self.assertEqual(
+            [step for step, _ in observed],
+            [
+                "export_fp32",
+                "quantize",
+                "save_tokenizer",
+                "graph_inputs",
+                "score",
+                "score",
+            ],
+        )
+        self.assertEqual([step for step, ok in observed if not ok], [])
 
     def test_a_previous_publication_missing_one_marker_is_refused(self) -> None:
         # A published bundle carries BOTH markers this exporter writes; anything else at
@@ -1496,6 +1763,16 @@ class BundleIsPublishedOnlyAfterEveryGuard(unittest.TestCase):
             self.publish(FakeBackend())
         self.assertIn("the staging directory", str(caught.exception))
         self.assertTrue((self.staging / "tese.docx").is_file())
+
+    def test_an_empty_staging_directory_is_reused(self) -> None:
+        # The state the exporter itself is in between `staging.mkdir` and the first write:
+        # it carries neither marker and it IS ours, so the pair cannot be read as "carries
+        # neither, therefore foreign". The empty case is carved out and reused; a non-empty
+        # one carrying neither is preserved, which is the test directly above.
+        self.staging.mkdir()
+        self.publish(FakeBackend())
+        self.assertTrue(self.archive.is_file())
+        self.assertFalse(self.staging.exists())
 
     def test_a_staging_directory_left_by_a_crashed_run_is_removed(self) -> None:
         self.staging.mkdir()
@@ -1727,6 +2004,268 @@ class GuardCallSites(unittest.TestCase):
         ):
             with self.subTest(call=call):
                 self.assertIn(call, flow)
+
+
+class Batch:
+    """The tensor operations `train_detector.main` performs, and nothing else.
+
+    Device moves and `float()`/`cpu()` return self because nothing here computes; `[:, 1]`
+    is the column read `main` does on the softmax output, and it is the only subscript with
+    a meaning of its own.
+    """
+
+    def __init__(self, rows: list) -> None:
+        self.rows = list(rows)
+
+    def to(self, _device) -> "Batch":
+        return self
+
+    def cpu(self) -> "Batch":
+        return self
+
+    def float(self) -> "Batch":
+        return self
+
+    def tolist(self) -> list:
+        return list(self.rows)
+
+    def item(self) -> float:
+        return float(self.rows[0])
+
+    def __getitem__(self, key):
+        if key == (slice(None), 1):
+            return Batch([row[1] for row in self.rows])
+        return self.rows[key]
+
+
+class FakeDetector:
+    """The loaded model, replaced by bookkeeping: what is under test is what `main` WRITES.
+
+    Not JSON-serializable, and it has to stay that way: if this object ever reaches the
+    receipt, `write_metrics` raises instead of writing, and anything serializable in its
+    place would let that pass.
+    """
+
+    def __init__(self, backbone: str, head_kwargs: dict) -> None:
+        self.backbone = backbone
+        self.head_kwargs = head_kwargs
+        self.saved_to: list[Path] = []
+
+    def to(self, _device) -> "FakeDetector":
+        return self
+
+    def train(self) -> None:
+        pass
+
+    def eval(self) -> None:
+        pass
+
+    def parameters(self) -> list:
+        return []
+
+    def __call__(self, **encoding):
+        rows = len(encoding["input_ids"].rows)
+        return types.SimpleNamespace(logits=Batch([[0.4, 0.6]] * rows))
+
+    def save_pretrained(self, directory: Path) -> None:
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        (Path(directory) / "config.json").write_bytes(b"{}\n")
+        self.saved_to.append(Path(directory))
+
+
+class FakeTokenizer:
+    def __init__(self, backbone: str) -> None:
+        self.backbone = backbone
+
+    def __call__(self, texts, **_kwargs) -> dict:
+        return {"input_ids": Batch(list(texts))}
+
+    def save_pretrained(self, directory: Path) -> None:
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        (Path(directory) / "tokenizer.json").write_bytes(b"{}\n")
+
+
+class FakeLoader:
+    """Batches the dataset through its own `__getitem__` and through `collate_fn`.
+
+    A real loader is not needed, but the two objects `main` defines inline — `Rows` and
+    `collate` — are, so they are driven instead of replaced. `shuffle` is accepted and
+    ignored: the order of the batches changes nothing the receipt records.
+    """
+
+    def __init__(self, dataset, *, batch_size: int, collate_fn, shuffle: bool = False):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.collate_fn = collate_fn
+
+    def __len__(self) -> int:
+        return -(-len(self.dataset) // self.batch_size)
+
+    def __iter__(self):
+        for start in range(0, len(self.dataset), self.batch_size):
+            stop = min(start + self.batch_size, len(self.dataset))
+            yield self.collate_fn([self.dataset[index] for index in range(start, stop)])
+
+
+class Recorded:
+    """What the fake stack saw, so an assertion can be written over it."""
+
+    def __init__(self) -> None:
+        self.detectors: list[FakeDetector] = []
+        self.tokenizers: list[FakeTokenizer] = []
+        self.seeds: list[int] = []
+
+
+@contextlib.contextmanager
+def a_fake_torch_stack(*, auc: float = 0.9):
+    """Stand in for torch, numpy, sklearn and transformers while `main` runs.
+
+    `main` imports them INSIDE the function, after the policy guards, so replacing the
+    entries in `sys.modules` is enough and no real wheel is imported: without this the test
+    would download ~440 MB and train. The submodule keys are what the `from` imports read —
+    `torch.utils.data` resolves out of `sys.modules` without its parent package.
+    """
+    recorded = Recorded()
+
+    def load_model(backbone: str, **head_kwargs):
+        detector = FakeDetector(backbone, head_kwargs)
+        recorded.detectors.append(detector)
+        return detector
+
+    def load_tokenizer(backbone: str):
+        tokenizer = FakeTokenizer(backbone)
+        recorded.tokenizers.append(tokenizer)
+        return tokenizer
+
+    torch = types.ModuleType("torch")
+    torch.float = "float32"
+    torch.manual_seed = recorded.seeds.append
+    torch.tensor = lambda values, dtype=None: Batch(values)
+    torch.softmax = lambda tensor, dim: tensor
+    torch.no_grad = contextlib.nullcontext
+    torch.autocast = lambda **_kwargs: contextlib.nullcontext()
+    torch.nn = types.SimpleNamespace(
+        CrossEntropyLoss=lambda weight=None: (lambda logits, labels: Batch([0.5]))
+    )
+    torch.optim = types.SimpleNamespace(
+        AdamW=lambda parameters, lr, weight_decay: types.SimpleNamespace(
+            zero_grad=lambda: None
+        )
+    )
+    torch.cuda = types.SimpleNamespace(
+        is_available=lambda: False,
+        amp=types.SimpleNamespace(
+            GradScaler=lambda enabled=False: types.SimpleNamespace(
+                scale=lambda loss: types.SimpleNamespace(backward=lambda: None),
+                step=lambda optimizer: None,
+                update=lambda: None,
+            )
+        ),
+    )
+
+    data = types.ModuleType("torch.utils.data")
+    data.Dataset = type("Dataset", (), {})
+    data.DataLoader = FakeLoader
+
+    numpy = types.ModuleType("numpy")
+    numpy.random = types.SimpleNamespace(seed=lambda seed: None)
+
+    metrics = types.ModuleType("sklearn.metrics")
+    metrics.roc_auc_score = lambda labels, scores: auc
+
+    transformers = types.ModuleType("transformers")
+    transformers.AutoModelForSequenceClassification = types.SimpleNamespace(
+        from_pretrained=load_model
+    )
+    transformers.AutoTokenizer = types.SimpleNamespace(from_pretrained=load_tokenizer)
+    transformers.get_linear_schedule_with_warmup = (
+        lambda optimizer, warmup, total: types.SimpleNamespace(step=lambda: None)
+    )
+
+    with mock.patch.dict(
+        sys.modules,
+        {
+            "torch": torch,
+            "torch.utils.data": data,
+            "numpy": numpy,
+            "sklearn.metrics": metrics,
+            "transformers": transformers,
+        },
+    ):
+        yield recorded
+
+
+class TrainMainWritesTheReceipt(unittest.TestCase):
+    """`main` is driven past the torch imports, and the receipt is read off the DISK.
+
+    A text assertion over `inspect.getsource(main)` cannot see a rebind of `backbone` after
+    the model is loaded, and the tests over `training_receipt` and `write_metrics` never
+    reach `main`. So what the receipt carries is measured where it lands: `metrics.json`.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.outdir = self.root / "checkpoints"
+        self.train = write_eval(self.root / "train.jsonl", both_classes(4))
+        self.dev = write_eval(self.root / "dev.jsonl", both_classes(4))
+
+    def run_train_main(self) -> None:
+        argv = [
+            "train_detector.py",
+            "--train",
+            str(self.train),
+            "--dev",
+            str(self.dev),
+            "--outdir",
+            str(self.outdir),
+            "--epochs",
+            "1",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(io.StringIO()):
+                train_detector.main()
+
+    def test_main_writes_the_backbone_name_into_the_metrics_file(self) -> None:
+        with a_fake_torch_stack(auc=0.9) as recorded:
+            self.run_train_main()
+        receipt = json.loads(
+            (self.outdir / "metrics.json").read_bytes().decode("utf-8")
+        )
+        self.assertEqual(receipt["model"], SEALED_BACKBONE)
+        self.assertEqual(receipt["seed"], SEALED_SEED)
+        self.assertEqual(receipt["epoch"], 1)
+        self.assertEqual(receipt["auc"], 0.9)
+        self.assertEqual(
+            receipt["policySha256"],
+            hashlib.sha256(POLICY_PATH.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            [detector.backbone for detector in recorded.detectors], [SEALED_BACKBONE]
+        )
+
+    def test_main_asks_the_loader_for_the_sealed_head(self) -> None:
+        with a_fake_torch_stack() as recorded:
+            self.run_train_main()
+        self.assertEqual(
+            [detector.head_kwargs for detector in recorded.detectors],
+            [train_detector.sealed_head_kwargs()],
+        )
+
+    def test_main_saves_the_weights_and_the_tokenizer_beside_the_receipt(self) -> None:
+        with a_fake_torch_stack() as recorded:
+            self.run_train_main()
+        self.assertEqual(
+            [str(path) for path in recorded.detectors[0].saved_to],
+            [str(self.outdir / "best")],
+        )
+        self.assertTrue((self.outdir / "best" / "tokenizer.json").is_file())
+        self.assertEqual(
+            [tokenizer.backbone for tokenizer in recorded.tokenizers],
+            [SEALED_BACKBONE],
+        )
+        self.assertEqual(recorded.seeds, [SEALED_SEED])
 
 
 if __name__ == "__main__":

@@ -8342,3 +8342,116 @@ independentemente, batendo com o node.
 Uma nota de disciplina: a suíte inteira pegou uma falha que os dois agentes não podiam ver, porque cada um
 rodou só os seus arquivos. Era a linha do digest, que é de quem integra — mas o padrão vale: **rodada
 parcial verde não é suíte verde.**
+
+---
+
+## A onda do dano irreversível: cinco unidades antigas revisadas, e onde eu parei (2026-08-17)
+
+O operador mandou manter o codex na revisão gastando menos, e depois seguir com a implementação em série.
+Isto registra o que fechou, o que ficou aberto com o ataque escrito, e a decisão de parar.
+
+### A economia, medida nas sete unidades
+
+| | rodada de 09/08 | as duas de 16/08 | as cinco de 17/08 |
+|---|---|---|---|
+| tokens por unidade | 245.145 a 487.438 | 70.939 e 34.886 | 16.437 a 158.080 |
+| comandos | 51 a 89 | 12 e 2 | 0 a 13 |
+| total | 3.102.744 por oito | 105.825 por duas | **425.518 por cinco** |
+
+Sete unidades por 531 mil tokens, contra os ~2,7 milhões que a forma antiga custaria. A causa do
+desperdício antigo estava medida: 99 % do transcrito era saída de comando, e um único `rg -C 8` sem teto
+devolveu 1,04 MB que viajava em cada passo do laço. O esforço de raciocínio ficou em `xhigh` por decisão do
+operador — o desperdício não estava ali.
+
+O caso extremo é o E2: **zero comandos, 16.437 tokens**, revisão feita inteira do diff inline. E o contrato
+dele foi o primeiro a criar o rótulo `INVERSO` para a linha de bateria que a fonte sustenta pela medição
+inversa; a conferência disse que devia ser o padrão dos cinco, e apliquei.
+
+### O veredito sobre o processo, e ele é duro
+
+**16 bloqueantes e 16 menores nas cinco.** Verificação local por mutação: **35 medidos, 24 reais, 9 com
+escopo diferente, 2 refutados, ZERO já consertados a jusante** — todos ainda vivos em disco, mais de cem
+commits depois.
+
+E nenhum deles havia sido pego pelas lentes que aprovaram as mesmas unidades **com bateria de mutação**. A
+razão, medida e já registrada na seção anterior: a bateria responde *"a guarda morde?"* e nunca *"a frase ao
+lado é verdadeira?"*. Comentário falso não tem mutante.
+
+### O que fechou, com prova
+
+**Cinco bloqueantes de caminho destrutivo no exportador.** A proteção contra checkpoint passou a buscar em
+qualquer profundidade (`rglob`) e nomeia o caminho relativo; o ZIP passou a exigir os marcadores publicados
+como sufixo de algum membro, com a frase fraca — *o ZIP em `<path>` não carrega os dois marcadores* — e nunca
+autoria; o reconhecimento de staging trocou a lista de nomes genéricos pela dupla que a montagem carrega em
+qualquer instante (`_fp32`, `onnx/model_int8.onnx`), medida passo a passo; `id2label` ausente com
+`num_labels: 2` virou recusa; e `train_detector` deixou de entregar o objeto PyTorch onde esperava o nome do
+backbone, com `write_metrics` extraída e amarrada a `main` por teste que fica vermelho sob
+`backbone = detector`.
+
+Sete testes novos ficam vermelhos contra o código antigo, com o motivo conferido — `ValueError not raised`
+nos quatro do exportador. E dez mutações, **todas por acréscimo**, com a precaução de `rmtree` respeitada:
+nenhuma medição precisou apagar nada fora do temporário.
+
+**A amarração do corte, na fronteira do processo e na do CLI.** O corte abençoado antes da lease viaja como
+digesto até quem decide; a retomada o confere contra o recibo **antes** de reescrevê-lo; e uma invocação
+fresca sobre bloco que aquele ledger registra como gasto é recusada **antes** do write.
+
+Duas alternativas foram medidas e **rejeitadas**, e as razões valem mais que o conserto:
+- adquirir a lease antes de escrever o recibo **funciona** (59/59 verdes) e foi recusada por **custo**: move
+  um write falível para depois do passo de mão única, e o próprio cabeçalho do comando diz que a recusa antes
+  da lease "costs the run and nothing else";
+- recusar a sobrescrita do recibo **não serve**: apagar o `pre-exposure-check.json` é o mesmo acesso a disco
+  que a troca do corte exige. *"(b) protege um arquivo com um arquivo."*
+A terceira forma — ancorar no **ledger append-only**, que não vive no `--work-dir` — é a que o código
+sustenta, e reusa `HOLDOUT_ALREADY_CONSUMED` de propósito: é o mesmo fato, reportado mais cedo.
+
+No CLI, o cenário novo dirige `evaluate` por `runCli` sobre manifesto `release` e afere a recusa; ele fica
+vermelho sob as **três** variantes de suprimento — no `buildEvaluate`, no nível acima, e no nível abaixo.
+
+### As quatro regras de método, e a quarta nasceu aqui
+
+1. **Toda sentença declarativa é especificação** — comentário falso não tem mutante.
+2. **A mutação que prova tem de INTRODUZIR um X novo**, nunca alterar um existente.
+3. **A frase substituta também é especificação** — prefira a mais fraca que se afere.
+4. **A prova de ordem tem de cobrir a fronteira do PROCESSO, não só a do fluxo** — e a volta seguinte
+   mostrou que ela é incompleta: falta a fronteira do **ARGUMENTO**. Um argumento correto sobre a sequência
+   de linhas não diz nada sobre duas invocações; e um correto sobre duas invocações não diz nada sobre os
+   parâmetros que o chamador escolhe.
+
+Três voltas de conserto, e cada uma fechou de verdade o que a anterior mediu e foi atacada numa fronteira
+nova. Uma disciplina que vale registrar: numa delas o implementador rodou uma mutação que saiu **verde** e,
+em vez de declarar a asserção furada, diagnosticou que **o mutante era inerte** — o `raise` seguia
+executando — e refez. Noutra, ele achou por conta própria uma frase da própria onda que era falsa sobre o
+código atual e a cortou.
+
+### Onde eu parei, e por quê
+
+A terceira volta devolveu `block` com três bloqueantes: dois são a **fronteira do argumento** — o recibo é
+chaveado só pelo `--work-dir` e não nomeia bloco algum — e o terceiro era a linha do digest, minha.
+
+Parei aqui, com autorização do operador, e a razão é a assimetria: **o mecanismo forte com a limitação
+declarada vale mais que a frase perfeita não entregue.** Cinco caminhos destrutivos fechados são dano
+irreversível a menos no repositório, hoje. As duas sequências que ficam abertas estão medidas, escritas na
+§ 7 com o ataque reproduzível, e — o que importa mais — **as frases que alegavam o contrário saíram do
+código**. A prosa do `consume-holdout` agora diz o que é aferido (o escopo é o ledger apontado) e nomeia o
+resíduo (os dois argumentos que o chamador escolhe).
+
+Fechar aquilo exige o recibo chaveado pela consumação, que é unidade própria com os três portões — e tem de
+vir **antes** de `consume-holdout` ser apertado, não depois.
+
+### Medições de fechamento
+
+vitest **172 arquivos / 3.079 testes** verde em rodada única; pytest do lab **705 / 480 subtests**; `tsc`
+limpo; prettier limpo; lint nos mesmos 12 pré-existentes; `docs:check` 207/207; sem CRLF.
+`evaluatorDigest` `bff3e1c0…` → `8e6dac1363454120693b22a2213da0699ac4b4c4a63869756543d51b6b732a1e`,
+recomputado por mim depois das minhas próprias edições de prosa.
+
+Uma nota que a lente ganhou: a onda declarou a árvore verde tendo um teste **vermelho** que o HEAD não
+tinha — era a linha do digest, que é de quem integra, mas a alegação de verde estava errada como escrita.
+**Rodada parcial verde não é suíte verde**, e é a segunda vez que isso aparece nesta sessão.
+
+### O que fica na fila
+
+A onda 2 — Commit E, Commit F e E2 — com quatro bloqueantes menos graves e os menores restantes, todos
+verificados e com remédio nomeado. E as cinco unidades continuam devendo o **fechamento** do que ficou
+aberto, não uma revisão nova: o codex já as julgou.

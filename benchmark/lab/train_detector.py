@@ -128,6 +128,29 @@ def training_receipt(
     }
 
 
+def sealed_head_kwargs() -> dict:
+    """The head `from_pretrained` is asked to build: two classes AND the named order.
+
+    `num_labels=2` alone saves the anonymous `LABEL_0`/`LABEL_1` pair, which export_onnx.py
+    refuses: the order is what the runtime reads as P(ai), and a checkpoint that declares
+    only the count leaves it to the packaging step to stamp a claim over.
+    """
+    return {"num_labels": 2, "id2label": ID_TO_LABEL, "label2id": LABEL_TO_ID}
+
+
+def write_metrics(outdir: Path, receipt: dict) -> Path:
+    """Write `metrics.json`, and refuse to write a receipt JSON cannot carry.
+
+    `json.dumps` runs before the file is opened, so a value it cannot serialize — the
+    LOADED torch model, when the receipt is handed the rebound name instead of the backbone
+    string — raises instead of leaving a truncated receipt beside the saved weights.
+    """
+    path = outdir / "metrics.json"
+    serialized = json.dumps(receipt, indent=2) + "\n"
+    path.write_text(serialized, encoding="utf-8")
+    return path
+
+
 def read_jsonl(path: Path) -> list[dict]:
     with path.open(encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
@@ -176,7 +199,7 @@ def main() -> None:
     policy = sealed_policy()
     args = build_parser().parse_args()
     print(announce(policy))
-    model = the_sealed_backbone_or_refuse(args.model)
+    backbone = the_sealed_backbone_or_refuse(args.model)
     seed = the_publishable_seed_or_refuse(args.seed)
 
     import numpy as np
@@ -202,12 +225,14 @@ def main() -> None:
         dev_rows = dev_rows[:200]
         args.epochs = 1
         args.max_length = 128
-    print(f"train={len(train_rows)} dev={len(dev_rows)} model={model}")
+    print(f"train={len(train_rows)} dev={len(dev_rows)} model={backbone}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    tokenizer = AutoTokenizer.from_pretrained(model)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model, num_labels=2, id2label=ID_TO_LABEL, label2id=LABEL_TO_ID
+    tokenizer = AutoTokenizer.from_pretrained(backbone)
+    # A separate name from `backbone`: the receipt below records the backbone STRING, and a
+    # rebind here would hand `json.dumps` the loaded module instead.
+    detector = AutoModelForSequenceClassification.from_pretrained(
+        backbone, **sealed_head_kwargs()
     ).to(device)
 
     class Rows(Dataset):
@@ -247,7 +272,7 @@ def main() -> None:
     dev_loader = DataLoader(
         Rows(dev_rows), batch_size=args.batch * 2, shuffle=False, collate_fn=collate
     )
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(detector.parameters(), lr=args.lr, weight_decay=0.01)
     total_steps = len(loader) * args.epochs
     scheduler = get_linear_schedule_with_warmup(
         optimizer, int(total_steps * 0.06), total_steps
@@ -255,13 +280,13 @@ def main() -> None:
     scaler = torch.cuda.amp.GradScaler(enabled=device == "cuda")
 
     def evaluate() -> dict:
-        model.eval()
+        detector.eval()
         scores: list[float] = []
         labels: list[int] = []
         with torch.no_grad():
             for encoding, batch_labels in dev_loader:
                 encoding = {k: v.to(device) for k, v in encoding.items()}
-                logits = model(**encoding).logits
+                logits = detector(**encoding).logits
                 probs = torch.softmax(logits.float(), dim=-1)[:, 1]
                 scores.extend(probs.cpu().tolist())
                 labels.extend(batch_labels.tolist())
@@ -272,14 +297,14 @@ def main() -> None:
     best_auc = -1.0
     args.outdir.mkdir(parents=True, exist_ok=True)
     for epoch in range(1, args.epochs + 1):
-        model.train()
+        detector.train()
         running = 0.0
         for step, (encoding, batch_labels) in enumerate(loader, start=1):
             encoding = {k: v.to(device) for k, v in encoding.items()}
             batch_labels = batch_labels.to(device)
             optimizer.zero_grad()
             with torch.autocast(device_type=device, enabled=device == "cuda"):
-                logits = model(**encoding).logits
+                logits = detector(**encoding).logits
                 loss = loss_fn(logits, batch_labels)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -292,15 +317,11 @@ def main() -> None:
         print(f"epoch {epoch}: {json.dumps(metrics)}")
         if metrics["auc"] > best_auc:
             best_auc = metrics["auc"]
-            model.save_pretrained(args.outdir / "best")
+            detector.save_pretrained(args.outdir / "best")
             tokenizer.save_pretrained(args.outdir / "best")
-            (args.outdir / "metrics.json").write_text(
-                json.dumps(
-                    training_receipt(model, seed, epoch, metrics, policy),
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
+            write_metrics(
+                args.outdir,
+                training_receipt(backbone, seed, epoch, metrics, policy),
             )
     print(f"melhor AUC dev: {best_auc:.4f} -> {args.outdir / 'best'}")
 

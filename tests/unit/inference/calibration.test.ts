@@ -366,6 +366,34 @@ describe("decideWithProfile", () => {
     expect(outcome.presentationAllowed).toBe(false);
   });
 
+  // The DOCUMENT half of the disabled encoding, which the two cases around it never
+  // reach: both serve the pre-registered cut on `documentIndicator`, so the only trigger
+  // that was ever measured against a 1 is the localized one. A profile whose document
+  // indicator is the sentinel is what a `reject` publication would have to be read as —
+  // and a bare `score >= threshold` there would accuse every saturated document while the
+  // release estimated the false-positive rate of nothing at all.
+  it("fires no document trigger against a disabled indicator, at a saturated score of 1", () => {
+    const { outcome } = decideWithProfile(
+      decideInput({
+        lookup: foundLookup({
+          thresholds: {
+            documentIndicator: DISABLED_THRESHOLD,
+            localizedIndicator: DISABLED_THRESHOLD,
+            documentAction: DISABLED_THRESHOLD,
+          },
+        }),
+        aggregation: agg(1, 1),
+      }),
+    );
+    expect(outcome.triggers).toEqual([]);
+    expect(outcome.status).toBe("probably_human");
+    expect(outcome.presentationAllowed).toBe(false);
+    // `actions` is the rollout of `decideInput`, so the ceiling is not held down by the
+    // rollout: nothing fired, and a decision nothing fired for presents nothing.
+    expect(outcome.abstained).toBe(false);
+    expect(outcome.actionCeiling).toBe("indicator");
+  });
+
   // The other half of the same encoding: a document score of exactly 1 fires the
   // indicator it was measured against and STILL authorizes no action, because the action
   // threshold is off rather than merely high.

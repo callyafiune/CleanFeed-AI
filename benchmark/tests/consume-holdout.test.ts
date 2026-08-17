@@ -14,6 +14,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -41,7 +42,11 @@ import {
   type ConsumeHoldoutOptions,
   type ConsumeHoldoutTestPage,
 } from "../commands/consume-holdout.ts";
-import { buildIdentity, runEvaluate } from "../commands/evaluate.ts";
+import {
+  buildIdentity,
+  runEvaluate,
+  type EvaluateOptions,
+} from "../commands/evaluate.ts";
 import { sha256OfFile } from "../commands/io.ts";
 import { runValidatePredictions } from "../commands/validate-predictions.ts";
 import { computeRuntimeParityDigest } from "../../contracts/runtime-parity.ts";
@@ -344,6 +349,42 @@ function provisionalThresholdFixture(digests: {
   });
 }
 
+/**
+ * A SECOND cut that is impeccable on its own: it recomputes to its own `artifactDigest`,
+ * restates this pre-registration and is bound to the very seven governance digests the
+ * scenario's frozen calibration carries — so every check `evaluate` makes about a cut in
+ * isolation accepts it.
+ *
+ * Its population sits at 0.500 .. 0.995, which puts the 0.95 quantile at 0.975 and above
+ * every score the mock scorer emits. That is what makes it a DIFFERENT decision and not a
+ * different file: nothing warns under it. The digest therefore cannot collide with the
+ * sealed one, which the test asserts rather than assumes.
+ */
+function foreignButValidCut(
+  frozen: FrozenCalibrationArtifact,
+): ProvisionalThresholdArtifact {
+  const partitions = PREREGISTRATION_V4.threshold.quantilePartitions;
+  return freezeProvisionalThreshold({
+    samples: Array.from({ length: 100 }, (_unused, index) => ({
+      id: `outro_${String(index).padStart(3, "0")}`,
+      label: "human",
+      partition: partitions[index % partitions.length],
+      documentRawScore: 0.5 + index / 200,
+    })),
+    testIds: [],
+    seed: PREREGISTRATION_V4.seeds.split,
+    digests: {
+      datasetDigest: frozen.datasetDigest,
+      datasetAuditDigest: frozen.datasetAuditDigest,
+      splitDigest: frozen.splitDigest,
+      evaluatorDigest: frozen.evaluatorDigest,
+      sourceReadinessDigest: frozen.sourceReadinessDigest,
+      developmentManifestDigest: frozen.predictionManifestDigests.development,
+      calibrationManifestDigest: frozen.predictionManifestDigests.calibration,
+    },
+  });
+}
+
 async function frozenCalibration(input: {
   datasetDigest: string;
   splitDigest: string;
@@ -447,6 +488,13 @@ interface Scenario {
   workDirectory: string;
   outputDirectory: string;
   evaluatorRoot: string;
+  /**
+   * O digest do corte que o cenario gravou, para um teste poder chamar `runEvaluate`
+   * DIRETO com a amarracao que o orquestrador passa. Vem do artefato que o fixture selou —
+   * ler o arquivo de novo no teste seria uma segunda medicao do mesmo byte, e um teste que
+   * recomputa o digest do arquivo que acabou de trocar concorda com a troca.
+   */
+  provisionalThresholdDigest: string;
 }
 
 // The evaluator root is injected through deps and never through a flag, so every
@@ -715,6 +763,7 @@ async function buildScenario(
     workDirectory,
     outputDirectory,
     evaluatorRoot,
+    provisionalThresholdDigest: provisional.artifactDigest,
   };
 }
 
@@ -951,6 +1000,462 @@ describe("consume-holdout one-way lease", () => {
     ).toBe(false);
     expect(page.createCalls).toBe(0);
     expect(page.scoreCalls).toBe(0);
+  });
+
+  // The pre-lease check and the reading that DECIDES are two readings of the SAME path at
+  // two different moments, and what these two tests pin is the ORDER between them rather
+  // than the existence of a refusal. The substitute cut is impeccable in isolation — the
+  // control below publishes a decision on it — so nothing about its bytes can produce the
+  // refusal: only the digest taken while the block was still blind can. An assertion on a
+  // subprocess exit code would not see the moment at all, which is why both run in
+  // process.
+  it("decides on the cut it blessed before the lease, never on one swapped inside the window", async () => {
+    const root = await newRoot("cf-consume-cut-swap-");
+    const scenario = await buildScenario(root, {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 4,
+      negativeTag: "LOW",
+    });
+    const cutPath = join(
+      dirname(scenario.options.frozenCalibrationPath),
+      "provisional-threshold.json",
+    );
+    const blessed = JSON.parse(
+      await readFile(cutPath, "utf8"),
+    ) as ProvisionalThresholdArtifact;
+    const frozen = JSON.parse(
+      await readFile(scenario.options.frozenCalibrationPath, "utf8"),
+    ) as FrozenCalibrationArtifact;
+    const substitute = foreignButValidCut(frozen);
+    expect(substitute.artifactDigest).not.toBe(blessed.artifactDigest);
+    expect(substitute.threshold).not.toBe(blessed.threshold);
+
+    // The swap lands INSIDE the window: the injected page's first `status()` call happens
+    // under an already-`started` lease and before `evaluate` reads the file, and the flag
+    // records that the lease was open at that instant instead of assuming it.
+    let leaseWasOpenAtSwap = false;
+    const page = stubPage(scenario.status, {
+      onStatus: () => {
+        writeFileSync(cutPath, `${JSON.stringify(substitute, null, 2)}\n`);
+        leaseWasOpenAtSwap = readLedgerEvents(scenario.ledgerPath).some(
+          (event) => event.status === "started",
+        );
+      },
+    });
+
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          scenario.options,
+          holdoutDeps(scenario, page.createTestPage),
+        ),
+      ),
+    ).toBe("PROVISIONAL_THRESHOLD_SWAPPED_AFTER_CHECK");
+    expect(leaseWasOpenAtSwap).toBe(true);
+    // The file on disk really is the substitute at the end, so the refusal is about the
+    // bytes that were there when `evaluate` read them.
+    expect(
+      (
+        JSON.parse(
+          await readFile(cutPath, "utf8"),
+        ) as ProvisionalThresholdArtifact
+      ).artifactDigest,
+    ).toBe(substitute.artifactDigest);
+
+    // The digest that decided is the one the receipt recorded before the exposure.
+    const receipt = JSON.parse(
+      await readFile(join(scenario.workDirectory, RECEIPT_FILE), "utf8"),
+    ) as { provisionalThresholdArtifactDigest: string };
+    expect(receipt.provisionalThresholdArtifactDigest).toBe(
+      blessed.artifactDigest,
+    );
+
+    // The block was spent — the lease is one-way at `started` — and nothing was decided:
+    // no terminal event, no gate report, no benchmark report.
+    const events = readLedgerEvents(scenario.ledgerPath);
+    expect(events.filter((event) => event.status === "started")).toHaveLength(
+      1,
+    );
+    expect(events.some((event) => event.status !== "started")).toBe(false);
+    expect(existsSync(join(scenario.outputDirectory, "gate-report.json"))).toBe(
+      false,
+    );
+    expect(
+      existsSync(join(scenario.outputDirectory, "benchmark-report.json")),
+    ).toBe(false);
+  });
+
+  // The control, and without it the test above would also pass if the substitute were
+  // simply a bad cut: the same bytes, in place BEFORE the lease, are blessed and decide.
+  it("blesses and decides on a replacement cut that was already in place before the lease", async () => {
+    const root = await newRoot("cf-consume-cut-preswap-");
+    const scenario = await buildScenario(root, {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 4,
+      negativeTag: "LOW",
+    });
+    const cutPath = join(
+      dirname(scenario.options.frozenCalibrationPath),
+      "provisional-threshold.json",
+    );
+    const frozen = JSON.parse(
+      await readFile(scenario.options.frozenCalibrationPath, "utf8"),
+    ) as FrozenCalibrationArtifact;
+    const substitute = foreignButValidCut(frozen);
+    await writeFile(cutPath, `${JSON.stringify(substitute, null, 2)}\n`);
+
+    const page = stubPage(scenario.status);
+    const message = await runConsumeHoldout(
+      scenario.options,
+      holdoutDeps(scenario, page.createTestPage),
+    );
+    expect(message).toMatch(
+      /^HOLDOUT_COMPLETED decision=(pass|indicator-only|reject)$/u,
+    );
+
+    // The receipt names what THIS run blessed, which is the substitute — the recorded
+    // digest is a measurement of the file that was read, not a constant.
+    const receipt = JSON.parse(
+      await readFile(join(scenario.workDirectory, RECEIPT_FILE), "utf8"),
+    ) as { provisionalThresholdArtifactDigest: string };
+    expect(receipt.provisionalThresholdArtifactDigest).toBe(
+      substitute.artifactDigest,
+    );
+    expect(
+      readLedgerEvents(scenario.ledgerPath).filter(
+        (event) => event.status === "completed",
+      ),
+    ).toHaveLength(1);
+  });
+
+  // The same order on the OTHER branch, and it needs its own pair because the two branches
+  // do not have the same thing to prove. `--resume-consumption` runs on a block the first
+  // attempt already spent, so the reading at the top of the retry cannot be a blessing: the
+  // substitute below is impeccable in isolation — the control that follows completes on it,
+  // and the fresh-run control above publishes a decision on it — so nothing about its bytes
+  // can produce the refusal. Only the digest recorded before the FIRST exposure can, which
+  // is what tells "blessed before spending" from "blessed after". In process, because a
+  // subprocess exit code shows the refusal but not the moment the receipt was read.
+  it("refuses a resume whose cut is not the one recorded before the block was spent", async () => {
+    const root = await newRoot("cf-consume-resume-swap-");
+    const scenario = await buildScenario(root, {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 4,
+      negativeTag: "LOW",
+    });
+    const cutPath = join(
+      dirname(scenario.options.frozenCalibrationPath),
+      "provisional-threshold.json",
+    );
+    const blessed = JSON.parse(
+      await readFile(cutPath, "utf8"),
+    ) as ProvisionalThresholdArtifact;
+    const frozen = JSON.parse(
+      await readFile(scenario.options.frozenCalibrationPath, "utf8"),
+    ) as FrozenCalibrationArtifact;
+    const substitute = foreignButValidCut(frozen);
+    expect(substitute.artifactDigest).not.toBe(blessed.artifactDigest);
+
+    // Attempt 1 spends the block and dies on the first text, which is the only state a
+    // resume is for: `started`, no terminal event, shards half written.
+    const crashing = stubPage(scenario.status, { throwOnFirstScore: true });
+    await expect(
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, crashing.createTestPage),
+      ),
+    ).rejects.toThrow(/scorer boom/u);
+    const consumptionId = readLedgerEvents(scenario.ledgerPath)[0]
+      .consumptionId;
+    expect(crashing.scoreCalls).toBeGreaterThan(0);
+
+    // The swap lands BETWEEN the attempts — after the exposure, before the retry — which is
+    // exactly the window in which a cut can be chosen by someone who has seen scores.
+    await writeFile(cutPath, `${JSON.stringify(substitute, null, 2)}\n`);
+
+    const retry = stubPage(scenario.status);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          { ...scenario.options, resumeConsumptionId: consumptionId },
+          holdoutDeps(scenario, retry.createTestPage),
+        ),
+      ),
+    ).toBe("PROVISIONAL_THRESHOLD_SWAPPED_BEFORE_RESUME");
+
+    // Refused BEFORE the block was scored a second time: no page, no score. A refusal that
+    // arrived after the rescore would be the same code and a different mechanism.
+    expect(retry.createCalls).toBe(0);
+    expect(retry.scoreCalls).toBe(0);
+
+    // The receipt still names the cut of the first attempt. This is the second half of the
+    // order: the recorded digest was READ before anything rewrote it, so a run that wrote
+    // its own reading first — and then compared the file against itself — fails here.
+    const receipt = JSON.parse(
+      await readFile(join(scenario.workDirectory, RECEIPT_FILE), "utf8"),
+    ) as { provisionalThresholdArtifactDigest: string };
+    expect(receipt.provisionalThresholdArtifactDigest).toBe(
+      blessed.artifactDigest,
+    );
+
+    // The lease stays exactly where the crash left it: spent, not terminal, nothing decided.
+    const events = readLedgerEvents(scenario.ledgerPath);
+    expect(events.filter((event) => event.status === "started")).toHaveLength(
+      1,
+    );
+    expect(events.some((event) => event.status !== "started")).toBe(false);
+    expect(existsSync(join(scenario.outputDirectory, "gate-report.json"))).toBe(
+      false,
+    );
+  });
+
+  // The control of the pair: the SAME substitute, in place before the first attempt, is what
+  // the receipt records and what the resume decides on. Without it, "refuse every resume" and
+  // "refuse a resume whose cut moved" would be the same test.
+  it("completes a resume on the replacement cut the first attempt recorded", async () => {
+    const root = await newRoot("cf-consume-resume-preswap-");
+    const scenario = await buildScenario(root, {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 4,
+      negativeTag: "LOW",
+    });
+    const cutPath = join(
+      dirname(scenario.options.frozenCalibrationPath),
+      "provisional-threshold.json",
+    );
+    const frozen = JSON.parse(
+      await readFile(scenario.options.frozenCalibrationPath, "utf8"),
+    ) as FrozenCalibrationArtifact;
+    const substitute = foreignButValidCut(frozen);
+    await writeFile(cutPath, `${JSON.stringify(substitute, null, 2)}\n`);
+
+    const crashing = stubPage(scenario.status, { throwOnFirstScore: true });
+    await expect(
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, crashing.createTestPage),
+      ),
+    ).rejects.toThrow(/scorer boom/u);
+    const consumptionId = readLedgerEvents(scenario.ledgerPath)[0]
+      .consumptionId;
+
+    const retry = stubPage(scenario.status);
+    expect(
+      await runConsumeHoldout(
+        { ...scenario.options, resumeConsumptionId: consumptionId },
+        holdoutDeps(scenario, retry.createTestPage),
+      ),
+    ).toMatch(/^HOLDOUT_COMPLETED decision=(pass|indicator-only|reject)$/u);
+    expect(retry.scoreCalls).toBeGreaterThan(0);
+    const receipt = JSON.parse(
+      await readFile(join(scenario.workDirectory, RECEIPT_FILE), "utf8"),
+    ) as { provisionalThresholdArtifactDigest: string };
+    expect(receipt.provisionalThresholdArtifactDigest).toBe(
+      substitute.artifactDigest,
+    );
+    expect(
+      readLedgerEvents(scenario.ledgerPath).filter(
+        (event) => event.status === "completed",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("refuses a resume whose receipt no longer records the cut it checked", async () => {
+    // The receipt is the ONLY place the pre-exposure digest survives — the `started` event
+    // carries the scientific tuple and not the cut — so a resume that cannot read it has
+    // nothing to be bound to. Refusing is the asymmetric choice on purpose: the block is
+    // spent either way, and deleting this file is what a swap would do to get a fresh
+    // blessing. The lease is left as the crash left it, so it is denied a claim and not
+    // taken terminal.
+    const root = await newRoot("cf-consume-resume-no-receipt-");
+    const scenario = await buildScenario(root, {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 4,
+      negativeTag: "LOW",
+    });
+    const crashing = stubPage(scenario.status, { throwOnFirstScore: true });
+    await expect(
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, crashing.createTestPage),
+      ),
+    ).rejects.toThrow(/scorer boom/u);
+    const consumptionId = readLedgerEvents(scenario.ledgerPath)[0]
+      .consumptionId;
+
+    const receiptPath = join(scenario.workDirectory, RECEIPT_FILE);
+    expect(existsSync(receiptPath)).toBe(true);
+    await rm(receiptPath);
+
+    const retry = stubPage(scenario.status);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          { ...scenario.options, resumeConsumptionId: consumptionId },
+          holdoutDeps(scenario, retry.createTestPage),
+        ),
+      ),
+    ).toBe("PRE_EXPOSURE_RECEIPT_CUT_MISSING");
+    expect(retry.createCalls).toBe(0);
+    // Not rewritten by the refused attempt either: the reading comes before the write on
+    // this branch too, so a resume cannot manufacture the record it needs.
+    expect(existsSync(receiptPath)).toBe(false);
+    const events = readLedgerEvents(scenario.ledgerPath);
+    expect(events.filter((event) => event.status === "started")).toHaveLength(
+      1,
+    );
+    expect(events.some((event) => event.status !== "started")).toBe(false);
+  });
+
+  // The PROCESS boundary, and it needs a test of its own because everything the resume
+  // guard argues is about the order of lines WITHIN one call. That order says nothing about
+  // a SECOND invocation of the command over the same `--work-dir`: a fresh run has no
+  // receipt to be bound to, so it writes one from its own reading, and over a spent block
+  // it reads and writes before the ledger refuses it. Three steps, two invocations, and the
+  // one thing being measured is whether the receipt the RESUME reads still names the cut
+  // blessed while the block was blind.
+  it("refuses a fresh invocation over a spent block before it can re-bless the receipt the resume reads", async () => {
+    const root = await newRoot("cf-consume-fresh-rebless-");
+    const scenario = await buildScenario(root, {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 4,
+      negativeTag: "LOW",
+    });
+    const cutPath = join(
+      dirname(scenario.options.frozenCalibrationPath),
+      "provisional-threshold.json",
+    );
+    const blessed = JSON.parse(
+      await readFile(cutPath, "utf8"),
+    ) as ProvisionalThresholdArtifact;
+    const frozen = JSON.parse(
+      await readFile(scenario.options.frozenCalibrationPath, "utf8"),
+    ) as FrozenCalibrationArtifact;
+    const substitute = foreignButValidCut(frozen);
+    expect(substitute.artifactDigest).not.toBe(blessed.artifactDigest);
+    const receiptPath = join(scenario.workDirectory, RECEIPT_FILE);
+
+    // 1. Attempt one spends the block and dies mid-scoring: the lease is `started` and the
+    //    receipt names the cut this attempt read while the block was still blind.
+    const crashing = stubPage(scenario.status, { throwOnFirstScore: true });
+    await expect(
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, crashing.createTestPage),
+      ),
+    ).rejects.toThrow(/scorer boom/u);
+    const consumptionId = readLedgerEvents(scenario.ledgerPath)[0]
+      .consumptionId;
+    expect(
+      (
+        JSON.parse(await readFile(receiptPath, "utf8")) as {
+          provisionalThresholdArtifactDigest: string;
+        }
+      ).provisionalThresholdArtifactDigest,
+    ).toBe(blessed.artifactDigest);
+
+    // 2. The substitute goes on disk and a FRESH invocation — no `--resume-consumption` —
+    //    runs over the same `--work-dir`. The block is spent, so it is refused either way;
+    //    what this step measures is whether the refusal arrives BEFORE the receipt is
+    //    rewritten from this run's own reading of the substitute.
+    await writeFile(cutPath, `${JSON.stringify(substitute, null, 2)}\n`);
+    const fresh = stubPage(scenario.status);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          scenario.options,
+          holdoutDeps(scenario, fresh.createTestPage),
+        ),
+      ),
+    ).toBe("HOLDOUT_ALREADY_CONSUMED");
+    expect(fresh.createCalls).toBe(0);
+    expect(fresh.scoreCalls).toBe(0);
+    // The discriminating assertion of this step, and not the code above: the code is what a
+    // spent block answers with wherever the refusal is raised, so it says nothing about
+    // whether the refusal came before or after the record was replaced.
+    expect(
+      (
+        JSON.parse(await readFile(receiptPath, "utf8")) as {
+          provisionalThresholdArtifactDigest: string;
+        }
+      ).provisionalThresholdArtifactDigest,
+    ).toBe(blessed.artifactDigest);
+
+    // 3. And so the resume still has the FIRST attempt's blessing to be bound to, and
+    //    refuses the substitute. Without step 2 holding, this call completes and publishes a
+    //    decision on a cut chosen after the block was spent.
+    const retry = stubPage(scenario.status);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          { ...scenario.options, resumeConsumptionId: consumptionId },
+          holdoutDeps(scenario, retry.createTestPage),
+        ),
+      ),
+    ).toBe("PROVISIONAL_THRESHOLD_SWAPPED_BEFORE_RESUME");
+    expect(retry.createCalls).toBe(0);
+    expect(retry.scoreCalls).toBe(0);
+
+    // 4. The receipt is a file in the work directory, so DELETING it is as available to
+    //    whoever swapped the cut as the swap itself was. It buys no fresh blessing either:
+    //    what refuses the fresh invocation is the append-only ledger, which is not in this
+    //    directory, so the absence the deletion creates is one the invocation cannot fill.
+    await rm(receiptPath);
+    const afterDeletion = stubPage(scenario.status);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          scenario.options,
+          holdoutDeps(scenario, afterDeletion.createTestPage),
+        ),
+      ),
+    ).toBe("HOLDOUT_ALREADY_CONSUMED");
+    expect(existsSync(receiptPath)).toBe(false);
+
+    // 5. Leaving the resume with nothing to be bound to, which it refuses rather than
+    //    treating an absent record as permission. The block stays spent and unclaimed.
+    const afterDeletionRetry = stubPage(scenario.status);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          { ...scenario.options, resumeConsumptionId: consumptionId },
+          holdoutDeps(scenario, afterDeletionRetry.createTestPage),
+        ),
+      ),
+    ).toBe("PRE_EXPOSURE_RECEIPT_CUT_MISSING");
+    expect(afterDeletionRetry.createCalls).toBe(0);
+
+    // Nothing was decided across the five steps: one `started`, no terminal event, no
+    // report. The block is spent and denied a claim, which is the asymmetric outcome.
+    const events = readLedgerEvents(scenario.ledgerPath);
+    expect(events.filter((event) => event.status === "started")).toHaveLength(
+      1,
+    );
+    expect(events.some((event) => event.status !== "started")).toBe(false);
+    expect(existsSync(join(scenario.outputDirectory, "gate-report.json"))).toBe(
+      false,
+    );
+    expect(
+      existsSync(join(scenario.outputDirectory, "benchmark-report.json")),
+    ).toBe(false);
   });
 
   it("writes the started lease exactly once before the first scored text and completes", async () => {
@@ -2032,8 +2537,11 @@ describe("consume-holdout one-way lease", () => {
 // As guardas que `evaluate` aplica ao ARTEFATO DE PREDICAO, dirigidas direto.
 //
 // `runEvaluate` sela o relatorio de release e fecha o lease, e o CLI o despacha por conta
-// propria (`benchmark/cli.ts`), entao um artefato de outra particao ou de outra sessao chega a
-// ele por caminho normal, sem passar por `consume-holdout`.
+// propria (`benchmark/cli.ts`). E porque esse despacho existe que uma corrida de RELEASE sem a
+// amarracao do corte e recusada: sem ela o caminho normal do CLI selaria o relatorio sobre um
+// corte cuja unica leitura acontece depois do bloco pontuado. Por isso `opcoes` passa
+// `expectedProvisionalThresholdDigest` — a forma que o orquestrador usa — e as guardas abaixo
+// sao alcancadas com essa amarracao no lugar, sem passar por `consume-holdout`.
 //
 // O arnes e barato porque `fitDirectory` sai de `dirname(frozenCalibrationPath)`, e nao do
 // diretorio de predicoes: as predicoes podem morar em qualquer lugar.
@@ -2070,8 +2578,17 @@ describe("evaluate — guardas do artefato de predicao", () => {
   const CONSUMO = "consumo-sob-teste";
   const SHARD = "shard-000.jsonl";
 
-  function opcoes(scenario: Scenario, predicoes: string, consumo = CONSUMO) {
-    return {
+  // `amarracao: "sem"` monta a forma que o CLI monta, porque `assertKnownFlags` nao tem
+  // bandeira para a amarracao do corte. Os dois lados saem da MESMA lista de campos: uma
+  // segunda lista escrita a mao envelheceria em silencio e o teste passaria afirmando outra
+  // coisa.
+  function opcoes(
+    scenario: Scenario,
+    predicoes: string,
+    consumo = CONSUMO,
+    amarracao: "com" | "sem" = "com",
+  ): EvaluateOptions {
+    const base: EvaluateOptions = {
       datasetDirectory: scenario.options.datasetDirectory,
       splitArtifactPath: scenario.options.splitArtifactPath,
       frozenCalibrationPath: scenario.options.frozenCalibrationPath,
@@ -2083,6 +2600,13 @@ describe("evaluate — guardas do artefato de predicao", () => {
       bootstrapSeed: scenario.options.bootstrapSeed,
       evaluatorRoot: scenario.evaluatorRoot,
     };
+    return amarracao === "com"
+      ? {
+          ...base,
+          expectedProvisionalThresholdDigest:
+            scenario.provisionalThresholdDigest,
+        }
+      : base;
   }
 
   async function congelado(
@@ -2208,6 +2732,66 @@ describe("evaluate — guardas do artefato de predicao", () => {
   }
 
   it(
+    "refuses a release evaluation that names no cut read before the lease",
+    async () => {
+      // A recusa e da AUTORIDADE da corrida, nao da forma do corte: o artefato no disco e o
+      // proprio artefato selado do cenario, impecavel. O que falta e alguem que tenha lido o
+      // corte antes do lease — e no caminho do CLI nao ha ninguem.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      expect(
+        await rejectionCode(
+          runEvaluate(opcoes(scenario, predicoes, CONSUMO, "sem")),
+        ),
+      ).toBe("PROVISIONAL_THRESHOLD_BINDING_REQUIRED");
+
+      // A ORDEM: a recusa vem antes de `records.jsonl`, que carrega `text` e `label` de cada
+      // registro. Sem o arquivo, a mesma chamada ainda recusa pela amarracao; COM a amarracao,
+      // a mesma corrida passa da guarda e cai no arquivo que falta. O par e o que distingue as
+      // duas leituras.
+      await rm(join(scenario.options.datasetDirectory, "records.jsonl"));
+      expect(
+        await rejectionCode(
+          runEvaluate(opcoes(scenario, predicoes, CONSUMO, "sem")),
+        ),
+      ).toBe("PROVISIONAL_THRESHOLD_BINDING_REQUIRED");
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("FILE_MISSING");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "lets a run that is not a release decide without the binding, and refuses it at the gate",
+    async () => {
+      // O controle da guarda acima, e a frase que a substitui: sem a amarracao a corrida nao e
+      // de release. Aqui ela roda inteira — sela relatorio, fecha o lease — e o que a impede de
+      // ser uma alegacao de release e o proprio relatorio de portoes:
+      // `integrity.scientific-use` falha, e um portao de integridade falho decide `reject`.
+      const scenario = await buildScenario(await raiz(), {
+        ...SPEC,
+        scientificUse: "infrastructure-only",
+      });
+      const consumo = await abreSessao(scenario);
+      const predicoes = await escrevePredicoes(scenario, {}, { consumo });
+      const opcoesSemAmarracao = opcoes(scenario, predicoes, consumo, "sem");
+      expect(await runEvaluate(opcoesSemAmarracao)).toContain(
+        "decision=reject",
+      );
+      const portoes = JSON.parse(
+        await readFile(
+          join(opcoesSemAmarracao.outputDirectory, "gate-report.json"),
+          "utf8",
+        ),
+      ) as { decision: string; failedIntegrity: string[] };
+      expect(portoes.decision).toBe("reject");
+      expect(portoes.failedIntegrity).toContain("integrity.scientific-use");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
     "refuses a prediction artifact that declares another partition",
     async () => {
       // Duas amarras do esquema estreitam a forja possivel: as particoes de pontuacao sao
@@ -2278,10 +2862,15 @@ describe("evaluate — guardas do artefato de predicao", () => {
   // happens to leave behind. Three refusals, because a threshold that is absent, edited
   // or bound to another split are three different pieces of news — and without them the
   // `probabilisticCalibrator: "none"` in the sealed policy is a claim nothing checks.
+  //
+  // Devolve o `artifactDigest` DECLARADO pelo que ficou no disco — nao um recomputo, porque a
+  // amarracao que `runEvaluate` compara e justamente o campo declarado. Uma forja re-selada muda
+  // esse digest, e um teste de governanca que continuasse passando o digest do cenario seria
+  // recusado pela amarracao antes de alcancar a guarda que ele mede.
   async function comLimiar(
     scenario: Scenario,
     muta: (artifact: Record<string, unknown>) => Record<string, unknown> | null,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const caminho = join(
       dirname(scenario.options.frozenCalibrationPath),
       "provisional-threshold.json",
@@ -2293,9 +2882,11 @@ describe("evaluate — guardas do artefato de predicao", () => {
     const proximo = muta(atual);
     if (proximo === null) {
       await rm(caminho);
-      return;
+      return null;
     }
     await writeFile(caminho, `${JSON.stringify(proximo, null, 2)}\n`);
+    const declarado = proximo.artifactDigest;
+    return typeof declarado === "string" ? declarado : null;
   }
 
   it(
@@ -2331,10 +2922,11 @@ describe("evaluate — guardas do artefato de predicao", () => {
     "refuses a pre-registered cut bound to a different split",
     async () => {
       // Re-digested, so the refusal comes from the governance cross-check and not from
-      // the digest — a threshold frozen over ANOTHER split is the failure that matters.
+      // the digest — a threshold frozen over ANOTHER split is the failure that matters. E a
+      // amarracao passada e a do artefato NO DISCO, senao a recusa viria da amarracao.
       const scenario = await buildScenario(await raiz(), SPEC);
       const predicoes = await escrevePredicoes(scenario);
-      await comLimiar(scenario, (artifact) => {
+      const forjado = await comLimiar(scenario, (artifact) => {
         const digests = {
           ...(artifact.digests as Record<string, unknown>),
           splitDigest: "1".repeat(64),
@@ -2343,7 +2935,12 @@ describe("evaluate — guardas do artefato de predicao", () => {
         return { ...resto, artifactDigest: canonicalSha256Sync(resto) };
       });
       expect(
-        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+        await rejectionCode(
+          runEvaluate({
+            ...opcoes(scenario, predicoes),
+            expectedProvisionalThresholdDigest: forjado ?? undefined,
+          }),
+        ),
       ).toBe("THRESHOLD_GOVERNANCE_MISMATCH");
     },
     TIMEOUT_MS,
@@ -2380,7 +2977,7 @@ describe("evaluate — guardas do artefato de predicao", () => {
       // behind the parser.
       const scenario = await buildScenario(await raiz(), SPEC);
       const predicoes = await escrevePredicoes(scenario);
-      await comLimiar(scenario, (artifact) => {
+      const forjado = await comLimiar(scenario, (artifact) => {
         const preRegistration = {
           ...(artifact.preRegistration as Record<string, unknown>),
           policyVersion: "preregistration-v3-v9",
@@ -2389,7 +2986,12 @@ describe("evaluate — guardas do artefato de predicao", () => {
         return { ...resto, artifactDigest: canonicalSha256Sync(resto) };
       });
       expect(
-        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+        await rejectionCode(
+          runEvaluate({
+            ...opcoes(scenario, predicoes),
+            expectedProvisionalThresholdDigest: forjado ?? undefined,
+          }),
+        ),
       ).toBe("THRESHOLD_PREREGISTRATION_DRIFT");
     },
     TIMEOUT_MS,
@@ -2424,7 +3026,7 @@ describe("evaluate — guardas do artefato de predicao", () => {
         "utf8",
       );
       const swappedDigest = await computePredictionManifestDigest(swapped);
-      await comLimiar(scenario, (artifact) => {
+      const forjado = await comLimiar(scenario, (artifact) => {
         const digests = {
           ...(artifact.digests as Record<string, unknown>),
           developmentManifestDigest: swappedDigest,
@@ -2435,7 +3037,10 @@ describe("evaluate — guardas do artefato de predicao", () => {
 
       const inexistente = join(scenario.workDirectory, "predicoes-ausentes");
       const erro = await rejectionMessage(
-        runEvaluate(opcoes(scenario, inexistente)),
+        runEvaluate({
+          ...opcoes(scenario, inexistente),
+          expectedProvisionalThresholdDigest: forjado ?? undefined,
+        }),
       );
       expect(erro).toContain("THRESHOLD_GOVERNANCE_MISMATCH");
       expect(erro).toContain("developmentManifestDigest");

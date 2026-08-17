@@ -4,9 +4,11 @@ import {
   CalibrationPipelineError,
   fitFrozenCalibration,
   readThresholdEvidence,
+  sealedCalibrationArtifact,
   validateFrozenCalibrationArtifact,
   type FitFrozenCalibrationInput,
   type FitSampleScores,
+  type FrozenCalibrationArtifact,
   type ThresholdEvidence,
 } from "../calibration-pipeline.ts";
 import { sha256BytesHex } from "../digests.ts";
@@ -567,6 +569,61 @@ describe("fitFrozenCalibration governance guards", () => {
         },
       }),
     ).toThrow(/artifactDigest/);
+  });
+
+  // The seal is not a form. Every command reads this artifact with
+  // `readJsonFile(...) as FrozenCalibrationArtifact`, and `thresholdBinding` then takes
+  // `development` and `calibration` BY KEY as two of the seven digests the pre-registered
+  // cut is bound to — so a block that recomputes to its own digest and still has no such
+  // key has to be refused here, where every consumer already looks.
+  //
+  // Each forgery below is RE-SEALED and the test MEASURES that it is, by recomputing the
+  // artifact's own digest recipe over it: without that measurement the refusal could be
+  // coming from the seal comparison, and the case would prove the arithmetic that was
+  // already proven above.
+  it("refuses a re-sealed artifact whose predictionManifestDigests is the wrong shape", async () => {
+    const sealed = sealedCalibrationArtifact(calibrationResult);
+    const { artifactDigest, ...payload } = sealed;
+    // The recipe used below IS the artifact's own: without this the re-seals would be
+    // digests of something else, and every case would land on the seal comparison.
+    expect(await canonicalSha256(payload)).toBe(artifactDigest);
+    const real = payload.predictionManifestDigests;
+
+    for (const forged of [
+      {},
+      { development: real.development },
+      { calibration: real.calibration },
+      { ...real, extra: "0".repeat(64) },
+      { development: real.development, calibration: "nao-e-um-digesto" },
+      {
+        development: real.development.toUpperCase(),
+        calibration: real.calibration,
+      },
+      { development: real.development, calibration: null },
+    ] as unknown[]) {
+      const edited = { ...payload, predictionManifestDigests: forged };
+      const artifact = {
+        ...edited,
+        artifactDigest: await canonicalSha256(edited),
+      } as unknown as FrozenCalibrationArtifact;
+      // Competent by measurement: the bytes hash to the digest they declare, so the seal
+      // comparison this function also makes would agree with them.
+      const { artifactDigest: declared, ...forgedPayload } = artifact;
+      expect(await canonicalSha256(forgedPayload)).toBe(declared);
+
+      expect(() => validateFrozenCalibrationArtifact(artifact)).toThrow(
+        /predictionManifestDigests/,
+      );
+    }
+  });
+
+  it("admits the artifact the fit sealed, digests and shape alike", () => {
+    // The control for the case above: the same function, the same artifact, untouched.
+    expect(() =>
+      validateFrozenCalibrationArtifact(
+        sealedCalibrationArtifact(calibrationResult),
+      ),
+    ).not.toThrow();
   });
 });
 

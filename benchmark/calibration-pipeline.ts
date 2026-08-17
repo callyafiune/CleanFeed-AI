@@ -1215,11 +1215,64 @@ export function fitFrozenCalibration(
   };
 }
 
+const SHA256_HEX = /^[a-f0-9]{64}$/u;
+
+/**
+ * The FORM of `predictionManifestDigests`: exactly `development` and `calibration`, each a
+ * lowercase 64-character hex digest.
+ *
+ * A digest recomputation does not imply a form. The artifact reaches every command as
+ * `readJsonFile(...) as FrozenCalibrationArtifact` — a cast, not a parser — so an artifact
+ * re-sealed over a truncated or renamed block satisfies its own `artifactDigest` and is
+ * then read BY KEY: `thresholdBinding` (benchmark/commands/evaluate.ts) takes `development`
+ * and `calibration` as two of the seven digests the pre-registered cut is bound to, and the
+ * public fit summary spreads the block whole (benchmark/evidence-sanitizer.ts).
+ */
+// `unknown` and not the declared property type: every command reads this artifact with
+// `readJsonFile(...) as FrozenCalibrationArtifact`, so the declared type here is a claim
+// about the file and not a fact about it.
+function assertPredictionManifestDigestForm(digests: unknown): void {
+  if (
+    typeof digests !== "object" ||
+    digests === null ||
+    Array.isArray(digests)
+  ) {
+    fail("frozen calibration predictionManifestDigests is not an object");
+  }
+  const block = digests as Record<string, unknown>;
+  const keys = Object.keys(block).sort();
+  if (keys.join(",") !== "calibration,development") {
+    fail(
+      "frozen calibration predictionManifestDigests must carry exactly " +
+        `[calibration, development] and carries [${keys.join(", ")}]`,
+    );
+  }
+  for (const key of ["development", "calibration"] as const) {
+    const found = block[key];
+    if (typeof found !== "string" || !SHA256_HEX.test(found)) {
+      fail(
+        `frozen calibration predictionManifestDigests.${key} must be 64 lowercase hex characters`,
+      );
+    }
+  }
+}
+
 /**
  * Recomputes `artifactDigest` over the frozen fields and refuses any drift.
  * Because the digest covers the embedded governance/identity digests, altering
  * the dataset audit, either prediction manifest or the readiness report after
  * the fit is detected here.
+ *
+ * The seal is not the whole check: it proves the bytes are the bytes that were sealed and
+ * says nothing about their shape, so the one block a reader DEREFERENCES by key —
+ * `predictionManifestDigests` — is also checked in form.
+ *
+ * The seal comes FIRST, and the order is a property of the suite rather than a taste: a
+ * `frozen-calibration.json` with any one key deleted has to be refused for the SEAL, which
+ * is what makes "every key of the written file is a key the digest covers" measurable by
+ * deleting keys one at a time (benchmark/tests/fit.test.ts). A form check ahead of it would
+ * answer for `predictionManifestDigests` before the seal could, and that key would then be
+ * refused whether the digest covered it or not.
  */
 export function validateFrozenCalibrationArtifact(
   artifact: FrozenCalibrationArtifact,
@@ -1228,4 +1281,5 @@ export function validateFrozenCalibrationArtifact(
   if (expected !== artifact.artifactDigest) {
     fail("frozen calibration artifactDigest does not match its contents");
   }
+  assertPredictionManifestDigestForm(artifact.predictionManifestDigests);
 }

@@ -177,9 +177,10 @@ describe("the measured calibration basis", () => {
     ).not.toBe(PREREGISTRATION_V4.calibrationGate.scoreBasis);
   });
 
-  // An unscored row carries no score to compare, and its absence must not read as a
-  // transform: an errored block would otherwise refuse the basis it never touched.
-  it("ignores rows that carry no score at all", () => {
+  function erroredRow(): {
+    prediction: StrictPredictionV2;
+    item: EvaluationItem;
+  } {
     const errored = prediction({
       status: "error",
       documentRawScore: null,
@@ -190,14 +191,49 @@ describe("the measured calibration basis", () => {
       coverage: 0,
       memoryBytes: null,
     });
+    return {
+      prediction: errored,
+      item: buildEvaluationItem(CUT, RECORD, errored),
+    };
+  }
+
+  // An unscored row carries no score to compare, and its absence must not read as a
+  // transform: an errored block would otherwise refuse the basis it never touched.
+  //
+  // ONE scored row rides along, and it is what keeps this case apart from the empty one
+  // below: with the errored row alone the answer would be the cut's basis for two
+  // different reasons at once — nothing was transformed, and nothing was measured — and
+  // the assertion could not tell which one it was reading.
+  it("ignores rows that carry no score at all", () => {
+    const untouched = prediction({
+      documentRawScore: 0.3,
+      localizedRawScore: 0.3,
+    });
     expect(
       measuredCalibrationScoreBasis(CUT, [
+        erroredRow(),
         {
-          prediction: errored,
-          item: buildEvaluationItem(CUT, RECORD, errored),
+          prediction: untouched,
+          item: buildEvaluationItem(CUT, RECORD, untouched),
         },
       ]),
     ).toBe(CUT.basis);
+  });
+
+  // Nothing scored, so there is no calibration statistic and no basis it could have been
+  // measured over: the derivation must REFUSE to name one instead of naming the cut's.
+  // `rows.every` is vacuously true on a set with no scored row, so the empty answer used to
+  // be `document-raw-score` — a claim about a computation that did not happen, and the one
+  // the gate compares `calibrationGate.scoreBasis` against before publishing an ECE.
+  it("names no basis when nothing was scored at all", () => {
+    for (const rows of [[], [erroredRow()], [erroredRow(), erroredRow()]]) {
+      expect(measuredCalibrationScoreBasis(CUT, rows)).toBe(
+        "document-calibrated-score",
+      );
+      expect(measuredCalibrationScoreBasis(CUT, rows)).not.toBe(
+        PREREGISTRATION_V4.calibrationGate.scoreBasis,
+      );
+    }
   });
 });
 

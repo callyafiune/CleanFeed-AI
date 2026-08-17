@@ -658,6 +658,131 @@ describe("publish-profile — the cut it refuses to serve", () => {
   });
 });
 
+// The cut EMBEDDED in `fit-report.json`, which is a different file from the one
+// publish-profile reads: `publish-evidence` projects this block into the public
+// `fit-summary.json` as the cut the release decided on, and only its SHAPE used to be
+// read. A block re-sealed over an edit is well formed, closes its own digest, and is
+// therefore invisible to a parser — so the forgeries below are all competent ones, and each
+// moves a field the artifact's own validator binds.
+describe("publish-evidence — the cut it publishes as decided", () => {
+  async function publishWithMutatedFitReportCut(
+    mutate: (cut: Record<string, unknown>) => Record<string, unknown>,
+  ): Promise<unknown> {
+    const root = await newRoot("cf-publish-evidence-fitcut-");
+    const s = await buildRejectScenario(root, runPublishProfile);
+    const fitReport = JSON.parse(
+      await readFile(s.fitReportPath, "utf8"),
+    ) as Record<string, unknown>;
+    const edited = {
+      ...mutate(fitReport.provisionalThreshold as Record<string, unknown>),
+    };
+    delete edited.artifactDigest;
+    fitReport.provisionalThreshold = {
+      ...edited,
+      artifactDigest: await canonicalSha256(edited),
+    };
+    await writeFile(
+      s.fitReportPath,
+      `${JSON.stringify(fitReport, null, 2)}\n`,
+      "utf8",
+    );
+    return runPublishEvidence({
+      sourceReadinessPath: s.sourceReadinessPath,
+      datasetAuditPath: s.datasetAuditPath,
+      splitArtifactPath: s.splitArtifactPath,
+      frozenCalibrationPath: s.frozenCalibrationPath,
+      fitReportPath: s.fitReportPath,
+      reportPath: s.reportPath,
+      ledgerPath: s.ledgerPath,
+      consumptionId: s.consumptionId,
+      modelDirectory: s.modelDir,
+      outputDirectory: s.outputDir,
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+  }
+
+  // All SEVEN, one at a time, because the binding is what says the published cut belongs
+  // to this run: three of them (dataset, split, evaluator) are also compared elsewhere on
+  // the publication path, and the other four are compared by this call alone.
+  it("refuses a well-formed cut bound to another run, one governance digest at a time", async () => {
+    for (const field of [
+      "datasetDigest",
+      "datasetAuditDigest",
+      "splitDigest",
+      "evaluatorDigest",
+      "sourceReadinessDigest",
+      "developmentManifestDigest",
+      "calibrationManifestDigest",
+    ] as const) {
+      const thrown = await publishWithMutatedFitReportCut((cut) => ({
+        ...cut,
+        digests: {
+          ...(cut.digests as Record<string, unknown>),
+          [field]: "7".repeat(64),
+        },
+      }));
+      expect(thrown, field).toMatchObject({ code: "FIT_REPORT_CUT_FOREIGN" });
+      expect((thrown as Error).message, field).toContain(field);
+    }
+  });
+
+  // The other half of the validator: the cut restates the pre-registration it was frozen
+  // under, and a published cut whose restatement disagrees with the policy on disk was
+  // frozen by a fit running under different frozen values.
+  it("refuses a cut restating a pre-registration the reader does not have", async () => {
+    const thrown = await publishWithMutatedFitReportCut((cut) => ({
+      ...cut,
+      preRegistration: {
+        ...(cut.preRegistration as Record<string, unknown>),
+        quantile: 0.9,
+      },
+    }));
+    expect(thrown).toMatchObject({ code: "FIT_REPORT_CUT_FOREIGN" });
+    expect((thrown as Error).message).toContain("quantile");
+  });
+
+  // The forgeries above are competent — re-sealed — so this is what tells the two refusals
+  // apart: a block edited WITHOUT re-sealing never reaches the binding, and the code says
+  // which of the two happened.
+  it("keeps a broken seal apart from a foreign binding", async () => {
+    const root = await newRoot("cf-publish-evidence-fitcut-seal-");
+    const s = await buildRejectScenario(root, runPublishProfile);
+    const fitReport = JSON.parse(
+      await readFile(s.fitReportPath, "utf8"),
+    ) as Record<string, unknown>;
+    const cut = fitReport.provisionalThreshold as Record<string, unknown>;
+    // The value moved and the digest left alone: the population it was taken over no
+    // longer produces this number, and nothing else in the block changed.
+    fitReport.provisionalThreshold = { ...cut, threshold: 0.123 };
+    await writeFile(
+      s.fitReportPath,
+      `${JSON.stringify(fitReport, null, 2)}\n`,
+      "utf8",
+    );
+    const thrown = await runPublishEvidence({
+      sourceReadinessPath: s.sourceReadinessPath,
+      datasetAuditPath: s.datasetAuditPath,
+      splitArtifactPath: s.splitArtifactPath,
+      frozenCalibrationPath: s.frozenCalibrationPath,
+      fitReportPath: s.fitReportPath,
+      reportPath: s.reportPath,
+      ledgerPath: s.ledgerPath,
+      consumptionId: s.consumptionId,
+      modelDirectory: s.modelDir,
+      outputDirectory: s.outputDir,
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(thrown).toMatchObject({ code: "FIT_REPORT_CUT_FOREIGN" });
+    expect((thrown as Error).message).toContain(
+      "THRESHOLD_ARTIFACT_DIGEST_MISMATCH",
+    );
+  });
+});
+
 describe("publish-evidence end-to-end (reject run)", () => {
   async function scenario() {
     const root = await newRoot("cf-publish-evidence-");

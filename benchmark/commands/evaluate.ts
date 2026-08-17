@@ -89,6 +89,27 @@ export interface EvaluateOptions {
    * produces the numbers.
    */
   evaluatorRoot?: string;
+  /**
+   * The `artifactDigest` of the pre-registered cut a caller ALREADY validated, before the
+   * one-way holdout lease existed. When present, the cut read below has to be that artifact
+   * byte for byte.
+   *
+   * REQUIRED of a run whose dataset manifest declares `scientificUse: "release"`, and
+   * refused there when absent. "Standalone" is not an exotic path — `benchmark/cli.ts`
+   * dispatches `evaluate` on its own and this option has no flag — so without the
+   * requirement the ordinary CLI form would reach the decision with no reading of the cut
+   * older than the exposure. A release measurement is therefore reachable only from a
+   * caller that read the cut first.
+   *
+   * When it is absent the run is not a release run, and that is a statement about the gate
+   * report rather than about intent: `integrity.scientificUse` reaches benchmark/gates.ts
+   * as `"diagnostic"`, which fails the integrity gate `integrity.scientific-use`, and a
+   * failed integrity gate decides `reject`.
+   *
+   * No flag, for the same reason as `evaluatorRoot`: a flag would let a run declare the
+   * digest of the very file it is about to read.
+   */
+  expectedProvisionalThresholdDigest?: string;
 }
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -134,11 +155,18 @@ interface EvaluatedRow {
  * Which score the calibration statistic of this run was measured over — MEASURED from
  * the numbers, never declared beside them.
  *
- * The answer is the cut's own basis only when every scored item's `documentScore` is
- * the very number its row carries, byte for byte. Any transform anywhere in that
- * mapping makes the answer `document-calibrated-score`, which benchmark/gates.ts
- * refuses against `calibrationGate.scoreBasis` instead of publishing an ECE over a
- * scale the pre-registered hypothesis is not about.
+ * The answer is the cut's own basis only when at least one item is `scored` AND every
+ * scored item's `documentScore` is the very number its row carries, byte for byte. Any
+ * transform anywhere in that mapping makes the answer `document-calibrated-score`, which
+ * benchmark/gates.ts refuses against `calibrationGate.scoreBasis` instead of publishing
+ * an ECE over a scale the pre-registered hypothesis is not about.
+ *
+ * A run in which NOTHING was scored takes the same refusing answer, and that is a
+ * statement about what was measured rather than a defensive default: with no scored row
+ * there is no calibration statistic and therefore no basis it could have been measured
+ * over, so naming the cut's basis would hand the gate a claim about a computation that
+ * did not happen. An unscored row still does not count as a transform — it is the
+ * absence of every scored row that refuses, never the presence of an unscored one.
  *
  * Derived and not restated because a declaration cannot detect its own author: a
  * constant reading `document-raw-score` — whether hand-written or read off the policy
@@ -150,12 +178,15 @@ export function measuredCalibrationScoreBasis(
   cut: CertifyingCut,
   rows: readonly EvaluatedRow[],
 ): MeasuredScoreBasis {
-  const untransformed = rows.every(
-    ({ prediction, item }) =>
-      item.status !== "scored" ||
-      item.documentScore === prediction.documentRawScore,
-  );
-  return untransformed ? cut.basis : "document-calibrated-score";
+  let scoredRows = 0;
+  for (const { prediction, item } of rows) {
+    if (item.status !== "scored") continue;
+    scoredRows += 1;
+    if (item.documentScore !== prediction.documentRawScore) {
+      return "document-calibrated-score";
+    }
+  }
+  return scoredRows === 0 ? "document-calibrated-score" : cut.basis;
 }
 
 /**
@@ -271,6 +302,26 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
   const manifest = validateDatasetManifest(
     await readJsonFile(join(options.datasetDirectory, "manifest.json")),
   );
+  // A release measurement may not be the FIRST reading of the pre-registered cut. The check
+  // this command makes on the cut below is made after the block has been scored — on the
+  // orchestrated path by construction, and on any path with the shards already on disk —
+  // so on its own it cannot tell a blessed cut from one written after someone saw scores.
+  // What tells them apart is the digest a caller took before the lease, and a release run
+  // that arrives without it has nobody who can vouch for the cut.
+  //
+  // Ahead of records.jsonl, which carries `text` and `label` on every record: a run that
+  // has no authority to decide should not read the labels to find that out.
+  if (
+    manifest.scientificUse === "release" &&
+    options.expectedProvisionalThresholdDigest === undefined
+  ) {
+    throw new CommandError(
+      "PROVISIONAL_THRESHOLD_BINDING_REQUIRED",
+      "a release evaluation requires the artifactDigest of the pre-registered cut as read " +
+        "before the holdout lease; run it through consume-holdout, which reads the cut " +
+        "while the block is still blind",
+    );
+  }
   const records = parseBenchmarkDataset(
     await readTextFile(join(options.datasetDirectory, "records.jsonl")),
   );
@@ -289,16 +340,38 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
   // another pair of dev/cal-A prediction manifests, cannot reach a certifying
   // measurement.
   //
-  // BEFORE the two manifests and BEFORE the test predictions, and that order is the
-  // guard: the cut is parsed, digest-checked and bound to all SEVEN governance digests
-  // from bytes the frozen artifact already sealed, while nothing of the blind block has
-  // been read in this process. The orchestrator repeats this check ahead of the lease
-  // (benchmark/commands/consume-holdout.ts); here it also covers a standalone
-  // `evaluate`, and a malformed cut used to reach a bare `TypeError` at this point,
-  // after the shards were open, on a lease that is one-way at `started`.
+  // BEFORE the two prediction manifests, BEFORE the test predictions and BEFORE the labels
+  // file, and that order is what this reading buys: the cut is parsed, digest-checked and
+  // bound to all SEVEN governance digests from bytes the frozen artifact already sealed, so
+  // a malformed or foreign cut is refused with no shard opened — where it used to reach a
+  // bare `TypeError` with the shards already read, on a lease that is one-way at `started`.
+  //
+  // It buys no blindness, and cannot: records.jsonl is read above and carries `text` and
+  // `label` on every record, and on the orchestrated path the whole block was scored before
+  // this function was even called. Blindness is bought by the orchestrator's own reading
+  // ahead of the lease (benchmark/commands/consume-holdout.ts), and the digest comparison
+  // below is what makes that reading and this one the same artifact.
   const provisionalThreshold = parseProvisionalThresholdArtifact(
     await readJsonFile(join(fitDirectory, "provisional-threshold.json")),
   );
+  // The bytes blessed before the lease and the bytes that DECIDE are one artifact, or
+  // there is no decision. The orchestrator's check and this one read the same path at two
+  // different moments, and by the time this one runs the whole blind block has been
+  // scored: a file replaced in between spends the holdout and then decides — or refuses —
+  // on a cut nobody validated while the block was still blind. The digest is what binds
+  // the two readings, because the path is identical in both and so binds nothing.
+  if (
+    options.expectedProvisionalThresholdDigest !== undefined &&
+    provisionalThreshold.artifactDigest !==
+      options.expectedProvisionalThresholdDigest
+  ) {
+    throw new CommandError(
+      "PROVISIONAL_THRESHOLD_SWAPPED_AFTER_CHECK",
+      `the pre-registered cut on disk declares ${provisionalThreshold.artifactDigest}, while the ` +
+        `cut validated before the holdout lease was ${options.expectedProvisionalThresholdDigest}: ` +
+        "no metric was computed and no report was sealed",
+    );
+  }
   validateProvisionalThresholdArtifact(
     provisionalThreshold,
     thresholdBinding(frozen),

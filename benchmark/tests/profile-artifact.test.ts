@@ -2,10 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   DISABLED_THRESHOLD,
+  IDENTITY_CALIBRATOR,
   parseCalibrationProfilesFileV1,
+  type RuntimeCalibrationProfileV1,
 } from "../../contracts/calibration-profile.ts";
 import { parseModelReleaseDescriptorV1 } from "../../contracts/model-release.ts";
-import { buildModelPublication } from "../profile-artifact.ts";
+import {
+  assertServedCutIsTheMeasuredCut,
+  buildModelPublication,
+  type PublicationIdentity,
+} from "../profile-artifact.ts";
 import {
   indicatorInput,
   neverThresholdInput,
@@ -285,6 +291,98 @@ describe("profile artifact — recusas de identidade, data e evidencia", () => {
         },
       }),
     ).rejects.toMatchObject({ code: "PROFILE_CUT_AT_DISABLED_SENTINEL" });
+  });
+
+  // The two halves of the LAST check inside `assertServedCutIsTheMeasuredCut` — the served
+  // localized indicator and the served document action — are unreachable through
+  // `buildModelPublication`: it fixes both at `DISABLED_THRESHOLD` a few lines before the
+  // check runs, so no input to the builder can make either of them fail. A profile
+  // assembled by hand is the only thing that reaches them, which is why the guard is
+  // exported and called directly here.
+  //
+  // The `code` is what is asserted and never the sentence: the message names both fields at
+  // once, so a message match would pass for the wrong field.
+  describe("a profile that serves a path the measurement never applied", () => {
+    const IDENTITY: PublicationIdentity = {
+      modelId: passInput.frozen.model.modelId,
+      modelVersion: passInput.frozen.model.modelVersion,
+      bundleDigest: passInput.frozen.model.bundleDigest,
+      tokenizerDigest: passInput.frozen.model.tokenizerDigest,
+      aggregationVersion: passInput.frozen.model.aggregationVersion,
+      contentCompositionVersion:
+        passInput.frozen.model.contentCompositionVersion,
+      datasetDigest: passInput.frozen.datasetDigest,
+      splitDigest: passInput.frozen.splitDigest,
+      evaluatorDigest: passInput.frozen.evaluatorDigest,
+    };
+
+    /**
+     * A profile that satisfies every OTHER claim of the guard: pass-through calibrators on
+     * both signals and a `documentIndicator` that is the measured cut itself. Only the
+     * threshold named by `overrides` is wrong, so a refusal can come from nothing else.
+     */
+    function servedProfile(
+      overrides: Partial<RuntimeCalibrationProfileV1["thresholds"]>,
+    ): RuntimeCalibrationProfileV1 {
+      return {
+        profileId: "cleanfeed-ptbr-v1::generic::pt-BR::200-plus",
+        calibrators: {
+          document: IDENTITY_CALIBRATOR,
+          localized: IDENTITY_CALIBRATOR,
+        },
+        thresholds: {
+          documentIndicator: passInput.provisionalThreshold.threshold,
+          localizedIndicator: DISABLED_THRESHOLD,
+          documentAction: DISABLED_THRESHOLD,
+          ...overrides,
+        },
+      } as unknown as RuntimeCalibrationProfileV1;
+    }
+
+    it("is admitted while both unmeasured paths are switched off", () => {
+      // The control: without it a refusal below could be coming from any of the guard's
+      // other claims instead of the field the case is about.
+      expect(() =>
+        assertServedCutIsTheMeasuredCut(
+          [servedProfile({})],
+          passInput.provisionalThreshold,
+          IDENTITY,
+        ),
+      ).not.toThrow();
+    });
+
+    it("refuses a served localized indicator, which no gate of this release estimated", () => {
+      let thrown: unknown;
+      try {
+        assertServedCutIsTheMeasuredCut(
+          // Below the sentinel, so `thresholdFires` really would raise a localized trigger.
+          [servedProfile({ localizedIndicator: 0.9 })],
+          passInput.provisionalThreshold,
+          IDENTITY,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({
+        code: "PROFILE_CUT_DIVERGES_FROM_MEASUREMENT",
+      });
+    });
+
+    it("refuses a served document action, which the v1 pre-inscribes nowhere", () => {
+      let thrown: unknown;
+      try {
+        assertServedCutIsTheMeasuredCut(
+          [servedProfile({ documentAction: 0.9 })],
+          passInput.provisionalThreshold,
+          IDENTITY,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({
+        code: "PROFILE_CUT_DIVERGES_FROM_MEASUREMENT",
+      });
+    });
   });
 
   it("refuses gate evidence with a non-finite ECE-15", async () => {

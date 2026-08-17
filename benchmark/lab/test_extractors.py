@@ -2876,34 +2876,63 @@ class PolicyLaneReadTests(unittest.TestCase):
     """The lane table is read at IMPORT time, so how it fails is part of the module.
 
     A bare `KeyError('generationLanes')` surfaces as a crash of whoever imported the
-    module — inside a test function here, and inside the assembly run on the operator's
-    machine — with nothing saying which file was expected to hold what.
+    module — the subprocess the first test below drives, and the assembly run on the
+    operator's machine — with nothing saying which file was expected to hold what.
     """
 
-    def test_a_policy_without_lanes_names_the_file_and_the_block(self) -> None:
+    def test_a_policy_without_lanes_fails_the_import_and_names_the_file(self) -> None:
+        import shutil
+        import subprocess
+
         import assemble_corpus
 
+        # A SUBPROCESS over a COPY of the module, because the read happens while the module
+        # executes: assigning to `assemble_corpus.POLICY_PATH` reaches the helper and never
+        # the module-level statement, and `importlib.reload` recomputes `POLICY_PATH` from
+        # the file's own location. The copy sits one directory below the stand-in policy,
+        # which is what `POLICY_PATH` resolves to. The policy is the live one MINUS the
+        # block, because the module reads `collection` at import time too.
+        lab = Path(assemble_corpus.__file__).resolve().parent
         with tempfile.TemporaryDirectory() as tmp:
+            copied_lab = Path(tmp) / "lab"
+            copied_lab.mkdir()
+            shutil.copy2(assemble_corpus.__file__, copied_lab / "assemble_corpus.py")
             sem_lanes = Path(tmp) / "preregistration-v4.json"
-            sem_lanes.write_text(
-                json.dumps({"policyVersion": "x"}), encoding="utf-8"
+            policy = json.loads(
+                assemble_corpus.POLICY_PATH.read_bytes().decode("utf-8")
             )
-            original = assemble_corpus.POLICY_PATH
-            assemble_corpus.POLICY_PATH = sem_lanes
-            try:
-                with self.assertRaises(assemble_corpus.PolicyLanesUnreadable) as caught:
-                    assemble_corpus.lane_rows()
-            finally:
-                assemble_corpus.POLICY_PATH = original
-            self.assertIn("generationLanes", str(caught.exception))
-            self.assertIn(str(sem_lanes), str(caught.exception))
+            policy.pop("generationLanes")
+            sem_lanes.write_bytes(json.dumps(policy, indent=2).encode("utf-8"))
+            done = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys\n"
+                    f"sys.path.insert(0, {str(lab)!r})\n"
+                    f"sys.path.insert(0, {str(copied_lab)!r})\n"
+                    "import assemble_corpus\n",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(done.returncode, 1, done.stdout)
+            self.assertIn("PolicyLanesUnreadable", done.stderr)
+            self.assertIn("generationLanes", done.stderr)
+            self.assertIn(str(sem_lanes), done.stderr)
+            # The frame that says WHERE the read happened: the module-level statement, and
+            # not a call this test made.
+            self.assertIn("LANE_ROWS = lane_rows()", done.stderr)
 
-    def test_the_live_policy_still_yields_the_frozen_lanes(self) -> None:
+    def test_the_import_time_table_is_the_four_frozen_lanes(self) -> None:
         import assemble_corpus
 
-        lanes = assemble_corpus.lane_rows()
-        self.assertEqual(lanes, frozen_policy()["generationLanes"])
-        self.assertTrue(lanes)
+        # Literals, because reading the same file the module reads compares a value against
+        # itself and any renamed lane satisfies it. These four are the v3 slate's lanes,
+        # and `lane_of` refuses every provider outside the table.
+        self.assertEqual(
+            sorted(assemble_corpus.LANE_ROWS),
+            ["agy", "codex", "gemini-api", "gemini-cli"],
+        )
 
 
 class DeclaredFrameTests(unittest.TestCase):

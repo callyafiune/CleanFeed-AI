@@ -150,7 +150,7 @@ function fail(code: string, message: string): never {
   throw new CalibrationPublicationError(code, message);
 }
 
-interface PublicationIdentity {
+export interface PublicationIdentity {
   modelId: string;
   modelVersion: string;
   bundleDigest: string;
@@ -516,8 +516,14 @@ function assertLengthBandsAreMapped(gates: GateReport): void {
  * must carry pass-through calibrators with that exact threshold. Without this the two
  * halves can drift with nothing failing — a raw score compared against a calibrated cut
  * is still a number, and it is the silent kind of wrong.
+ *
+ * Exported because {@link buildProfile} fixes `localizedIndicator` and `documentAction` at
+ * the disabled sentinel a few lines before this runs, so through
+ * {@link buildModelPublication} the two halves of the last check can only ever be
+ * satisfied. A profile assembled by hand is the only input that reaches them, and the only
+ * way to keep them from being a comment.
  */
-function assertServedCutIsTheMeasuredCut(
+export function assertServedCutIsTheMeasuredCut(
   profiles: readonly RuntimeCalibrationProfileV1[],
   provisionalThreshold: ProvisionalThresholdArtifact,
   identity: PublicationIdentity,

@@ -29,12 +29,18 @@ import {
   EVIDENCE_FILE_NAMES,
   type EvidenceInput,
 } from "../evidence-sanitizer.ts";
-import { parseProvisionalThresholdArtifact } from "../provisional-threshold.ts";
+import {
+  parseProvisionalThresholdArtifact,
+  validateProvisionalThresholdArtifact,
+  type ProvisionalThresholdArtifact,
+  type ThresholdDigests,
+} from "../provisional-threshold.ts";
 import { BenchmarkReportError, parseBenchmarkReport } from "../report.ts";
 import {
   assertSplitArtifactSelfConsistent,
   type SplitArtifact,
 } from "../split-artifact.ts";
+import { thresholdBinding } from "./evaluate.ts";
 import { CommandError, readJsonFile, readTextFile } from "./io.ts";
 import { runVerifyEvidence } from "./verify-evidence.ts";
 
@@ -58,22 +64,37 @@ interface LedgerEvent {
 }
 
 /**
- * Re-parses the ONE block of `fit-report.json` the public projection dereferences.
+ * Re-parses and BINDS the ONE block of `fit-report.json` the public projection
+ * dereferences.
  *
  * The file itself is still read through a cast, which is a declared debt: what this
  * closes is the consequence of the cast at the only place it is followed by a
  * dereference. A fit report written by a `fit` that froze no cut — or one whose cut block
  * was edited — would otherwise reach a bare `TypeError` in the middle of assembling the
  * public bundle, and the artifact's own closed parser already names the offending path.
+ *
+ * Parsing is the SHAPE and nothing more, so the block is also put through the artifact's
+ * own validator against this run's `boundTo`: the sanitizer publishes this cut's value,
+ * population and `artifactDigest` as the cut the release decided on, and a well-formed
+ * block that does not recompute to its own digest — or that is bound to another dataset,
+ * split, evaluator, audit, readiness report or pair of dev/cal-A manifests, or restates a
+ * pre-registration the reader does not have — is a different cut wearing the shape of
+ * this one.
+ *
+ * What the validator covers is the seal and the seven bindings; the threshold VALUE is
+ * inside the seal it recomputes, so a re-sealed edit of the value is caught by the
+ * governance comparison only when it also moved a bound field. `publish-profile` is where
+ * the served number is compared against `provisional-threshold.json` on disk, and that
+ * file is not an input here.
  */
-function withParsedCut(fitReport: FitReport, path: string): FitReport {
+function withParsedCut(
+  fitReport: FitReport,
+  path: string,
+  boundTo: ThresholdDigests,
+): FitReport {
+  let cut: ProvisionalThresholdArtifact;
   try {
-    return {
-      ...fitReport,
-      provisionalThreshold: parseProvisionalThresholdArtifact(
-        fitReport.provisionalThreshold,
-      ),
-    };
+    cut = parseProvisionalThresholdArtifact(fitReport.provisionalThreshold);
   } catch (error) {
     throw new CommandError(
       "FIT_REPORT_CUT_MALFORMED",
@@ -81,6 +102,16 @@ function withParsedCut(fitReport: FitReport, path: string): FitReport {
         `${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  try {
+    validateProvisionalThresholdArtifact(cut, boundTo);
+  } catch (error) {
+    throw new CommandError(
+      "FIT_REPORT_CUT_FOREIGN",
+      `${path}: $.provisionalThreshold is not the cut this run froze — ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return { ...fitReport, provisionalThreshold: cut };
 }
 
 function requireEqual(label: string, actual: string, expected: string): void {
@@ -196,10 +227,7 @@ export async function runPublishEvidence(
         "composition attestation",
     );
   }
-  const fitReport = withParsedCut(
-    (await readJsonFile(options.fitReportPath)) as FitReport,
-    options.fitReportPath,
-  );
+  const rawFitReport = (await readJsonFile(options.fitReportPath)) as FitReport;
 
   const release = await parseModelReleaseDescriptorV1(
     await readJsonFile(join(options.modelDirectory, "release.json")),
@@ -286,8 +314,19 @@ export async function runPublishEvidence(
   );
   requireEqual(
     "fit calibration digest",
-    fitReport.calibrationArtifactDigest,
+    rawFitReport.calibrationArtifactDigest,
     frozen.artifactDigest,
+  );
+
+  // AFTER the fifteen comparisons above, and the order is the argument: the binding is
+  // `thresholdBinding(frozen)`, so `frozen` has to be the calibration of THIS report before
+  // it can say whether the cut belongs to this run. Run one step earlier, this refusal would
+  // also be what a mismatched `--frozen-calibration` reaches, and it would name the cut for
+  // a file the operator aimed wrongly.
+  const fitReport = withParsedCut(
+    rawFitReport,
+    options.fitReportPath,
+    thresholdBinding(frozen),
   );
 
   // The completed, matching ledger event is the last precondition.

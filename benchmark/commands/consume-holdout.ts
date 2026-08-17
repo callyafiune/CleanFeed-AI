@@ -24,6 +24,16 @@
 //     `--resume`, and no other candidate can reopen that block.
 //   - `--resume-consumption` reopens ONLY the same id under the identical tuple;
 //     it can never mint a new id, and a fresh run of a consumed tuple is refused.
+//     It also cannot re-bless the pre-registered cut: the block it reopens is already
+//     spent, so the cut on disk has to be the one the first attempt recorded in
+//     `pre-exposure-check.json` before it scored anything. What is asserted about that
+//     record is scoped to the LEDGER the run is pointed at: a fresh run over a block
+//     that ledger records as spent is refused BEFORE it reaches the write that would
+//     replace the record. What is NOT asserted is the pair of arguments the caller
+//     chooses — the receipt is keyed only by `--work-dir` and carries no block
+//     identity, so a run pointed at a different `--ledger`, or a legitimate run over a
+//     DIFFERENT block that shares the work directory, does replace it. Both sequences
+//     are measured and open; see the debt row in `docs/ESTADO.md` § 7.
 //   - A recognized irrecoverable failure (a candidate that fails identity/parity
 //     verification, or an invalid shard set) is declared via
 //     `failHoldoutConsumption`; `completed` and `failed` are terminal and stay
@@ -57,6 +67,7 @@ import {
 } from "../digests.ts";
 import type { ReleaseDecision } from "../gates.ts";
 import {
+  assertHoldoutAvailable,
   assertHoldoutLedgerPresent,
   beginHoldoutConsumption,
   failHoldoutConsumption,
@@ -175,25 +186,52 @@ export async function runConsumeHoldout(
     frozen.evaluatorDigest,
   );
   const preExposureFiles = await observeEvaluatorFiles(evaluatorRoot);
-  // The pre-registered cut, parsed and bound to the frozen seal HERE — before the
-  // ledger, before the marker, before a single blind-block byte. `evaluate` reads the
-  // same file and repeats the same two checks, but it runs after the block has been
-  // scored: on this path a truncated or foreign cut would otherwise be discovered with
+  const preExposureReceiptPath = join(
+    options.workDirectory,
+    PRE_EXPOSURE_RECEIPT_FILE,
+  );
+  // The pre-registered cut, parsed and bound to the frozen seal HERE, in the same stretch
+  // as the evaluator check: all seven digests come off `frozen`, which is what makes the
+  // check possible before any file but the frozen artifact has been opened. `evaluate`
+  // reads the same file and repeats the same two checks, but it runs after the block has
+  // been scored: without this reading a truncated or foreign cut would be discovered with
   // the lease already `started`, which spends the block to learn that a JSON file is
-  // malformed. Nothing of the corpus has been read at this point either, so a refusal
-  // here costs the run and nothing else. All seven digests come off `frozen`, which is
-  // what makes the check possible this early.
-  validateProvisionalThresholdArtifact(
-    parseProvisionalThresholdArtifact(
-      await readJsonFile(
-        join(
-          dirname(options.frozenCalibrationPath),
-          "provisional-threshold.json",
-        ),
+  // malformed.
+  //
+  // On a FRESH run this stretch also sits before the ledger, before the marker and before
+  // the first blind-block byte — records.jsonl, read below, carries `text` and `label` on
+  // every record — so the reading is a BLESSING taken while the block was still blind, and
+  // a refusal costs the run and nothing else.
+  //
+  // On a `--resume-consumption` none of that holds: the previous attempt already wrote
+  // `started`, already left the marker and already scored the block. The parse and the
+  // binding still run, and they still refuse a malformed or foreign artifact, but they are
+  // not a blessing — a cut first put on disk after the exposure would satisfy both. What
+  // stands in for the blessing there is the guard below, which binds the retry to the
+  // digest the first attempt recorded before it spent the block.
+  //
+  // The parsed artifact is KEPT, and that is what makes this a check on the cut that
+  // decides rather than on a file that happened to be valid once: its `artifactDigest`
+  // travels to `runEvaluate` below, which reads the same path again after the block has
+  // been scored and refuses anything but these bytes.
+  const preExposureCut = parseProvisionalThresholdArtifact(
+    await readJsonFile(
+      join(
+        dirname(options.frozenCalibrationPath),
+        "provisional-threshold.json",
       ),
     ),
+  );
+  validateProvisionalThresholdArtifact(
+    preExposureCut,
     thresholdBinding(frozen),
   );
+  if (options.resumeConsumptionId !== undefined) {
+    await assertResumedCutWasBlessedBeforeTheExposure(
+      preExposureReceiptPath,
+      preExposureCut.artifactDigest,
+    );
+  }
 
   const manifest = validateDatasetManifest(
     await readJsonFile(join(options.datasetDirectory, "manifest.json")),
@@ -242,23 +280,61 @@ export async function runConsumeHoldout(
         "--confirm-split-digest does not match the frozen split artifact splitDigest",
       );
     }
+    // The block's availability is read HERE, ahead of the receipt write, because the guard
+    // on the resume branch compares the cut on disk against a FILE — so a fresh invocation
+    // that reaches the write over a spent block replaces the very record that guard reads,
+    // and the retry then agrees with whatever cut the second invocation found.
+    // `beginHoldoutConsumption` refuses that invocation with this same code, but it does so
+    // after the write, which is too late to keep the record intact.
+    //
+    // The authority is the LEDGER and not the presence of the receipt: the receipt lives in
+    // the work directory, so keying the refusal on it would let deleting one file turn a
+    // spent block back into a writable blessing. `assertHoldoutAvailable` is the same
+    // function `beginHoldoutConsumption` runs under the ledger lock, so the two cannot
+    // disagree about what "spent" means; this call is not the enforcement — that stays under
+    // the lock — it only keeps a doomed invocation away from the record.
+    //
+    // The residue, measured and open: both of this guard's inputs are chosen by the caller.
+    // A run pointed at an empty `--ledger` reads the block as unspent and writes the record
+    // again, and a legitimate run over a DIFFERENT block sharing the `--work-dir` overwrites
+    // it too, because the receipt carries no block identity. Closing that needs the receipt
+    // keyed by the consumption, which is a unit of its own (`docs/ESTADO.md` § 7).
+    await assertHoldoutAvailable(options.ledgerPath, identity);
   }
 
-  // The durable receipt of the check is the `started` event itself: its
-  // `evaluatorDigest` now equals bytes confirmed on disk moments earlier. This file
-  // is only a readable copy for an auditor, and it must NOT become a ledger line —
-  // `latestForId` returns the last event for an id, so a stray line would make
-  // resume and complete read a live session as terminal.
-  await writeJsonAtomic(
-    join(options.workDirectory, PRE_EXPOSURE_RECEIPT_FILE),
-    {
-      schemaVersion: 1,
-      frozenEvaluatorDigest: frozen.evaluatorDigest,
-      observedEvaluatorDigest,
-      files: preExposureFiles,
-      checkedAt: now(),
-    },
-  );
+  // The durable receipt of the EVALUATOR check is the `started` event itself: its
+  // `evaluatorDigest` now equals bytes confirmed on disk moments earlier, so for that half
+  // this file is only a readable copy. For the CUT it is not a copy of anything — no ledger
+  // field carries the cut — which is what a resume comes back to read. Either way it must
+  // NOT become a ledger line: `latestForId` returns the last event for an id, so a stray
+  // line would make resume and complete read a live session as terminal.
+  //
+  // `provisionalThresholdArtifactDigest` is the cut this attempt read before it opened or
+  // reopened the session. On a fresh run that reading is the blessing, taken while the
+  // block was still blind. On a resume the block is already spent, so this field is not a
+  // new blessing: the guard above has already required it to equal the digest the first
+  // attempt recorded, and rewriting it here can only put the same value back — which is
+  // also why reading the receipt has to stay AHEAD of this write, since a write that came
+  // first would leave the guard comparing the file against itself.
+  //
+  // That ordering is WITHIN one call, and on its own it protects nothing: a second
+  // invocation is a fresh run, so it never reaches that guard and arrives here with its own
+  // reading to write. What keeps this line out of its reach is the availability check above,
+  // which refuses a fresh run over a spent block before the write.
+  //
+  // The refusal on the deciding side lives in `runEvaluate` and needs no file. What this
+  // copy is for is a link the published bundle cannot make on its own, because it does not
+  // carry this file: `fit-summary.json` publishes the cut's `artifactDigest`, and matching
+  // that digest against the cut checked before the lease needs the receipt in the run's
+  // work directory.
+  await writeJsonAtomic(preExposureReceiptPath, {
+    schemaVersion: 1,
+    frozenEvaluatorDigest: frozen.evaluatorDigest,
+    observedEvaluatorDigest,
+    provisionalThresholdArtifactDigest: preExposureCut.artifactDigest,
+    files: preExposureFiles,
+    checkedAt: now(),
+  });
 
   // Open (or reopen) the single atomic session. A resume rescores everything and
   // rewrites the shards, so it is fresh exposure and gets the same check.
@@ -381,6 +457,13 @@ export async function runConsumeHoldout(
 
   // Delegate metrics, slices, the gate report and the terminal `completed`
   // ledger event to the frozen Phase 2 evaluator under the SAME consumption id.
+  //
+  // `expectedProvisionalThresholdDigest` is the whole reason the cut is parsed above
+  // instead of being validated and dropped: `runEvaluate` re-reads
+  // `provisional-threshold.json`, and it is the ONLY reading that decides. Handing the
+  // pre-lease digest down is what makes the blessed artifact and the deciding artifact
+  // the same one; without it the check above proves something about bytes that no longer
+  // have to be on disk.
   await runEvaluate({
     datasetDirectory: options.datasetDirectory,
     splitArtifactPath: options.splitArtifactPath,
@@ -392,6 +475,7 @@ export async function runConsumeHoldout(
     outputDirectory: options.outputDirectory,
     bootstrapSeed: options.bootstrapSeed,
     evaluatorRoot: deps.evaluatorRoot,
+    expectedProvisionalThresholdDigest: preExposureCut.artifactDigest,
   });
 
   const gateReport = (await readJsonFile(
@@ -443,9 +527,61 @@ async function writeExposureIncident(
   });
 }
 
-// The receipt is a local convenience file and therefore deletable: an unreadable
-// one yields `null`, which the incident reports as `receiptMissing` instead of
-// claiming an empty change set.
+/**
+ * Binds a `--resume-consumption` attempt to the cut the FIRST attempt recorded before it
+ * exposed the block.
+ *
+ * A resume cannot bless a cut: by the time it runs the block has been scored, so an
+ * artifact that is impeccable in isolation — recomputing to its own digest and bound to
+ * the same seven governance digests — may still have been chosen after someone read
+ * partial scores. Validating it again would accept exactly that, which is why the retry is
+ * compared against the recorded digest instead.
+ *
+ * The receipt is the only place that digest survives: the `started` ledger event carries
+ * the scientific tuple and not the cut. So a receipt that no longer records one is a
+ * refusal and never a fresh blessing, and the asymmetry is deliberate — the block is spent
+ * either way, and the run that cannot be bound is the one that must not produce a claim.
+ */
+async function assertResumedCutWasBlessedBeforeTheExposure(
+  receiptPath: string,
+  onDiskDigest: string,
+): Promise<void> {
+  const blessed = await readBlessedCutDigest(receiptPath);
+  if (blessed === null) {
+    throw new CommandError(
+      "PRE_EXPOSURE_RECEIPT_CUT_MISSING",
+      `${receiptPath} records no pre-exposure cut digest, so this resume cannot be bound ` +
+        "to a cut checked while the block was still blind",
+    );
+  }
+  if (blessed !== onDiskDigest) {
+    throw new CommandError(
+      "PROVISIONAL_THRESHOLD_SWAPPED_BEFORE_RESUME",
+      `the pre-registered cut on disk declares ${onDiskDigest}, while the cut checked ` +
+        `before this session spent the block was ${blessed}: a resume may not bless a new cut`,
+    );
+  }
+}
+
+// The digest the receipt records for the pre-registered cut, or `null` when the file
+// cannot be read or does not carry one.
+async function readBlessedCutDigest(path: string): Promise<string | null> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readTextFile(path));
+  } catch {
+    return null;
+  }
+  const digest = (parsed as { provisionalThresholdArtifactDigest?: unknown })
+    .provisionalThresholdArtifactDigest;
+  return typeof digest === "string" ? digest : null;
+}
+
+// The incident tolerates a receipt it cannot read: `null` here is reported as
+// `receiptMissing` instead of as an empty change set. The tolerance is this writer's alone
+// — {@link assertResumedCutWasBlessedBeforeTheExposure} refuses on the same absence —
+// because a resume needs the file to know WHICH cut was blessed, while an incident is
+// already the news that the block was spent without a claim.
 async function readPreExposureFileDigests(
   path: string,
 ): Promise<Map<string, string> | null> {

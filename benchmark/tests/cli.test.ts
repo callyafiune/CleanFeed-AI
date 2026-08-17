@@ -116,6 +116,39 @@ describe("benchmark CLI parsing and dispatch", () => {
     ).rejects.toThrow(/unknown flag --bogus/u);
   });
 
+  it("keeps the pre-registered cut's binding off the evaluate command line", async () => {
+    // `expectedProvisionalThresholdDigest` is what makes the cut a release evaluation
+    // decides on the cut somebody validated BEFORE the one-way lease. A flag would let a
+    // run declare the digest of the very file it is about to read, and would hand the CLI
+    // the authority the refusal in `runEvaluate` exists to deny it. The closed flag list is
+    // what forbids it, and this is the assertion that keeps the doc of that option honest.
+    await expect(
+      runCli([
+        "evaluate",
+        "--dataset-dir",
+        "d",
+        "--split-artifact",
+        "split.json",
+        "--frozen-calibration",
+        "frozen.json",
+        "--test-predictions",
+        "predictions",
+        "--test-labels",
+        "labels.jsonl",
+        "--ledger",
+        "ledger.jsonl",
+        "--consumption-id",
+        "sessao",
+        "--output",
+        "out",
+        "--bootstrap-seed",
+        "712019",
+        "--expected-provisional-threshold-digest",
+        "0".repeat(64),
+      ]),
+    ).rejects.toThrow(/unknown flag --expected-provisional-threshold-digest/u);
+  });
+
   it("requires validate's mandatory flags", async () => {
     await expect(runCli(["validate", "--dataset-dir", "d"])).rejects.toThrow(
       /--output/u,
@@ -699,12 +732,18 @@ function record(
   return base;
 }
 
-function datasetManifest(): DatasetManifest {
+// `scientificUse` is a PARAMETER because it is what decides whether `evaluate` may run
+// without a caller that read the pre-registered cut before the lease, and the digests below
+// are derived from this object: a scenario that declared one use and sealed another would
+// not validate at all.
+function datasetManifest(
+  scientificUse: DatasetManifest["scientificUse"] = "infrastructure-only",
+): DatasetManifest {
   return {
     schemaVersion: 1,
     datasetId: "cleanfeed-ptbr-cells-v1",
     version: "1.0.0",
-    scientificUse: "infrastructure-only",
+    scientificUse,
     intendedLanguage: "pt-BR",
     intendedDomain: "scoped-cells",
     createdAt: "2026-07-19T00:00:00.000Z",
@@ -882,7 +921,10 @@ interface Scenario {
   identity: HoldoutIdentity;
 }
 
-async function buildScenario(root: string): Promise<Scenario> {
+async function buildScenario(
+  root: string,
+  scientificUse: DatasetManifest["scientificUse"] = "infrastructure-only",
+): Promise<Scenario> {
   recordCounter = 0;
   // The eight rows the assertions below name, plus filler that makes the split satisfy
   // the frozen 45/5/10/20/20 per class. The sealed audit is re-derived from these records
@@ -955,7 +997,7 @@ async function buildScenario(root: string): Promise<Scenario> {
     ...calBPad,
     ...testPad,
   ];
-  const manifest = datasetManifest();
+  const manifest = datasetManifest(scientificUse);
   const datasetDir = join(root, "dataset");
   await mkdir(join(datasetDir, "private"), { recursive: true });
   await writeFile(
@@ -1302,6 +1344,55 @@ describe("benchmark CLI holdout consumption via evaluate", () => {
         scenario.identity,
       ),
     ).rejects.toThrow(/holdout session is terminal/u);
+  });
+
+  // The refusal that makes `expectedProvisionalThresholdDigest` REQUIRED of a release run
+  // is justified by what the CLI can do, so it is asserted at the CLI and not in process:
+  // `runCli` reaches `runEvaluate` through a closed flag list that has no way to name the
+  // binding, so over a release corpus the ordinary command line is exactly the run that has
+  // nobody to vouch for the cut. The test above is the other half of the pair — the same
+  // command line over an `infrastructure-only` corpus runs to a sealed report — so what is
+  // measured here is the manifest's declared use and not the shape of the invocation.
+  it("refuses a release evaluation driven through the CLI, which can name no cut read before the lease", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cf-bench-cli-eval-release-"));
+    created.push(root);
+    const scenario = await buildScenario(root, "release");
+
+    await expect(
+      runCli([
+        "evaluate",
+        "--dataset-dir",
+        scenario.datasetDir,
+        "--split-artifact",
+        scenario.splitArtifactPath,
+        "--frozen-calibration",
+        scenario.frozenCalibrationPath,
+        "--test-predictions",
+        join(root, "placeholder"),
+        "--test-labels",
+        scenario.testLabelsPath,
+        "--ledger",
+        scenario.ledgerPath,
+        "--consumption-id",
+        "sessao",
+        "--output",
+        scenario.outputDir,
+        "--bootstrap-seed",
+        "712019",
+      ]),
+    ).rejects.toMatchObject({
+      code: "PROVISIONAL_THRESHOLD_BINDING_REQUIRED",
+    });
+
+    // Refused with nothing decided: the CLI form never gets far enough to seal a report or
+    // to touch the lease, which is what "reachable only from a caller that read the cut
+    // first" has to mean for a one-way block.
+    await expect(
+      stat(join(scenario.outputDir, "gate-report.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      stat(join(scenario.outputDir, "benchmark-report.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
