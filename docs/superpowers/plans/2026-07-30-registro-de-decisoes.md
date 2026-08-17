@@ -8593,3 +8593,23 @@ pelo que a rodada de hoje mediu.
 Nada da onda 2. As cinco unidades antigas continuam devendo o fechamento do que a onda anterior deixou aberto
 na § 7 — o recibo de `consume-holdout` chaveado pela consumação —, e isso é unidade própria, não revisão
 nova.
+
+### O que saiu do ESTADO depois da onda 2, e por quê (2026-08-17)
+
+Duas linhas deixaram de descrever o que É, e a fonte da verdade não pode carregar alegação vencida:
+
+- **§ 4, a dívida de codex das unidades que carregavam só revisão do Fable.** A linha nomeava **Fase 1
+  Commit E** (gate de composição) e **Fase 1 Commit F** (preflight de viabilidade) como devedoras. As duas
+  tiveram rodada de codex em 2026-08-16/17 — é dela que saíram os quinze achados desta onda, todos fechados
+  com bateria. A linha ficou com **R1** e **R2**, que continuam devendo, e a trava perdeu a data impressa:
+  ler a data que a mensagem de cota imprime como promessa de retorno é o erro que a própria § 7 registra
+  como regra de leitura;
+- **§ 7, "rodada 13 do cross-review do E2: nunca rodou".** Rodou. O mandato desta onda rotula sete dos
+  quinze achados como `e2-r13-cinco-particoes`, e os sete estão fechados. A linha saiu inteira em vez de
+  ser reescrita, porque não sobrou dívida a descrever: as doze rodadas anteriores tinham veredito e agora a
+  décima terceira também tem.
+
+O que **não** mudei, e a razão: a fila de dez unidades (§ 7) continua dizendo que a dívida que resta é a de
+codex, porque ela fala de outra fila — os 23 bloqueantes da auditoria de 2026-08-10, mais as 14 de
+pré-publicação e as 31 menores. Nenhum achado desta onda mordeu naquela lista, então mexer nela seria
+declarar pago o que não foi.
