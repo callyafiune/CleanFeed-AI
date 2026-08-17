@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { GateReport } from "../gates.ts";
+import type { GateReport, GateResult } from "../gates.ts";
 import { declaredResamplingPlan, type EvaluationMetrics } from "../metrics.ts";
 import type {
   ResamplingDemotion,
@@ -14,6 +14,7 @@ import {
   buildBenchmarkReport,
   mixedRecallSection,
   renderReportMarkdown,
+  reportDigestInput,
   ReportGovernanceError,
   type BenchmarkReportInput,
   type GovernanceSeal,
@@ -1046,6 +1047,162 @@ describe("reportDigest seals governance, session and the three executions", () =
     expect(promoted.reportDigest).not.toBe(base.reportDigest);
     expect(promoted.releaseDecision).toBe("pass");
   });
+
+  // `parseBenchmarkReport`'s contract enumerates, field by field, which parts of a gate
+  // the seal leaves out. That is a COMPLEMENT claim, and a paragraph cannot hold one: it
+  // is true only while the projection and the gate shape both stay where they were. So
+  // both lists are asserted, and the complement is computed rather than retyped.
+  it("projects these facts of the report and these fields of each gate, and nothing else", async () => {
+    // FOUR gates, because one gate cannot tell a uniform projection from a conditional
+    // one — the default fixture publishes exactly one, so the loop below would read a
+    // single shape and call it every gate's. The four differ in the conditions the
+    // paragraph below names, and each condition is realized by one of them: the fixture's
+    // overall diagnostic interval gate of the WARNING tier; a slice-scoped certifying gate
+    // of the same tier carrying `hypothesis`, `slice`, `populationSize` and `simultaneous`;
+    // an integrity boolean carrying `hypothesis` and none of the other three; and a gate of
+    // the ACTION tier, which is the tier `profile-artifact.ts` filters by equality and the
+    // one no other gate here has.
+    const overall = gateReport().gates.at(0);
+    if (overall === undefined) {
+      throw new Error("the gate fixture built no gate to vary");
+    }
+    const report = await buildBenchmarkReport(
+      baseInput({
+        gates: gateReport({
+          gates: [
+            overall,
+            {
+              ...overall,
+              id: "warning.fpr.slice.humanSourceType.ptwiki",
+              role: "certifying",
+              hypothesis: "fpr-ptwiki",
+              scope: "slice",
+              slice: { axis: "humanSourceType", key: "ptwiki" },
+              estimand: "warning.fpr.slice",
+              populationSize: 2_100,
+              simultaneous: { familyAlpha: 0.05, m: 4, alpha: 0.0125 },
+            },
+            {
+              id: "integrity.scientific-use",
+              tier: "integrity",
+              role: "certifying",
+              hypothesis: "integrity",
+              scope: "overall",
+              evidence: "not-applicable",
+              observed: null,
+              bound: "exact",
+              operator: "==",
+              required: true,
+              sampleSize: 0,
+              eligible: true,
+              passed: true,
+              reasons: [],
+            },
+            {
+              ...overall,
+              id: "action.available",
+              tier: "action",
+              role: "diagnostic",
+              estimand: undefined,
+            },
+          ],
+        }),
+      }),
+    );
+    const sealed = reportDigestInput(report) as Record<string, unknown>;
+    expect(Object.keys(sealed).sort()).toEqual([
+      "calibrationArtifactDigest",
+      "dataset",
+      "datasetAuditDigest",
+      "evaluatorDigest",
+      "gates",
+      "holdoutConsumptionId",
+      "model",
+      "predictionManifestDigests",
+      "releaseDecision",
+      "runtimeParityDigest",
+      "scoringRuntime",
+      "sourceReadinessDigest",
+      "splitDigest",
+      "splitStrategy",
+    ]);
+
+    const fingerprint = sealed.gates as {
+      gates: ReadonlyArray<Record<string, unknown>>;
+    };
+    // "each gate" is read off EVERY projected gate, not off the first one. The projection
+    // is one object literal per gate, so a field added under a condition on the gate — an
+    // index, a tier, a slice scope — would be sealed on some gates and invisible to a key
+    // set taken from `gates[0]`. The length is pinned to the policy's own gate count for
+    // the mirror-image hole: a gate dropped from the projection is a gate the seal stops
+    // covering, and every key set would still match.
+    expect(fingerprint.gates.length).toBe(report.gates.gates.length);
+    expect(fingerprint.gates.length).toBeGreaterThan(1);
+    const projected = [
+      "eligible",
+      "evidence",
+      "hypothesis",
+      "id",
+      "passed",
+      "role",
+      "scope",
+      "slice",
+      "tier",
+    ];
+    for (const [index, gate] of fingerprint.gates.entries()) {
+      expect(Object.keys(gate).sort(), `projected gate ${index}`).toEqual(
+        projected,
+      );
+    }
+
+    // Every field a `GateResult` can carry, present at once. `Required<GateResult>` is
+    // what makes this a list of the TYPE's fields: the optional ones are absent from a
+    // gate the policy built, so a key set read off `report.gates.gates[0]` would call an
+    // unsealed field sealed by its own absence — and a field added to `GateResult` stops
+    // this literal compiling instead of quietly widening the complement below.
+    const complete: Required<GateResult> = {
+      id: "warning.fpr.overall",
+      tier: "warning",
+      role: "certifying",
+      hypothesis: "recall-at-threshold",
+      scope: "slice",
+      slice: { axis: "humanSourceType", key: "ptwiki" },
+      estimand: "warning.fpr",
+      evidence: "present",
+      observed: 0.01,
+      bound: "simultaneous-upper",
+      operator: "<=",
+      required: 0.05,
+      sampleSize: 2_000,
+      populationSize: 2_100,
+      eligible: true,
+      passed: true,
+      descriptive: {
+        bound: "upper95",
+        value: 0.012,
+        confidence: 0.95,
+        role: "descriptive",
+      },
+      simultaneous: { familyAlpha: 0.05, m: 7, alpha: 0.05 / 7 },
+      reasons: [],
+    };
+    expect(
+      Object.keys(complete)
+        .filter((field) => !projected.includes(field))
+        .sort(),
+    ).toEqual([
+      "bound",
+      "descriptive",
+      "estimand",
+      "observed",
+      "operator",
+      "populationSize",
+      "reasons",
+      "required",
+      "sampleSize",
+      "simultaneous",
+    ]);
+  });
 });
 
 // --- markdown -------------------------------------------------------------
@@ -1201,7 +1358,10 @@ describe("renderReportMarkdown", () => {
 
   it("publishes the material-assistance recall beside its floor, with no verdict cell", async () => {
     const base = metrics();
-    const mixedRow = async (warningRecall: number): Promise<string> => {
+    const mixedRow = async (
+      warningRecall: number,
+      sampleSize: number,
+    ): Promise<string> => {
       const markdown = renderReportMarkdown(
         await buildBenchmarkReport(
           baseInput({
@@ -1211,6 +1371,7 @@ describe("renderReportMarkdown", () => {
                 ...base.mixed,
                 atLeastHalfAi: {
                   ...base.mixed.atLeastHalfAi,
+                  sampleSize,
                   warningRecall,
                   warningRecallLower95: warningRecall - 0.1,
                 },
@@ -1232,11 +1393,17 @@ describe("renderReportMarkdown", () => {
     // the other. A `toContain("0.5")` would be satisfied by the AI-fraction sentence
     // in the section's own prose.
     const floor = PREREGISTRATION_V4.materialAssistance.minimumWarningRecall;
-    expect(await mixedRow(0.3)).toBe(
+    expect(await mixedRow(0.3, 100)).toBe(
       `| mechanistic | 100 | 0.3000 | 0.2000 | ${floor.toFixed(4)} |`,
     );
-    expect(await mixedRow(0.8)).toBe(
+    expect(await mixedRow(0.8, 100)).toBe(
       `| mechanistic | 100 | 0.8000 | 0.7000 | ${floor.toFixed(4)} |`,
+    );
+    // A THIRD n, measured and neither 100 nor 0. With only those two the n cell is
+    // satisfied by a constant carrying one branch for the empty cohort, which is what
+    // the assertion right below this one would then be measuring.
+    expect(await mixedRow(0.8, 37)).toBe(
+      `| mechanistic | 37 | 0.8000 | 0.7000 | ${floor.toFixed(4)} |`,
     );
 
     const markdown = renderReportMarkdown(
@@ -1246,8 +1413,10 @@ describe("renderReportMarkdown", () => {
     expect(table).toContain(
       "- Papel: diagnostic · decide release: não · gasta alpha: não",
     );
-    // No verdict cell anywhere in the section: the gate table prints these two words
-    // and this section must not.
+    // These are the two WORDS the gate table's verdict column prints, and they are absent
+    // here. The property behind them — that nothing in the section is a function of the
+    // ORDER between the observed recall and the floor — is not a vocabulary question and
+    // is measured by the test below.
     expect(table).not.toContain("passou");
     expect(table).not.toContain("reprovou");
     // Both rearm conditions appear. This is a PRESENCE check and nothing more — a
@@ -1256,6 +1425,78 @@ describe("renderReportMarkdown", () => {
     for (const condition of PREREGISTRATION_V4.materialAssistance
       .rearmRequires) {
       expect(table).toContain(`- \`${condition}\``);
+    }
+  });
+
+  it("renders one section for a recall under, at and over the floor, differing only in the metric cells", () => {
+    // What "no verdict" MEANS, operationally: the section is a function of `observed` and
+    // `floor` that does not depend on the ORDER between the two. Absence of the words
+    // "passou"/"reprovou" is a vocabulary check and is blind to every other way a
+    // comparison shows up — a new cell, an extra line, a "abaixo do piso", a symbol.
+    const FLOOR = 0.42;
+    const GAP = 0.05;
+    const DISTANCE = 0.1;
+    const policy = {
+      ...PREREGISTRATION_V4.materialAssistance,
+      minimumWarningRecall: FLOOR,
+    };
+    const OBSERVED = [FLOOR - DISTANCE, FLOOR, FLOOR + DISTANCE];
+    const renderings = OBSERVED.map((warningRecall) =>
+      mixedRecallSection(
+        {
+          generationMode: "mechanistic",
+          // Neither the fixture's 100 nor the empty cohort's 0: the n cell is read at this
+          // same site, and two values cannot separate a read from a constant with one
+          // branch for the empty cohort.
+          sampleSize: 37,
+          warningRecall,
+          warningRecallLower95: warningRecall - GAP,
+        },
+        policy,
+      ),
+    );
+
+    // Every digit erased, so what is compared is the lines, the cells and the words. A
+    // section that gained a word, a column or a line on one side of the floor differs
+    // here, whatever that addition says.
+    const skeletons = renderings.map((lines) =>
+      lines.join("\n").replace(/\d/gu, "#"),
+    );
+    expect(skeletons[1]).toBe(skeletons[0]);
+    expect(skeletons[2]).toBe(skeletons[0]);
+
+    // And among the numbers, only the two metric cells move. Without this the check above
+    // stays green for a section that printed the distance to the floor as a flat zero
+    // whenever the recall cleared it.
+    const grids = renderings.map((lines) =>
+      lines.map((line) => line.split("|")),
+    );
+    const moved: string[] = [];
+    grids[0].forEach((cells, lineIndex) => {
+      cells.forEach((cell, cellIndex) => {
+        if (!grids.every((grid) => grid[lineIndex]?.[cellIndex] === cell)) {
+          moved.push(`${lineIndex}:${cellIndex}`);
+        }
+      });
+    });
+    const rowIndex = renderings[0].findIndex((line) =>
+      line.startsWith("| mechanistic |"),
+    );
+    expect(rowIndex).toBeGreaterThan(-1);
+    expect(moved).toEqual([`${rowIndex}:3`, `${rowIndex}:4`]);
+    // WHICH cells those two positions are, so the pair above is a location and not two
+    // numerals: the observed recall and its descriptive lower bound, with the cohort, the
+    // n and the floor holding still in the other three.
+    for (const [index, warningRecall] of OBSERVED.entries()) {
+      expect(grids[index][rowIndex].map((cell) => cell.trim())).toEqual([
+        "",
+        "mechanistic",
+        "37",
+        warningRecall.toFixed(4),
+        (warningRecall - GAP).toFixed(4),
+        FLOOR.toFixed(4),
+        "",
+      ]);
     }
   });
 

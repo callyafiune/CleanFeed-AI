@@ -538,8 +538,8 @@ function readPath(root: Record<string, unknown>, jsonPath: string): unknown {
  *    The numbers the model card prints are sealed by nothing.
  *  - `gate.estimand`, `gate.observed`, `gate.bound`, `gate.operator`, `gate.required`,
  *    `gate.sampleSize`, `gate.populationSize`, `gate.descriptive`, `gate.simultaneous` and
- *    `gate.reasons`: a `GateResult` has NINETEEN fields, the gate fingerprint projects nine,
- *    and these are the other ten — published in the gate table and sealed by nothing. The
+ *    `gate.reasons`: these are the fields of a `GateResult` that {@link gateFingerprint}
+ *    does NOT project — published in the gate table and sealed by nothing. The
  *    threshold a gate decided against is among them, which is why a floor that must stay
  *    fixed is frozen in the pre-registration (an `EVALUATOR_FILES` member, therefore inside
  *    `evaluatorDigest`) and not in the gate that reads it.

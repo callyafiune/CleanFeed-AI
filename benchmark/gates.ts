@@ -26,10 +26,39 @@
 // BLOCKS, and by its tier, exactly as before the roles existed.
 //
 // A statistic that decides NOTHING is not a gate of any tier here — it is a BLOCK
-// with no verdict field, published beside the gates ({@link mixedRecallDiagnostics},
-// `metrics.lengthBands`). The distinction is mechanical and not editorial: the tier is
-// what the §6.5 disjunction below reads, so anything that has one decides, and the way
-// to stop deciding is to stop being a gate.
+// with no verdict field ({@link mixedRecallDiagnostics}, `metrics.lengthBands`).
+// "BESIDE the gates" is the rendered Markdown: {@link mixedRecallDiagnostics} has one
+// caller, `mixedRecallSection` in benchmark/report.ts, and that caller returns lines of
+// text, so nothing this function builds enters `reportDigestInput` or any other
+// projection of the report.
+//
+// The distinction between a gate and a block is mechanical: `GateTier` is a closed union
+// of the three values the §6.5 disjunction below reads, and every reader of a tier
+// compares by EQUALITY. What a FOURTH value would do is not one thing — it splits by how
+// the gate is built, and one of the two ways SOFTENS the verdict:
+//   - an interval SPEC never reaches `gates` at all, because the two `spec.tier === …`
+//     filters in `evaluateReleaseGates` select what enters the array. Such a gate leaves
+//     the published inventory instead of deciding anything from inside it.
+//   - a gate built DIRECTLY — the integrity booleans, `warning.coverage`,
+//     `action.available` — sits in `gates` whatever its tier says and falls out of every
+//     failure list, because `failedIds` selects a tier by equality too. One that was
+//     FAILING softens the decision by exactly that much: `warning.coverage` is diagnostic,
+//     so `failedCertifying` does not hold it either, and a coverage breach that rejects
+//     today would come out `pass`.
+// No reader refuses an unknown tier, so the guard lives in the tests — two of them, in
+// benchmark/tests/gates.test.ts. "gives no gate a tier outside the three the §6.5 branch
+// reads, and publishes every interval spec" covers a gate built directly (a loop over the
+// tier of every published gate) and an EXISTING interval spec retiered (the inventory of
+// interval ids, pinned by value). "carries a coverage breach into the verdict by the
+// warning tier alone" is the one that measures the SOFTENING: it names `failedWarning` as
+// the only list that carries that gate's failure, so a tier that drops it from that list
+// leaves nothing to reject on.
+//
+// One shape is guarded by neither, and it was measured rather than reasoned about: a
+// DIAGNOSTIC interval spec ADDED with a fourth tier, failing its own threshold, leaves
+// every test in that file green. It reaches no field of the report — the spec list is
+// local to `evaluateReleaseGates` and the tier filters drop it before `gates` — so only a
+// spec that claims a hypothesis is caught, via `multiplicity.gateIds`.
 //
 // The three §6.5 decision branches, unchanged by the roles:
 //   - a failed CERTIFYING, INTEGRITY or WARNING gate  => reject (stylometric stays)
@@ -136,16 +165,18 @@
 // threshold this file may set. What remains as named constants below is only what no
 // row of that table names: the action recall floor, coverage and the inference error
 // ceiling. The material-assistance recall floor is a row of the table too, and it is
-// not a constant here at all: `materialAssistance.decides` is frozen false, so the
-// number is published beside the gates and compared by nothing.
+// not a constant here at all: `materialAssistance.decides` is frozen false, so no
+// threshold of this file compares anything against it; the number reaches
+// {@link mixedRecallDiagnostics} as an argument and is printed by the Markdown renderer.
 //
 // WHICH POPULATION AUTHORIZES WHAT (B2). The frozen three-target table gives each
 // target its own ceiling, and ONE of the three consequences is enforced here:
 // `action.recall.overall` reads the INTEGRAL positives only, so a material-assistance
 // cohort can never raise the recall that lifts `actionCeiling`. The other — that the
 // cohort's own recall authorizes a warning and nothing more — is enforced by no
-// threshold: {@link mixedRecallDiagnostics} publishes the cohort's recall beside its
-// floor and decides nothing.
+// threshold: {@link mixedRecallDiagnostics} returns the cohort's recall beside its
+// floor, with no verdict field, and the Markdown renderer is what puts the pair on a
+// page.
 //
 // Mixed below the fraction floor is a positive of NO gate and a negative of NO
 // gate — which is the frozen decision's exact wording, and is NOT the same claim
@@ -952,7 +983,9 @@ function labelBasisSpec(
 }
 
 /**
- * The material-assistance recall of ONE cohort, published beside the gates.
+ * The material-assistance recall of ONE cohort, for the Markdown renderer to print
+ * beside the gate table. It is built at render time and reaches no projection of the
+ * sealed report.
  *
  * NO VERDICT FIELD, and the absence is the shape: a block carrying `passed` or a
  * `tier` is a gate whatever its `role` says, and some reader eventually compares it.
@@ -979,11 +1012,14 @@ export interface MixedRecallDiagnostics {
 }
 
 /**
- * The floor arrives as an ARGUMENT and is never read here.
+ * The floor arrives as an ARGUMENT, is compared against nothing here, and is copied
+ * into the block so a reader sees what the recall missed.
  *
- * It is a row of the frozen three-target table, so the policy is the only place it
- * may come from; a local read would let this file and the table disagree with
- * nothing failing.
+ * This function reads no policy of its own, so the number in the block is the one the
+ * call site handed over — a unit test drives it with 0.42 to prove exactly that. What
+ * keeps the PUBLISHED number on the frozen row is the single call site that renders the
+ * block (`mixedRecallSection` in benchmark/report.ts, which passes
+ * `materialAssistance.minimumWarningRecall`), never a check in here.
  */
 export function mixedRecallDiagnostics(
   mixed: EvaluationMetrics["mixed"]["atLeastHalfAi"],

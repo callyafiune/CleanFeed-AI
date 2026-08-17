@@ -1397,6 +1397,13 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         `returncode == 2`, o arquivo de saida INEXISTENTE e a RAZAO no stderr. Tirar
         `type=island_plan` do `add_argument` deixa a asserção direta verde e esta vermelha.
 
+        O que este corpo NAO enxerga e um toque no provedor, e o exit 2 e o que o esconde:
+        medido, um toque acrescentado como PRIMEIRA instrucao de `main` e embrulhado em
+        `try/except Exception: pass` deixa TODAS as assercoes daqui verdes. Nesta pista quem
+        separa "recusou" de "recusou ANTES" e o teste in-process que roda `main()` com
+        `sys.argv` falsificado e cobra `assert_not_called` de `call_provider` — a mesma
+        mutacao morre la.
+
         O plano cruzado entra por `CLEANFEED_ISLAND_PLAN_CROSS`, lido por um `sitecustomize`
         escrito no diretorio temporario: o subprocesso substitui `ISLAND_PLAN` por um plano
         cuja ULTIMA ilha reusa o template da PRIMEIRA, que e a colisao que um passeio com
@@ -1444,7 +1451,8 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                 env=ambiente,
                 cwd=str(temporario),
             )
-            # Nada foi aberto, nada foi escrito, nada foi gasto.
+            # Nenhum candidato e nenhum lock: as duas condicoes de "nada foi feito" que um
+            # subprocesso enxerga. Gasto de cota nao e uma delas.
             self.assertFalse(output.exists())
             self.assertFalse((output.with_name(output.name + ".lock")).exists())
         self.assertEqual(proc.returncode, 2, proc.stderr)
@@ -1453,6 +1461,343 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         self.assertIn("template de geracao", proc.stderr)
         self.assertIn("ilha_19", proc.stderr)
         self.assertIn("depois de a cota estar gasta", proc.stderr)
+
+    def test_um_campo_de_mistura_que_nao_e_MAPA_sai_com_exit_2_e_nao_com_traceback(self):
+        """O contrato do driver contra um plano MALFORMADO, medido no processo.
+
+        `island_plan` captura `IslandPlanRefused` e mais nada, entao um `mixingTemplates` que
+        nao e mapa tinha de virar traceback: `sorted()` sobre chave que nao e str levanta
+        `TypeError`, e uma TUPLA dos tres nomes de operacao passava a igualdade de chaves e
+        morria em `AttributeError` depois. O que este teste prende e o "exit 2 com a razao", e
+        ele morre das duas formas que o reintroduzem: tirando a conferencia de forma, ou
+        chamando a guarda das fracoes antes da guarda de particao — medido, a das fracoes
+        levanta `TypeError` dentro de `_island_component` sobre o mesmo plano.
+        """
+        import subprocess
+        import tempfile
+
+        script = Path(__file__).with_name("generate_ai.py")
+        with tempfile.TemporaryDirectory() as raw:
+            temporario = Path(raw)
+            saida = temporario / "ai_agy.jsonl"
+            (temporario / "sitecustomize.py").write_bytes(
+                b"import assemble_corpus as ac\n"
+                b"plano = [dict(i) for i in ac.ISLAND_PLAN]\n"
+                b"plano[-1]['mixingTemplates'] = tuple(sorted(ac.MIX_OPERATIONS))\n"
+                b"ac.ISLAND_PLAN = tuple(plano)\n"
+            )
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--provider",
+                    "agy",
+                    "--island",
+                    "ilha_00",
+                    "--humans",
+                    str(temporario / "humans.jsonl"),
+                    "--output",
+                    str(saida),
+                ],
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "PYTHONPATH": os.pathsep.join(
+                        [str(temporario), str(script.parent)]
+                    ),
+                },
+                cwd=str(temporario),
+            )
+            self.assertFalse(saida.exists())
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertIn("nao e mapa e sim tuple", proc.stderr)
+        self.assertIn("ilha_19", proc.stderr)
+
+    def test_a_pista_de_MISTURA_recusa_a_ilha_com_exit_2_e_a_razao_no_stderr(self):
+        """A MESMA fronteira em `make_mixed.py`, medida no PROCESSO: codigo de saida e razao.
+
+        O que este corpo mede, e so isso: `returncode == 2`, o candidato INEXISTENTE e as
+        cadeias da razao no stderr — nada aqui observa um toque no provedor, e a mutacao que
+        acrescenta um a `main` sai do processo com 2 do mesmo jeito. O "ANTES de gastar" desta
+        pista e o teste in-process ao lado, e os dois medem coisas diferentes: um prende o
+        contrato de linha de comando, o outro prende a ORDEM.
+
+        A recusa e do PARSER e nao do modo, e o segundo caso mede isso passando `--from-pairs`:
+        `type=island_plan` roda antes de `main` despachar o modo, entao um modo acrescentado
+        depois nasce guardado. O primeiro caso mede a perna desta pista — os tres
+        `mixingTemplates` da ilha contra `MIX_TEMPLATES`, hoje de intersecao vazia —, e ela
+        nomeia a decisao de coleta que o operador tem de tomar.
+        """
+        import subprocess
+        import tempfile
+
+        script = Path(__file__).with_name("make_mixed.py")
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        with tempfile.TemporaryDirectory() as raw:
+            temporario = Path(raw)
+            entrada = temporario / "entrada.jsonl"
+            entrada.write_bytes(b"")
+            saida = temporario / "mixed_candidates.jsonl"
+            gerando = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--generate",
+                    "--island",
+                    ilha["island"],
+                    "--parents",
+                    str(entrada),
+                    "--output",
+                    str(saida),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            # O candidato nao foi criado — a unica condicao de "nada foi feito" ao alcance de
+            # um subprocesso.
+            self.assertFalse(saida.exists())
+            de_pares = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--from-pairs",
+                    str(entrada),
+                    "--output",
+                    str(saida),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertFalse(saida.exists())
+        self.assertEqual(gerando.returncode, 2, gerando.stderr)
+        self.assertIn("templates de mistura", gerando.stderr)
+        # As DUAS listas, porque a razao e a intersecao vazia entre elas: a que a ilha pede e a
+        # que este arquivo serve.
+        self.assertIn(ilha["mixingTemplates"]["substituicao"], gerando.stderr)
+        self.assertIn("mix_edit_v1", gerando.stderr)
+        self.assertIn("depois de a cota estar gasta", gerando.stderr)
+        # O modo que nao gasta cota nenhuma tambem para, e por falta da flag: a exigencia esta
+        # no parser, nao no modo.
+        self.assertEqual(de_pares.returncode, 2, de_pares.stderr)
+        self.assertIn("--island", de_pares.stderr)
+        # E a intersecao vazia vale para as SESSENTA identidades do plano, nao so para a ilha
+        # do subprocesso: e o que sustenta "recusa hoje" como quantificador em vez de anedota.
+        import make_mixed
+
+        do_plano = {
+            nome
+            for ilha in assemble_corpus.ISLAND_PLAN
+            for nome in ilha["mixingTemplates"].values()
+        }
+        self.assertEqual(
+            len(do_plano),
+            len(assemble_corpus.MIX_OPERATIONS) * len(assemble_corpus.ISLAND_PLAN),
+        )
+        self.assertEqual(do_plano & set(make_mixed.MIX_TEMPLATES), set())
+
+    def test_a_pista_de_MISTURA_recusa_a_ilha_SEM_tocar_o_provedor(self):
+        """O "ANTES de gastar" desta pista, que nao cabe num subprocesso.
+
+        Exit 2, candidato ausente e cadeia no stderr sobrevivem a um toque no provedor —
+        medido: um toque acrescentado como PRIMEIRA instrucao de `main` e embrulhado em
+        `try/except Exception: pass` deixa o teste de subprocesso acima verde nos dois modos.
+        Quem separa "recusou" de "recusou ANTES" e `main()` in-process com `sys.argv`
+        falsificado e o `assert_not_called` do funil, no molde da casa.
+
+        O patch mora em `generate_ai` e nao neste modulo porque e de la que `main` importa
+        `call_provider` e `call_with_retries`, e o import acontece DENTRO de `main`:
+        `patch.object(make_mixed, ...)` nao teria alvo nenhum, porque o nome nao existe neste
+        modulo antes de `main` rodar. O que os dois `assert_not_called` cobrem e esse par de
+        nomes, e so ele — um toque que chegasse ao provedor por outro caminho ficaria
+        invisivel aqui.
+
+        Os DOIS modos, porque a exigencia e do parser e nao do modo, e cada um com a SUA razao
+        no stderr para o exit 2 nao ser lido como recusa por qualquer motivo: `--generate`
+        recusa pela perna dos tres `mixingTemplates`, `--from-pairs` por `--island` ausente, e
+        nenhum dos dois pode ter tocado o provedor para descobrir isso.
+        """
+        import contextlib
+        import io
+        import tempfile
+
+        import generate_ai
+        import make_mixed
+
+        # O patch no modulo de origem so intercepta enquanto este arquivo nao tiver os nomes:
+        # um import subido para o topo se ligaria as funcoes REAIS antes do patch, e os dois
+        # `assert_not_called` abaixo passariam a medir mocks que ninguem chamaria nunca.
+        self.assertFalse(hasattr(make_mixed, "call_provider"))
+        self.assertFalse(hasattr(make_mixed, "call_with_retries"))
+
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        with tempfile.TemporaryDirectory() as raw:
+            temporario = Path(raw)
+            entrada = temporario / "entrada.jsonl"
+            entrada.write_bytes(b"")
+            modos = {
+                "--generate": (
+                    [
+                        "--generate",
+                        "--island",
+                        ilha["island"],
+                        "--parents",
+                        str(entrada),
+                    ],
+                    "templates de mistura",
+                ),
+                "--from-pairs": (
+                    ["--from-pairs", str(entrada)],
+                    "--island",
+                ),
+            }
+            for modo, (flags, razao) in modos.items():
+                with self.subTest(modo=modo):
+                    saida = temporario / f"candidatos{modo}.jsonl"
+                    argv = ["make_mixed.py", *flags, "--output", str(saida)]
+                    erro_padrao = io.StringIO()
+                    with mock.patch.object(generate_ai, "call_provider") as chamada:
+                        with mock.patch.object(
+                            generate_ai, "call_with_retries"
+                        ) as escada:
+                            with mock.patch.object(sys, "argv", argv):
+                                with contextlib.redirect_stderr(erro_padrao):
+                                    with self.assertRaises(SystemExit) as saiu:
+                                        make_mixed.main()
+                    mensagem = erro_padrao.getvalue()
+                    self.assertEqual(saiu.exception.code, 2, mensagem)
+                    self.assertIn(razao, mensagem)
+                    self.assertFalse(saida.exists())
+                    chamada.assert_not_called()
+                    escada.assert_not_called()
+
+    def test_a_linha_que_a_pista_de_MISTURA_escreve_NAO_carrega_a_ilha(self):
+        """A fronteira do que a guarda compra: recusa antes de gastar, e nada sobre a linha.
+
+        A ilha que o parser devolve nao e lida em ponto algum de `main`, entao `emit` estampa
+        `promptTemplateId` de `MIX_TEMPLATES` e a identidade de mistura da ilha nao alcanca
+        linha alguma. Aqui isso e MEDIDO e nao lido: crescer o slate ate cumprir o plano e o
+        que faz esta pista escrever — o slate de hoje recusa toda ilha do plano no parser —, e
+        sob ele os DOIS modos emitem sem que o nome da ilha ou os seus tres `mixingTemplates`
+        aparecam nos bytes da linha.
+
+        O que este corpo prende e a promessa que a prosa NAO faz: fiar a ilha no `emit` — um
+        campo novo no registro, sem mover nenhum dos que ja estao la — torna este teste
+        vermelho nos dois modos.
+        """
+        import contextlib
+        import io
+        import tempfile
+
+        import generate_ai
+        import make_mixed
+
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        identidades = (ilha["island"], *ilha["mixingTemplates"].values())
+        crescido = {
+            **make_mixed.MIX_TEMPLATES,
+            **{
+                nome: (lambda nome=nome: f"reescreva ({nome}):\n{{parent}}")
+                for nome in ilha["mixingTemplates"].values()
+            },
+        }
+        pai = " ".join(f"palavra{i:02d}" for i in range(60))
+        editado = " ".join(
+            (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
+        )
+        # O fixture se confere: fora da faixa mista os dois modos descartam em vez de emitir, e
+        # as assercoes de ausencia ficariam vacuamente verdes.
+        self.assertTrue(
+            make_mixed.in_mixed_band(make_mixed.compute_mixture(pai, editado))
+        )
+
+        def sem_identidade_de_ilha(saida: Path) -> None:
+            bruto = saida.read_bytes().decode("utf-8").strip()
+            self.assertEqual(bruto.count("\n"), 0, bruto)
+            # A linha CARREGA uma identidade de template, que e o que torna a ausencia da ilha
+            # uma medicao e nao o silencio de um arquivo vazio.
+            self.assertEqual(json.loads(bruto)["promptTemplateId"], "mix_edit_v1")
+            for nome in identidades:
+                self.assertNotIn(nome, bruto)
+
+        with tempfile.TemporaryDirectory() as raw:
+            temporario = Path(raw)
+            pares = temporario / "pares.jsonl"
+            pares.write_bytes(
+                json.dumps(
+                    {
+                        "parentId": "pai-01",
+                        "parentText": pai,
+                        "editedText": editado,
+                        "promptTemplateId": "mix_edit_v1",
+                        "family": "wikipedia",
+                        "sourceMaterialBatch": "lote-01",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                + b"\n"
+            )
+            pais = temporario / "pais.jsonl"
+            pais.write_bytes(
+                json.dumps(
+                    {
+                        "id": "pai-01",
+                        "text": pai,
+                        "label": 0,
+                        "family": "wikipedia",
+                        "sourceMaterialBatch": "lote-01",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                + b"\n"
+            )
+            de_pares = temporario / "de_pares.jsonl"
+            gerada = temporario / "gerada.jsonl"
+            modos = {
+                "--from-pairs": (
+                    ["--from-pairs", str(pares)],
+                    de_pares,
+                ),
+                "--generate": (
+                    [
+                        "--generate",
+                        "--parents",
+                        str(pais),
+                        "--target",
+                        "1",
+                        "--sleep",
+                        "0",
+                    ],
+                    gerada,
+                ),
+            }
+            for modo, (flags, saida) in modos.items():
+                with self.subTest(modo=modo):
+                    argv = [
+                        "make_mixed.py",
+                        *flags,
+                        "--island",
+                        ilha["island"],
+                        "--output",
+                        str(saida),
+                    ]
+                    # `main` chama `sys.stdout.reconfigure`, que `io.StringIO` nao tem: o
+                    # substituto precisa ser um TextIOWrapper de verdade.
+                    registrado = io.TextIOWrapper(
+                        io.BytesIO(), encoding="utf-8", newline="\n"
+                    )
+                    with mock.patch.object(make_mixed, "MIX_TEMPLATES", crescido):
+                        with mock.patch.object(
+                            generate_ai, "call_with_retries", return_value=editado
+                        ):
+                            with mock.patch.dict(
+                                os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
+                            ):
+                                with mock.patch.object(sys, "argv", argv):
+                                    with contextlib.redirect_stdout(registrado):
+                                        make_mixed.main()
+                    sem_identidade_de_ilha(saida)
 
     def test_um_plano_de_16_ilhas_de_250_passa_a_geometria_e_NAO_atribui(self):
         """A perna 3 nao e zelo: 16x250 passa o preflight e `_plano_de_blocos` a recusa.
@@ -2262,14 +2607,34 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         self.assertEqual(len(contagem), len(assemble_corpus.MIX_OPERATIONS))
 
     def test_o_plano_de_producao_fecha_cada_ilha_em_UM_componente(self):
-        registros = [
-            linha
+        """POR ILHA, nas duas direcoes — o que o nome promete e nao uma contagem.
+
+        A contagem de componentes e o multiconjunto de tamanhos nao dizem isto: medido, um
+        corpo com `ilha_05` e `ilha_06` rachadas por paridade e cruzadas uma na outra tem 20
+        componentes de 500 linhas com o perfil 200/200/100 de uma ilha natural
+        (`test_a_FUSAO_CRUZADA_deixa_a_CONTAGEM_intacta`), e nenhuma das duas ilhas e um
+        componente. Entao o que se afirma aqui e a BIJECAO: cada ilha em UMA raiz, e cada raiz
+        de UMA ilha.
+        """
+        por_ilha = [
+            (ilha["island"], assemble_corpus._island_component(ilha))
             for ilha in assemble_corpus.ISLAND_PLAN
-            for linha in assemble_corpus._island_component(ilha)
         ]
-        tamanhos = componentes(registros)
-        self.assertEqual(len(tamanhos), len(assemble_corpus.ISLAND_PLAN))
-        self.assertEqual(set(tamanhos.values()), {500})
+        registros = [linha for _, linhas in por_ilha for linha in linhas]
+        raizes = connected_components(registros)
+        dona: dict[str, list[str]] = {}
+        for nome, linhas in por_ilha:
+            das_linhas = {raizes[linha["id"]] for linha in linhas}
+            with self.subTest(ilha=nome):
+                self.assertEqual(len(das_linhas), 1)
+                self.assertEqual(len(linhas), 500)
+            for raiz in das_linhas:
+                dona.setdefault(raiz, []).append(nome)
+        # A outra direcao: nenhuma raiz reclamada por duas ilhas. Sem esta metade, `ilha_19`
+        # inteira dentro do componente de `ilha_00` passaria — cada ilha continua em UMA raiz.
+        partilhadas = {raiz: nomes for raiz, nomes in dona.items() if len(nomes) > 1}
+        self.assertEqual(partilhadas, {})
+        self.assertEqual(len(dona), len(assemble_corpus.ISLAND_PLAN))
 
     def test_VERMELHO_pais_de_UMA_PARIDADE_racham_a_ilha(self):
         """O caso que prende a ponte de paridade: sem ela a ilha nao fecha.
@@ -2323,15 +2688,16 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         registros = self._mistas_com_pais(ilha, pai_de)
         self.assertEqual(len(componentes(registros)), 1)
 
-    def test_a_guarda_das_cinco_fracoes_RECUSA_um_corpo_cujas_ilhas_se_fundem(self):
-        """O RAMO da perna nova, contrafactual: o plano de producao nao o alcanca.
+    @staticmethod
+    def _pais_de_uma_paridade(original):
+        """`_island_component` com o pai de cada mista trocado por um de indice PAR.
 
-        A guarda julga as fracoes de um corpo modelado. Sem o invariante de ilha ela julgaria
-        um corpo cujas ilhas se fundiram, e o colapso apareceria na montagem, depois da cota.
+        E a rachadura por paridade aplicada a QUALQUER plano, e nao a um tamanho: as linhas
+        `ai` alternam template pelo indice do pai, entao mistas presas a uma paridade deixam a
+        outra metade de template sem ponte.
         """
-        original = assemble_corpus._island_component
 
-        def parido_por_paridade(ilha: dict) -> list[dict]:
+        def parido(ilha: dict) -> list[dict]:
             registros = original(ilha)
             humanas = [rec["id"] for rec in registros if rec["label"] == "human"]
             for indice, rec in enumerate(
@@ -2342,46 +2708,179 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
                 rec["groups"]["derivationRoot"] = group_axes.known(pai)
             return registros
 
+        return parido
+
+    def test_a_guarda_das_cinco_fracoes_RECUSA_a_ilha_RACHADA(self):
+        """O RAMO da perna nova, contrafactual: o plano de producao nao o alcanca.
+
+        A guarda julga as fracoes de um corpo modelado. Sem o invariante de ilha ela julgaria
+        um corpo cujas ilhas racharam, e o colapso apareceria na montagem, depois da cota.
+
+        DOIS tamanhos de plano, porque 20 ilhas e 40 componentes e um par de numeros que a
+        mensagem poderia estar imprimindo por coincidencia: com 10 ilhas a mesma rachadura tem
+        de dizer 10 e 20.
+        """
+        original = assemble_corpus._island_component
+        for plano in (assemble_corpus.ISLAND_PLAN, _plano(10)):
+            with self.subTest(ilhas=len(plano)):
+                with mock.patch.object(
+                    assemble_corpus,
+                    "_island_component",
+                    self._pais_de_uma_paridade(original),
+                ):
+                    with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+                        assemble_corpus.assert_island_plan_realizes_the_five_fractions(
+                            plano
+                        )
+                mensagem = str(erro.exception)
+                # Os DOIS numeros, porque a mensagem tem de dizer o esperado e o medido.
+                self.assertIn(f"{len(plano)} ilha(s)", mensagem)
+                self.assertIn(f"{2 * len(plano)} componente(s)", mensagem)
+                # A DIRECAO medida: a ilha rachou, e nenhuma se fundiu com outra. Afirmar
+                # fusao aqui seria afirmar o que este corpo nao tem.
+                self.assertIn("nao e UM deles", mensagem)
+                self.assertIn(f"{plano[0]['island']!r}: 2", mensagem)
+                self.assertNotIn("reclamado por mais de uma ilha", mensagem)
+        # E o plano intocado PASSA, para a perna nao ser vacuamente satisfeita.
+        assemble_corpus.assert_island_plan_realizes_the_five_fractions(
+            assemble_corpus.ISLAND_PLAN
+        )
+
+    def test_a_guarda_das_cinco_fracoes_RECUSA_duas_ilhas_no_MESMO_componente(self):
+        """A outra direcao, com componentes A MENOS que ilhas e SEM mock nenhum.
+
+        O `mixingTemplates` da ultima ilha igual ao da primeira funde as duas sem rachar
+        nenhuma: cada ilha continua em UMA raiz, e a raiz e a mesma. Uma guarda que so
+        contasse veria 19 contra 20 e recusaria — mas nomeando a coisa errada; o que a
+        mensagem tem de nomear e a raiz partilhada e as duas ilhas que a partilham.
+        """
+        plano = list(assemble_corpus.ISLAND_PLAN)
+        plano[-1] = dict(
+            plano[-1], mixingTemplates=plano[0]["mixingTemplates"]
+        )
+        with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+            assemble_corpus.assert_island_plan_realizes_the_five_fractions(tuple(plano))
+        mensagem = str(erro.exception)
+        self.assertIn(f"{len(plano)} ilha(s)", mensagem)
+        self.assertIn(f"{len(plano) - 1} componente(s)", mensagem)
+        self.assertIn("reclamado por mais de uma ilha", mensagem)
+        self.assertIn(plano[0]["island"], mensagem)
+        self.assertIn(plano[-1]["island"], mensagem)
+        self.assertNotIn("nao e UM deles", mensagem)
+        # As duas guardas sao INDEPENDENTES e nenhuma dispensa a outra: a de particao recusa
+        # este plano pela colisao de valor, e nao veria o corpo do teste seguinte.
+        with self.assertRaises(assemble_corpus.IslandPlanRefused) as colisao:
+            assemble_corpus.assert_island_plan_is_a_partition(tuple(plano))
+        self.assertIn("nao particiona o eixo de registro", str(colisao.exception))
+
+    def test_a_FUSAO_CRUZADA_deixa_a_CONTAGEM_intacta_e_a_guarda_recusa(self):
+        """O corpo que refuta CONTAR componentes como criterio.
+
+        `ilha_05` e `ilha_06` rachadas por paridade, e cada metade cruzada com a outra ilha
+        por UM pai de mista trocado. Medido: 20 componentes, todos de 500 linhas, todos com o
+        perfil 200/200/100 de uma ilha natural — a contagem, o multiconjunto de tamanhos e o
+        perfil por classe ficam IDENTICOS ao plano intocado, e nenhuma das duas ilhas
+        particiona eixo algum. O plano continua passando a guarda de particao, porque o plano
+        nao mudou: o que mudou e a atribuicao de pai no corpo modelado.
+        """
+        original = assemble_corpus._island_component
+        rachadas = ("ilha_05", "ilha_06")
+        parido = self._pais_de_uma_paridade(original)
+        corpo = {
+            ilha["island"]: (
+                parido(ilha) if ilha["island"] in rachadas else original(ilha)
+            )
+            for ilha in assemble_corpus.ISLAND_PLAN
+        }
+        for aqui, la in (rachadas, rachadas[::-1]):
+            # A humana de indice IMPAR da outra ilha: e a metade que a paridade deixou sem
+            # ponte, e uma aresta de mista para ela cola as duas metades cruzadas.
+            impar = [r["id"] for r in corpo[la] if r["label"] == "human"][1]
+            mista = [r for r in corpo[aqui] if r["label"] == "mixed"][0]
+            mista["groups"]["humanSeed"] = group_axes.known(impar)
+            mista["groups"]["derivationRoot"] = group_axes.known(impar)
+
+        registros = [linha for linhas in corpo.values() for linha in linhas]
+        tamanhos = componentes(registros)
+        self.assertEqual(len(tamanhos), len(assemble_corpus.ISLAND_PLAN))
+        self.assertEqual(set(tamanhos.values()), {500})
+        # O perfil por classe de cada componente, que e a outra contagem que fica intacta.
+        raizes = connected_components(registros)
+        perfis: dict[str, dict[str, int]] = {}
+        for rec in registros:
+            por_classe = perfis.setdefault(raizes[rec["id"]], {})
+            por_classe[rec["label"]] = por_classe.get(rec["label"], 0) + 1
+        self.assertEqual(
+            {tuple(sorted(p.items())) for p in perfis.values()},
+            {(("ai", 200), ("human", 200), ("mixed", 100))},
+        )
+        # E a guarda RECUSA, nomeando as duas ilhas que racharam — o que a contagem nao
+        # tinha como dizer.
+        assemble_corpus.assert_island_plan_is_a_partition(assemble_corpus.ISLAND_PLAN)
         with mock.patch.object(
-            assemble_corpus, "_island_component", parido_por_paridade
+            assemble_corpus,
+            "_island_component",
+            lambda ilha: corpo[ilha["island"]],
         ):
             with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
                 assemble_corpus.assert_island_plan_realizes_the_five_fractions(
                     assemble_corpus.ISLAND_PLAN
                 )
         mensagem = str(erro.exception)
-        # Os DOIS numeros, porque a mensagem tem de dizer o esperado e o medido.
-        self.assertIn(f"{len(assemble_corpus.ISLAND_PLAN)} ilha(s)", mensagem)
-        self.assertIn(f"{2 * len(assemble_corpus.ISLAND_PLAN)} componente(s)", mensagem)
-        # E o plano intocado PASSA, para a perna nao ser vacuamente satisfeita.
-        assemble_corpus.assert_island_plan_realizes_the_five_fractions(
-            assemble_corpus.ISLAND_PLAN
-        )
+        self.assertIn(f"{len(assemble_corpus.ISLAND_PLAN)} componente(s)", mensagem)
+        for nome in rachadas:
+            self.assertIn(f"{nome!r}: 2", mensagem)
 
-    def test_o_vocabulario_de_operacao_e_FECHADO_nas_tres_direcoes(self):
-        """Chave alienigena, chave faltante e grafia acentuada, recusadas por UMA igualdade."""
+    def test_o_vocabulario_de_operacao_e_FECHADO_nas_CINCO_direcoes(self):
+        """Chave alienigena, faltante, acentuada, chave que NAO E str, e campo que nao e mapa.
+
+        As duas ultimas nao sao zelo, e cada uma tem a sua armadilha medida. Chave `int`,
+        `None` ou tupla faz `sorted()` levantar `TypeError`; um campo que e TUPLA DOS TRES
+        NOMES DE OPERACAO passa a igualdade de chaves e morre depois em `AttributeError:
+        'tuple' object has no attribute 'items'`. As duas excecoes atravessam o
+        `except IslandPlanRefused` de `generate_ai.island_plan`, e o contrato do driver
+        degrada de "exit 2 com a razao" para traceback.
+
+        A ilha adulterada e a SEGUNDA do plano, e a mensagem afirma o nome dela e nao o da
+        primeira: um passeio com saida antecipada, ou uma mensagem que nomeasse a ilha errada,
+        passaria por um caso que adulterasse sempre a primeira.
+        """
         base = list(_plano(20))
-        bons = base[0]["mixingTemplates"]
-        for rotulo, mistura in (
-            ("alienigena", dict(bons, parafrase_total="mix-x")),
-            ("faltante", {k: v for k, v in bons.items() if k != "insercao"}),
+        alvo, intocada = base[1]["island"], base[0]["island"]
+        bons = base[1]["mixingTemplates"]
+        acentuada = {("inserção" if k == "insercao" else k): v for k, v in bons.items()}
+        for rotulo, mistura, esperados in (
             (
-                "acentuada",
-                {
-                    ("inserção" if k == "insercao" else k): v
-                    for k, v in bons.items()
-                },
+                "alienigena",
+                dict(bons, parafrase_total="mix-x"),
+                ("sobrando ['parafrase_total']", "faltando []"),
+            ),
+            (
+                "faltante",
+                {k: v for k, v in bons.items() if k != "insercao"},
+                ("sobrando []", "faltando ['insercao']"),
+            ),
+            ("acentuada", acentuada, ("sobrando ['inserção']", "faltando ['insercao']")),
+            ("chave nao-str", {7: "mix-x", **bons}, ("sobrando [7]", "faltando []")),
+            (
+                "campo que nao e mapa",
+                tuple(sorted(assemble_corpus.MIX_OPERATIONS)),
+                ("nao e mapa e sim tuple",),
             ),
         ):
             with self.subTest(caso=rotulo):
                 plano = list(base)
-                plano[0] = dict(base[0], mixingTemplates=mistura)
+                plano[1] = dict(base[1], mixingTemplates=mistura)
                 with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
                     assemble_corpus.assert_island_plan_is_a_partition(tuple(plano))
                 mensagem = str(erro.exception)
-                # A ILHA e as CHAVES, porque a recusa tem de apontar onde consertar.
-                self.assertIn("ilha_00", mensagem)
-                self.assertIn("substituicao", mensagem)
+                # A ILHA e o que ESTE caso introduz, porque a recusa tem de apontar onde
+                # consertar — e "substituicao" nao serve de pino: a prosa da recusa lista as
+                # tres operacoes em todo caso.
+                self.assertIn(alvo, mensagem)
+                self.assertNotIn(intocada, mensagem)
+                for esperado in esperados:
+                    self.assertIn(esperado, mensagem)
 
     def test_o_plano_declara_CEM_identidades_de_template_todas_distintas(self):
         """Cinco por ilha no namespace unico: duas de geracao e uma por operacao."""
@@ -2404,9 +2903,17 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
     def test_a_celula_EXCLUIDA_e_alcancavel_SO_em_pai_curto_e_por_isso_sai(self):
         """A razao de `MIX_CELL_EXCLUDED`, medida com as funcoes de PRODUCAO de `near_dupes`.
 
+        A GEOMETRIA E SUPOSICAO DESTE PINO e nao contrato de pista alguma: a operacao de
+        insercao nao existe em codigo, entao o que se mede aqui e um MODELO dela — uma secao
+        CONTIGUA no meio do pai, com tokens todos distintos. Medido na variante que ANEXA a
+        secao ao fim: 0,8421 em 100 tokens e 0,8494 em 1200, os dois ACIMA do limite, entao
+        nessa geometria a celula nao tem os dois lados e a razao "proxy de comprimento" muda de
+        forma. O numero fica relatado; a decisao nao se reescreve por ele.
+
         Inserir uma secao que leve o documento ao nivel mais baixo preserva o pai INTEIRO, e o
         par pai/mista fica perto do limite de poda — de que lado depende do COMPRIMENTO do pai.
-        Medido: cruza o limite a partir de cerca de 223 tokens e fica abaixo dele em pai curto.
+        Medido: o primeiro cruzamento e em 218 tokens, o sinal so fica monotono a partir de
+        232, e entre os dois alterna com o arredondamento do enxerto.
 
         E e por isso que a celula sai, e a razao NAO e "inalcancavel": ela seria alcancavel so
         para pai curto, entao a celula existiria apenas em documentos pequenos e a OPERACAO
@@ -2420,11 +2927,13 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         """
         import near_dupes
 
-        def par(fracao: float, tokens: int) -> float:
+        def par(fracao: float, tokens: int, no_fim: bool = False) -> float:
             pai = [f"p{i}" for i in range(tokens)]
-            enxerto = round(tokens * fracao / (1.0 - fracao))
+            enxerto = [
+                f"z{i}" for i in range(round(tokens * fracao / (1.0 - fracao)))
+            ]
             meio = tokens // 2
-            filho = pai[:meio] + [f"z{i}" for i in range(enxerto)] + pai[meio:]
+            filho = pai + enxerto if no_fim else pai[:meio] + enxerto + pai[meio:]
             return near_dupes.jaccard(
                 near_dupes.shingles_of(pai), near_dupes.shingles_of(filho)
             )
@@ -2433,28 +2942,50 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         self.assertEqual(operacao, "insercao")
         self.assertEqual(nivel, min(assemble_corpus.MIX_LEVELS))
         fracao = nivel / 100
+        limite = near_dupes.JACCARD_THRESHOLD
 
         # OS DOIS LADOS, que e o que torna a razao "enviesada por comprimento" verificavel:
         # pai curto sobrevive a poda, pai longo e podado.
-        self.assertLess(par(fracao, 100), near_dupes.JACCARD_THRESHOLD)
-        self.assertGreaterEqual(par(fracao, 1200), near_dupes.JACCARD_THRESHOLD)
+        self.assertLess(par(fracao, 100), limite)
+        self.assertGreaterEqual(par(fracao, 1200), limite)
 
-        # E a FRONTEIRA fica dentro da faixa de comprimento que o corpus mede, o que e o que
-        # faz o vies morder: as faixas pre-inscritas vao de 50 palavras a 300 e mais.
-        fronteira = next(
+        # A FRONTEIRA, com os DOIS numeros que a serra tem: o primeiro cruzamento e onde o
+        # sinal fica monotono. 218 cai dentro da faixa de comprimento que o corpus mede — as
+        # faixas pre-inscritas vao de 50 palavras a 300 e mais —, e e isso que faz o vies
+        # morder.
+        medido = {tokens: par(fracao, tokens) for tokens in range(100, 320)}
+        acima = [tokens for tokens, valor in medido.items() if valor >= limite]
+        self.assertEqual(min(acima), 218)
+        monotono = next(
             tokens
-            for tokens in range(100, 1201)
-            if par(fracao, tokens) >= near_dupes.JACCARD_THRESHOLD
+            for tokens in sorted(medido)
+            if all(medido[u] >= limite for u in range(tokens, 320))
         )
-        self.assertGreater(fronteira, 200)
-        self.assertLess(fronteira, 260)
+        self.assertEqual(monotono, 232)
+        # E a ALTERNANCIA entre os dois, que e o que impede ler 218 como "a partir de 218":
+        # 219 esta abaixo do limite.
+        self.assertLess(medido[219], limite)
+        self.assertLess(min(medido[t] for t in range(218, 232)), limite)
 
-        # A celula SEGUINTE da mesma operacao nao chega perto em comprimento algum: o corte e
-        # naquela celula e nao na operacao inteira.
+        # A celula SEGUINTE da mesma operacao fica sempre abaixo de 0,75, o supremo desta
+        # geometria: o comprimento o aproxima POR BAIXO e nunca o alcanca. As duas assercoes
+        # em 10.000 tokens sao o que torna falsa a cota antiga de "0,745 no maximo".
         seguinte = sorted(assemble_corpus.MIX_LEVELS)[1] / 100
-        for tokens in (100, 223, 1200):
+        for tokens in (100, 218, 232, 1200, 10_000):
             with self.subTest(borda=tokens, celula="seguinte"):
-                self.assertLess(par(seguinte, tokens), near_dupes.JACCARD_THRESHOLD)
+                self.assertLess(par(seguinte, tokens), limite)
+        self.assertLess(par(seguinte, 10_000), 0.75)
+        self.assertGreater(par(seguinte, 10_000), 0.745)
+        self.assertGreater(par(seguinte, 10_000), par(seguinte, 1200))
+        # E o supremo abaixo do limite e o que faz a cota valer como razao: um limite de poda
+        # menor que 0,75 tornaria a frase falsa sem mover numero nenhum daqui.
+        self.assertLess(0.75, limite)
+
+        # A GEOMETRIA suposta, medida na outra forma: anexada ao FIM, a celula excluida fica
+        # acima do limite nos DOIS comprimentos, e o "de que lado depende do comprimento"
+        # deixa de valer. Relatado, nao promovido a decisao.
+        self.assertGreater(par(fracao, 100, no_fim=True), limite)
+        self.assertGreater(par(fracao, 1200, no_fim=True), limite)
 
     def test_o_slate_com_receitas_de_BYTES_IDENTICOS_e_recusado_antes_da_cota(self):
         """A particao de ilha e sobre identidade, e a identidade prefixa o NOME da receita.
@@ -2462,8 +2993,16 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         Dois nomes servindo o mesmo texto produzem identidades distintas, o grafo continua
         particionado, e a independencia de template que o split modela fica falsa. Cem prompts
         escritos por copia-e-ajuste passariam todas as outras pernas.
+
+        E o que prova o ANTES e o ENTRY POINT: `main()` com `sys.argv` falsificado, no molde
+        in-process da casa. Chamar `island_plan` direto mede a funcao e nada sobre a ordem —
+        ficaria verde com a chamada da guarda depois da geracao. As duas assercoes que separam
+        "recusou" de "recusou ANTES" sao os `assert_not_called` de `call_provider`, funil unico
+        das quatro lanes, e de `harness_version`, o primeiro toque no binario do provedor.
         """
-        import argparse
+        import contextlib
+        import io
+        import tempfile
 
         import generate_ai
 
@@ -2472,10 +3011,35 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         gemeas = {
             nome: {"weight": 1, "template": mesmo_texto} for nome in ilha["templates"]
         }
-        with mock.patch.object(generate_ai, "RECIPES", gemeas):
-            with self.assertRaises(argparse.ArgumentTypeError) as erro:
-                generate_ai.island_plan(ilha["island"])
-        mensagem = str(erro.exception)
+        erro_padrao = io.StringIO()
+        with tempfile.TemporaryDirectory() as raw:
+            temporario = Path(raw)
+            saida = temporario / "ai_agy.jsonl"
+            argv = [
+                "generate_ai.py",
+                "--provider",
+                "agy",
+                "--island",
+                ilha["island"],
+                "--humans",
+                str(temporario / "humans.jsonl"),
+                "--output",
+                str(saida),
+            ]
+            with mock.patch.object(generate_ai, "RECIPES", gemeas):
+                with mock.patch.object(generate_ai, "call_provider") as chamada:
+                    with mock.patch.object(generate_ai, "harness_version") as versao:
+                        with mock.patch.object(sys, "argv", argv):
+                            with contextlib.redirect_stderr(erro_padrao):
+                                with self.assertRaises(SystemExit) as saiu:
+                                    generate_ai.main()
+            # Nada foi aberto, nada foi escrito, nada foi gasto.
+            self.assertFalse(saida.exists())
+            self.assertFalse(saida.with_name(saida.name + ".lock").exists())
+        self.assertEqual(saiu.exception.code, 2)
+        chamada.assert_not_called()
+        versao.assert_not_called()
+        mensagem = erro_padrao.getvalue()
         self.assertIn("bytes identicos", mensagem)
         # Os NOMES que colidem, porque a recusa tem de dizer quais reescrever.
         for nome in ilha["templates"]:

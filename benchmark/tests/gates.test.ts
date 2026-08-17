@@ -16,8 +16,12 @@ import type {
   EvaluationMetrics,
   LabelBasisSlice,
   MetricEstimate,
+  MixedCohort,
+  MixedFractionSegment,
+  MixedRecallBlock,
 } from "../metrics.ts";
 import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
+import type { GenerationMode } from "../preregistration-v4.ts";
 import { buildModelPublication } from "../profile-artifact.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 import { publicationInputFor } from "./profile-artifact.fixtures.ts";
@@ -260,11 +264,11 @@ interface MetricsOverrides {
   coverage?: number;
   ece?: MetricEstimate;
   errorRate?: number;
-  mixed?: {
-    sampleSize: number;
-    warningRecall: number;
-    warningRecallLower95: number;
-  };
+  mixed?: MixedOverride;
+  // The whole `mixed` block, prebuilt, for a test that needs values `MixedOverride`
+  // cannot express — a leaf perturbed inside `byGenerationMode[i]` or `byFraction[i]`.
+  // It WINS over `mixed`, which is the override shape every other fixture uses.
+  mixedBlock?: EvaluationMetrics["mixed"];
   auroc?: number;
   declaredM?: number | null;
   labelBases?: LabelBasisSlice[];
@@ -450,6 +454,84 @@ function basis(
   };
 }
 
+// The `mixed` key of the metrics with every published member present: `atLeastHalfAi`
+// is the triple the diagnostic block projects, and `byGenerationMode` / `byFraction` are
+// the two cohort collections. A member left `undefined` cannot be VARIED, so a fixture
+// that omits one cannot tell "no gate reads this" from "no fixture ever carried it".
+//
+// Both builders below are ANNOTATED and neither casts, and that is what forces a new
+// REQUIRED field of the block into this fixture: adding one to `MixedRecallBlock`, to
+// `MixedCohort`, to `MixedFractionSegment` or to the `mixed` key itself stops
+// `npm run typecheck:benchmark` on this file. Measured one type at a time on purpose:
+// TypeScript reports ONE mismatch per object literal, so probing `MixedCohort` and the
+// `mixed` key together hides the `mixed`-key error behind the cohort one — both mismatches
+// fall in the same return literal, and a combined probe reads as three types, not four.
+//
+// Once the fixture carries the field, the recursive walk in "keeps the release decision
+// independent of EVERY leaf of the material-assistance block, nested ones included"
+// enumerates it and the perturbed cohort there moves it, so a new required field is
+// SWEPT rather than merely reported. An OPTIONAL field is the limit of both halves:
+// nothing obliges a fixture to carry one, and what no fixture carries no walk can see.
+interface MixedOverride {
+  generationMode?: GenerationMode;
+  sampleSize?: number;
+  warningRecall?: number;
+  warningRecallLower95?: number;
+  byGenerationMode?: MixedCohort[];
+  byFraction?: MixedFractionSegment[];
+}
+
+// `<mode>/<bucket>` and never the bare bucket: the two cohorts are separate slices, and
+// one key holding both would be the cross-cohort aggregation the frozen table forbids.
+function mixedSegment(
+  generationMode: GenerationMode,
+  fractionBucket: string,
+  warning: DecisionMetrics,
+): MixedFractionSegment {
+  return {
+    key: `${generationMode}/${fractionBucket}`,
+    generationMode,
+    fractionBucket,
+    sampleSize: warning.sampleSize,
+    warning,
+  };
+}
+
+function mixedMetrics(
+  overrides: MixedOverride = {},
+): EvaluationMetrics["mixed"] {
+  const generationMode = overrides.generationMode ?? "mechanistic";
+  const atLeastHalfAi: MixedRecallBlock = {
+    generationMode,
+    sampleSize: overrides.sampleSize ?? 100,
+    warningRecall: overrides.warningRecall ?? 0.8,
+    warningRecallLower95: overrides.warningRecallLower95 ?? 0.72,
+  };
+  return {
+    atLeastHalfAi,
+    byGenerationMode: overrides.byGenerationMode ?? [
+      {
+        generationMode,
+        role:
+          generationMode ===
+          PREREGISTRATION_V4.materialAssistance.generationMode
+            ? "release"
+            : "diagnostic",
+        aggregated: false,
+        sampleSize: atLeastHalfAi.sampleSize,
+        atLeastHalfAi,
+      },
+    ],
+    byFraction: overrides.byFraction ?? [
+      mixedSegment(
+        generationMode,
+        "50_74",
+        decision(upper(0.02), lower(0.8), 60, 40),
+      ),
+    ],
+  };
+}
+
 // Only the fields the gate policy consumes are populated; the remainder of
 // EvaluationMetrics is irrelevant to the gates and elided behind the cast.
 function metrics(overrides: MetricsOverrides = {}): EvaluationMetrics {
@@ -515,13 +597,7 @@ function metrics(overrides: MetricsOverrides = {}): EvaluationMetrics {
           },
     errorRate: point(overrides.errorRate ?? 0.001),
     separability: { role: "diagnostic", auroc: point(overrides.auroc ?? 0.99) },
-    mixed: {
-      atLeastHalfAi: overrides.mixed ?? {
-        sampleSize: 100,
-        warningRecall: 0.8,
-        warningRecallLower95: 0.72,
-      },
-    },
+    mixed: overrides.mixedBlock ?? mixedMetrics(overrides.mixed),
   } as unknown as EvaluationMetrics;
 }
 
@@ -765,6 +841,27 @@ describe("release decision", () => {
         `warning.fpr.slice.humanSourceType.${CERTIFYING_CELLS[0]}`,
       ],
     });
+  });
+
+  // The TIER of a directly built gate is load-bearing on its own, and this is where that
+  // is measured. `warning.coverage` is built by `pointGate`, so it is in `gates` whatever
+  // its tier says, and it is published `role: "diagnostic"`, so `failedCertifying` never
+  // holds it: `failedWarning` is the ONLY list that carries this failure into the §6.5
+  // branch. Widen `GateTier` and give this gate a fourth value and it stays in the array
+  // while leaving that list — nothing else here fails, so the same evidence would decide
+  // `pass`. The row above only asserts the verdict; the four lists are what say why.
+  it("carries a coverage breach into the verdict by the warning tier alone", () => {
+    const report = evaluateReleaseGates(lowCoverage);
+    expect(gateById(report.gates, "warning.coverage")).toMatchObject({
+      tier: "warning",
+      role: "diagnostic",
+      passed: false,
+    });
+    expect(report.failedWarning).toEqual(["warning.coverage"]);
+    expect(report.failedCertifying).toEqual([]);
+    expect(report.failedIntegrity).toEqual([]);
+    expect(report.failedAction).toEqual([]);
+    expect(report.decision).toBe("reject");
   });
 });
 
@@ -1035,17 +1132,18 @@ describe("warning tier teeth", () => {
     expect(report.decision).toBe("pass");
   });
 
-  it("keeps the release decision independent of EVERY property of the material-assistance cohort", () => {
+  it("keeps the release decision independent of EVERY leaf of the material-assistance block, nested ones included", () => {
     // The ratified criterion is that NO property of the cohort is an argument of the
     // decision. The weaker claim — one property, at one sample size, in one surrounding
     // state, changes nothing — leaves two rearms green: a reject term that fires only
     // when `failedAction` is non-empty, and one that fires on an empty cohort. Neither
     // is observable from a fixture where everything else passes at sampleSize 100, so
     // the matrix IS the guard.
-    const COHORTS = [
+    const COHORTS: ReadonlyArray<{ name: string; mixed: MixedOverride }> = [
       {
         name: "unmeasured",
         mixed: {
+          generationMode: "mechanistic",
           sampleSize: 0,
           warningRecall: Number.NaN,
           warningRecallLower95: Number.NaN,
@@ -1053,11 +1151,17 @@ describe("warning tier teeth", () => {
       },
       {
         name: "no recall at all",
-        mixed: { sampleSize: 100, warningRecall: 0, warningRecallLower95: 0 },
+        mixed: {
+          generationMode: "mechanistic",
+          sampleSize: 100,
+          warningRecall: 0,
+          warningRecallLower95: 0,
+        },
       },
       {
         name: "twenty points under the floor",
         mixed: {
+          generationMode: "mechanistic",
           sampleSize: 100,
           warningRecall: 0.3,
           warningRecallLower95: 0.2,
@@ -1066,6 +1170,7 @@ describe("warning tier teeth", () => {
       {
         name: "exactly at the floor",
         mixed: {
+          generationMode: "mechanistic",
           sampleSize: 100,
           warningRecall: 0.5,
           warningRecallLower95: 0.4,
@@ -1074,6 +1179,7 @@ describe("warning tier teeth", () => {
       {
         name: "clearing the floor",
         mixed: {
+          generationMode: "mechanistic",
           sampleSize: 100,
           warningRecall: 0.8,
           warningRecallLower95: 0.72,
@@ -1081,9 +1187,168 @@ describe("warning tier teeth", () => {
       },
       {
         name: "perfect on a single row",
-        mixed: { sampleSize: 1, warningRecall: 1, warningRecallLower95: 0 },
+        mixed: {
+          generationMode: "mechanistic",
+          sampleSize: 1,
+          warningRecall: 1,
+          warningRecallLower95: 0,
+        },
+      },
+      // A cohort that differs from "clearing the floor" in the generation mode ALONE.
+      // The same value on all six above is a constant of the fixture, not a varied
+      // property, and the production writes this field off the measurement.
+      {
+        name: "the other cohort, same numbers",
+        mixed: {
+          generationMode: "ecological",
+          sampleSize: 100,
+          warningRecall: 0.8,
+          warningRecallLower95: 0.72,
+        },
+      },
+      // The two collections the published triple is a projection OF. A gate that reached
+      // into either would read a cohort the report does not name as the material-
+      // assistance one, and the six rows above cannot see it: they leave both at the
+      // builder's default.
+      {
+        name: "both cohorts present, the other one blind",
+        mixed: {
+          byGenerationMode: [
+            {
+              generationMode: "mechanistic",
+              role: "release",
+              aggregated: false,
+              sampleSize: 100,
+              atLeastHalfAi: {
+                generationMode: "mechanistic",
+                sampleSize: 100,
+                warningRecall: 0.8,
+                warningRecallLower95: 0.72,
+              },
+            },
+            {
+              generationMode: "ecological",
+              role: "diagnostic",
+              aggregated: false,
+              sampleSize: 40,
+              atLeastHalfAi: {
+                generationMode: "ecological",
+                sampleSize: 40,
+                warningRecall: 0,
+                warningRecallLower95: 0,
+              },
+            },
+          ],
+        },
+      },
+      {
+        name: "every fraction band missing everything",
+        mixed: {
+          byFraction: [
+            mixedSegment(
+              "mechanistic",
+              "0_24",
+              decision(upper(0.9), lower(0), 50, 50),
+            ),
+            mixedSegment(
+              "mechanistic",
+              "75_100",
+              decision(upper(0.9), lower(0), 50, 50),
+            ),
+          ],
+        },
       },
     ];
+    // "EVERY leaf" is a claim about a LIST, so the list is WALKED off the blocks the
+    // fixture publishes instead of typed here — recursively, so the leaves inside
+    // `byGenerationMode[i]` and `byFraction[i]` are in it and not only the top level plus
+    // the published triple. Each path has to MOVE for some cohort: a leaf no cohort moves
+    // is a leaf this test says nothing about, and a decision term reading one would survive
+    // green while creating no gate, so the interval-inventory pin cannot see it either.
+    //
+    // The nine cohorts above reach only PART of the two collections: a mode change reaches
+    // the builder's defaults and two of them replace a collection wholesale. Not all of it,
+    // and the gap is measured rather than assumed — with the tenth cohort neutralised this
+    // loop fails on `mixed.byGenerationMode.0.aggregated`, which no override moves. So the
+    // sweep is finished by that tenth cohort, built at runtime: the baseline block with
+    // EVERY leaf moved. It deliberately writes values the TYPES forbid (a `generationMode`
+    // naming no cohort, `aggregated: true`), which is legitimate precisely because the
+    // claim under test is that the decision reads none of them; a perturbation that moved
+    // a verdict would be the finding. The walk is also what verifies the perturbation is
+    // TOTAL: a leaf kind it fails to move fails the loop below.
+    const perturbEveryLeaf = (held: unknown): unknown => {
+      if (Array.isArray(held)) return held.map(perturbEveryLeaf);
+      if (typeof held === "object" && held !== null) {
+        return Object.fromEntries(
+          Object.entries(held).map(([key, value]) => [
+            key,
+            perturbEveryLeaf(value),
+          ]),
+        );
+      }
+      if (typeof held === "number") return held + 1;
+      if (typeof held === "string") return `${held}/perturbed`;
+      if (typeof held === "boolean") return !held;
+      return held;
+    };
+    const leafPaths = (
+      held: unknown,
+      prefix: readonly string[] = [],
+    ): ReadonlyArray<readonly string[]> =>
+      typeof held === "object" && held !== null
+        ? Object.entries(held).flatMap(([key, value]) =>
+            leafPaths(value, [...prefix, key]),
+          )
+        : [prefix];
+    const baselineCohort = mixedMetrics();
+    const BLOCKS: ReadonlyArray<{
+      name: string;
+      block: EvaluationMetrics["mixed"];
+    }> = [
+      ...COHORTS.map((cohort) => ({
+        name: cohort.name,
+        block: mixedMetrics(cohort.mixed),
+      })),
+      {
+        name: "every leaf perturbed",
+        block: perturbEveryLeaf(baselineCohort) as EvaluationMetrics["mixed"],
+      },
+    ];
+    // The union over the baseline AND every cohort, so a path only some cohort carries —
+    // `byGenerationMode.1.*`, `byFraction.1.*` — is swept too.
+    const propertyPaths: ReadonlyArray<readonly string[]> = [
+      ...new Map(
+        [baselineCohort, ...BLOCKS.map((entry) => entry.block)]
+          .flatMap((block) => leafPaths(block))
+          .map((path) => [path.join("."), path] as const),
+      ).values(),
+    ];
+    // "nested ones included" is a claim about the WALK, and the loop below cannot hold it:
+    // the perturbed cohort moves whatever the walk enumerates, so a walk that regressed to
+    // the top level plus the published triple would still pass every iteration. Two nested
+    // leaves are therefore named here — one per collection, deep enough to need the
+    // array step and two object steps after it.
+    const swept = propertyPaths.map((path) => path.join("."));
+    expect(swept).toContain("byGenerationMode.0.atLeastHalfAi.warningRecall");
+    expect(swept).toContain("byFraction.0.warning.falsePositiveRate.value");
+    // A path absent from a block reads `undefined` instead of throwing on the way down:
+    // absence IS a move against a baseline that carries the leaf.
+    const read = (block: EvaluationMetrics["mixed"], path: readonly string[]) =>
+      path.reduce<unknown>(
+        (held, key) =>
+          typeof held === "object" && held !== null
+            ? (held as Record<string, unknown>)[key]
+            : undefined,
+        block,
+      );
+    for (const path of propertyPaths) {
+      const moved = BLOCKS.some(
+        (entry) =>
+          JSON.stringify(read(entry.block, path)) !==
+          JSON.stringify(read(baselineCohort, path)),
+      );
+      expect(moved, `no cohort varies mixed.${path.join(".")}`).toBe(true);
+    }
     // One surrounding state per reachable verdict, because a term keyed on another
     // failure list is only observable where that list is non-empty.
     const SURROUNDINGS = [
@@ -1124,13 +1389,13 @@ describe("warning tier teeth", () => {
       },
     ];
     for (const surrounding of SURROUNDINGS) {
-      const reports = COHORTS.map((cohort) => ({
+      const reports = BLOCKS.map((cohort) => ({
         name: cohort.name,
         report: evaluateReleaseGates({
           integrity: integrity(),
           calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
           resampling: plan(),
-          metrics: metrics({ mixed: cohort.mixed }),
+          metrics: metrics({ mixedBlock: cohort.block }),
           slices: surrounding.slices(),
         }),
       }));
@@ -1164,7 +1429,7 @@ describe("warning tier teeth", () => {
     }
   });
 
-  it("gives no gate a tier outside the three the §6.5 branch reads", () => {
+  it("gives no gate a tier outside the three the §6.5 branch reads, and publishes every interval spec", () => {
     // A fourth tier value would be the silent disarm: `failedIds` filters by equality
     // and `profile-artifact.ts` filters `tier === "action"`, so an unknown tier drops
     // out of every list without a single reader refusing it. Nothing here is
@@ -1173,6 +1438,44 @@ describe("warning tier teeth", () => {
     for (const gate of report.gates) {
       expect(["integrity", "warning", "action"]).toContain(gate.tier);
     }
+
+    // The loop above reads the tier of gates that ARE in the array, and a gate built
+    // directly — the integrity booleans, `warning.coverage`, `action.available` — is always
+    // in it, whatever its tier says. An interval SPEC is not: the two `spec.tier === …`
+    // filters in `evaluateReleaseGates` select which specs become gates, so a fourth tier
+    // there deletes the gate from the published inventory and the loop sees nothing at all.
+    // The inventory of interval ids for this input is therefore pinned; `estimand` is
+    // present exactly on the gates that came through those filters.
+    const intervalIds = report.gates
+      .filter((gate) => gate.estimand !== undefined)
+      .map((gate) => gate.id);
+    expect(intervalIds).toEqual([
+      "warning.fpr.overall",
+      ...CERTIFYING_CELLS.map(
+        (cell) => `warning.fpr.slice.humanSourceType.${cell}`,
+      ),
+      "warning.fpr.slice.domain.corporate",
+      "warning.fpr.labelBasis.date-cutoff",
+      "warning.recall.overall",
+      "warning.calibration-ece",
+      "action.fpr.overall",
+      ...CERTIFYING_CELLS.map(
+        (cell) => `action.fpr.slice.humanSourceType.${cell}`,
+      ),
+      "action.fpr.slice.domain.corporate",
+      "action.fpr.labelBasis.date-cutoff",
+      "action.recall.overall",
+    ]);
+    // The exact limit of the pair, measured and not assumed. `GateTier` is a closed union,
+    // so neither assertion is reachable by a value today's types admit; both guard the edit
+    // that widens it, and the tier list above is typed here because `GateTier` has no
+    // runtime form. Of the three shapes that edit can take, this test catches two: a gate
+    // built directly with a fourth tier (the loop) and an EXISTING interval spec whose tier
+    // is changed to one (the id list loses a member). The third — a spec ADDED with a fourth
+    // tier — is caught only when it claims a hypothesis, because that reaches
+    // `multiplicity.gateIds`, which is built before any tier filter. A new DIAGNOSTIC spec
+    // with a fourth tier reaches no field of the report at all, and no assertion outside
+    // `evaluateReleaseGates` can see it: the spec list is local to that function.
   });
 
   it("freezes the non-decision and both rearm conditions in the policy, by value", () => {
@@ -2708,6 +3011,14 @@ describe("the material-assistance block is published without deciding (B2)", () 
       lower95: 0.42,
       sampleSize: 200,
     });
+    // The cohort NAME comes off the measurement handed in: the same call with the other
+    // cohort publishes the other name, which a producer restating "mechanistic" fails.
+    expect(
+      mixedRecallDiagnostics(
+        { ...cohort(200, 0.49, 0.42), generationMode: "ecological" },
+        0.5,
+      ).generationMode,
+    ).toBe("ecological");
   });
 
   it("publishes neither a recall nor its bound for an empty cohort, instead of a zero it never measured", () => {

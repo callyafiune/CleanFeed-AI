@@ -256,13 +256,23 @@ class ClosedPolicyParse(unittest.TestCase):
             self.assertIn("byte for byte", message)
 
     def test_it_refuses_a_reserialized_copy_of_the_sealed_values(self) -> None:
-        # Measured, and the two numbers are NOT the same expression: the reserialization
-        # `json.dumps(json.loads(sealed), indent=2)` is 12 089 bytes, while the file
-        # `write_policy` puts on disk is 12 090 — it appends the trailing newline. Both
-        # stand against the tracked 11 876, so a policy retyped or reformatted on the way
-        # to Colab carries the sealed values and different bytes.
+        # The three byte counts are ASSERTED here and not merely written down, and the
+        # one that carries the claim is the DIFFERENCE: `json.dumps(json.loads(sealed),
+        # indent=2)` is one byte shorter than what `write_policy` puts on disk, because
+        # that function appends the trailing newline. Both stand against the tracked
+        # file, so a policy retyped or reformatted on the way to Colab carries the
+        # sealed values and different bytes — which is what the digest refuses.
+        reserialized = json.dumps(
+            json.loads(POLICY_PATH.read_bytes().decode("utf-8")), indent=2
+        ).encode("utf-8")
         with tempfile.TemporaryDirectory() as tmp:
             path = write_policy(Path(tmp))
+            on_disk = path.read_bytes()
+            self.assertEqual(len(reserialized), 12_089)
+            self.assertEqual(len(on_disk), 12_090)
+            self.assertEqual(len(on_disk) - len(reserialized), 1)
+            self.assertEqual(on_disk, reserialized + b"\n")
+            self.assertEqual(len(POLICY_PATH.read_bytes()), 11_876)
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8")),
                 json.loads(POLICY_PATH.read_text(encoding="utf-8")),

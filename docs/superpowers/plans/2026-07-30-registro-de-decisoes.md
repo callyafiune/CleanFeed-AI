@@ -8228,3 +8228,117 @@ CRLF.
 O slate continua não cumprindo o plano — `RECIPES` declara 4 identidades contra 100 —, e agora com a perna 5
 a exigir que as 100 sejam de **bytes** distintos, não só de nomes distintos. É trabalho de agente, e a cota
 que ele vai gastar é chave do operador.
+
+---
+
+## O ciclo de cross-review do codex: 21 defeitos que três lentes com bateria aprovaram (2026-08-16/17)
+
+Decisão do operador: manter o codex na revisão, gastando menos. O que saiu disso vale mais pelo método do
+que pelos consertos, e o método é uma retratação da confiança que eu tinha na bateria de mutação.
+
+### O custo, e o que o produziu
+
+| medida | rodada de 09/08 | agora | fator |
+|---|---|---|---|
+| tokens por unidade | 245.145 a 487.438 | **70.939** e **34.886** | 3,5× a 14× |
+| comandos | 51 a 89 | **12** e **2** | 4× a 44× |
+| transcrito | 0,7 a 3,3 MB | 140 KB e 69 KB | 5× a 48× |
+
+A causa do desperdício, medida: o `.txt` do `codex exec` é o transcrito agêntico, e **99 % dele era saída
+de comando**. Um único `rg -n -C 8` sem teto devolveu **1,04 MB**, e num laço agêntico cada passo re-envia
+o contexto acumulado — aquele megabyte viajou em todos os passos seguintes. Ele também grepava o próprio
+diretório de saída, lendo transcritos irmãos de 1,7 MB.
+
+Os quatro cortes: o **diff inline** (65 KB no pior caso) em vez de descoberto; **teto de bytes** em toda
+leitura, com `rg -m 40`, no máximo `-C 3`, tudo em `head -c 20000`; **orçamento de doze comandos** com
+justificativa antes de cada; e **proibição** de ler `.codex-reviews/`, o registro e o `references.md` na
+íntegra. O esforço de raciocínio **ficou em `xhigh`** por decisão do operador — o desperdício não estava
+ali, e baixá-lo seria trocar acurácia por palpite.
+
+Uma armadilha mecânica no caminho: com o diff inline o prompt passa de 70 KB e **estoura o limite de
+argv do Windows** — `EXIT=126` em um segundo, zero token gasto. O prompt vai por **stdin**, com `-` no
+lugar do argumento. Os prompts antigos, de 16 a 20 KB, cabiam por acidente de tamanho.
+
+### O resultado, e ele é um veredito sobre o meu processo
+
+Duas unidades, **21 achados reais** depois de verificação local por mutação, **um refutado**. E **nenhum**
+deles havia sido pego pelas lentes adversariais que rodaram antes, **com bateria de mutação** — as
+mesmas que aprovaram as duas unidades.
+
+**Por que a bateria não os vê, medido.** Ela responde uma pergunta só: *dada esta frase sobre o que está
+guardado, a guarda morde?* — e mordia, corretamente. Ela não pode perguntar se a frase ao lado é
+verdadeira, nem se o critério que a frase enuncia é o critério que a guarda mede. **Comentário falso não
+tem mutante.** Título de teste que promete demais está verde antes e depois.
+
+Dois corolários, os dois medidos:
+
+1. **As lentes procuram no vocabulário da própria unidade** — o único dialeto em que ela está certa. Os
+   achados vivem em palavras que a unidade não introduziu: o quantificador *EVERY*, o numeral *NINETEEN*,
+   a frase *"the only place it may come from"*.
+2. **Toda bateria perturbou linha existente; nenhuma acrescentou uma.** Medido nas duas direções: editar
+   o tier de uma spec mata nove testes e o buraco *parece* defendido; **acrescentar** uma spec com quarto
+   tier deixa 81/81 verdes.
+
+E o caso que fecha o argumento: o teste `test_o_plano_de_producao_fecha_cada_ilha_em_UM_componente`
+promete no **nome** a propriedade por ilha e afirma `len(tamanhos) == 20` mais
+`set(tamanhos.values()) == {500}`. Um corpo com duas ilhas rachadas **e** fundidas cruzado — 20
+componentes, todos de 500, todos com perfil 200/200/100, idêntico ao natural — passou com **437 verdes,
+zero vermelho**. O invariante que eu havia escrito dois dias antes aceita exactamente o corpo que ele
+existe para recusar.
+
+### Os consertos, e as duas voltas que eles precisaram
+
+Primeira volta: 21 achados consertados em dois conjuntos disjuntos. As duas lentes novas — uma lendo cada
+sentença acrescentada como especificação, outra mutando só por **introdução** — devolveram `block` com
+**seis bloqueantes**, todos nos próprios consertos, e três deles eram **frases substitutas falsas**: um
+parágrafo sobre tier que **inverteu** a consequência, um título dizendo "each gate" sobre um corpo que lia
+`gates.at(0)`, e uma alegação de quebra de compilação falsa para dois de três tipos.
+
+Daí nasceu a terceira regra, e ela entra no mandato de toda onda seguinte: **a frase substituta também é
+especificação.** Prefira a frase mais fraca que você consegue **aferir** à mais forte em que acredita.
+
+Segunda volta: cinco dos seis fecharam com prova. O sexto — o comentário que descrevia a fixture de três
+gates — fechou mal duas vezes: dizia "carrying none of those four" sobre um gate que carrega
+`hypothesis`, e enumerava "an index, a tier, a slice scope" quando a fixture não tinha gate do tier
+**`action`**, que é justamente o tier que `profile-artifact.ts` filtra por igualdade. Fechei eu mesmo:
+quarto gate de tier `action`, e a frase reescrita para o que os quatro realizam. A mutação que a lente
+nomeou — campo projetado só nos gates de `action` — era **verde** e ficou **vermelha**.
+
+### O que ficou de mecanismo
+
+- a matriz do critério deixou de ter "EVERY" como prosa: o laço faz **walk recursivo em runtime** sobre a
+  união dos blocos e exige que **cada folha** seja movida por alguma coorte, com a mensagem
+  `no cohort varies mixed.<path>`; duas folhas aninhadas são fixadas por nome, porque o laço sozinho não
+  sustenta "nested ones included";
+- o invariante de ilha virou **bijeção**: ilha → conjunto de raízes, recusando em qualquer das duas
+  direções, com a ilha e a raiz nomeadas na mensagem;
+- a guarda de vocabulário ficou **total** em três partes — recusar o que não é mapa, comparar por
+  conjuntos, ordenar só para a mensagem com `key=repr` —, porque a correção óbvia (conjuntos) deixava uma
+  tupla dos três nomes passar e morrer depois em `AttributeError`;
+- `make_mixed.py` ganhou `--island` com o mesmo `type=island_plan` do precedente, e a pista de mistura
+  deixou de alcançar `call_provider` sem preflight nenhum;
+- e o teste de "recusa **antes** de gastar cota" virou **in-process** com `assert_not_called` no funil do
+  provedor, porque o subprocesso anterior não podia observar gasto: um toque no provedor como primeira
+  instrução de `main`, embrulhado em `try/except`, mantinha o exit 2 e o teste verde.
+
+### As alegações minhas que caíram
+
+- **"0,745 no máximo, em comprimento algum"** era o máximo sobre os comprimentos que eu testei; a fórmula
+  **tende a 0,75** e para 10.000 tokens dá ~0,7494. Cota trocada pela verdadeira e presa nos dois lados.
+- **"a partir de ~223 tokens"** não é o que a serra faz: o primeiro cruzamento é em **218** e o sinal só
+  fica monótono a partir de **232**; entre os dois alterna com o arredondamento do enxerto.
+- **"publicado ao lado dos gates"** vale do Markdown renderizado, não do artefato serializado — e a
+  ausência do bloco é **tolerada**. Corrigida a alegação no ESTADO § 3.1; a recusa de mexer na receita do
+  selo **fica**, e agora está escrita como decisão e não como ausência.
+
+### Medições de fechamento
+
+vitest **172 arquivos / 3.059 testes** verde em rodada única; pytest do lab **685 / 480 subtests**; `tsc`
+limpo; prettier limpo; lint nos mesmos 12 pré-existentes; `docs:check` 207/207; sem CRLF.
+`evaluatorDigest` `1bd5f072…` → `bff3e1c054c8f58f215645114d79b55dcbb294d4d5cd2d9b0a1d097eed997eec`,
+recomputado por mim pela função de produção — e o implementador reproduziu a receita em Python
+independentemente, batendo com o node.
+
+Uma nota de disciplina: a suíte inteira pegou uma falha que os dois agentes não podiam ver, porque cada um
+rodou só os seus arquivos. Era a linha do digest, que é de quem integra — mas o padrão vale: **rodada
+parcial verde não é suíte verde.**

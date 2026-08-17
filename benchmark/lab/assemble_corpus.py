@@ -74,7 +74,7 @@ import re
 import sys
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import artifact_gate
@@ -213,12 +213,16 @@ MIX_LEVELS: tuple[int, ...] = (15, 25, 40, 50, 60, 75, 90)
 # A celula que sai, e a razao e VIES DE COMPRIMENTO e nao impossibilidade: inserir uma
 # secao que leve o documento ao nivel mais baixo preserva o pai inteiro, e o par pai/mista
 # fica perto do limite de poda de `near_dupes` (0,82 sobre shingles de 5 TOKENS) — de que
-# lado depende do comprimento do pai. Medido: cruza o limite a partir de ~223 tokens e fica
-# abaixo dele em pai curto. Logo a celula existiria so em documento pequeno, e a operacao
-# viraria proxy do comprimento, que e eixo de fatia diagnostica declarado — pior que celula
-# vazia, porque ninguem le o vies. Acima da fronteira a poda derruba o pai humano (a
-# prioridade e ai > mixed > human) e com ele a ponte da ilha. A celula seguinte da mesma
-# operacao nao chega perto em comprimento algum: 0,745 no maximo.
+# lado depende do comprimento do pai. Medido sobre a geometria que o pino modela (uma secao
+# contigua no MEIO do pai, tokens todos distintos): o primeiro cruzamento do limite e em 218
+# tokens e o sinal so fica monotono a partir de 232 — entre os dois alterna, porque o enxerto
+# e arredondado para token inteiro —, e em pai curto o par fica abaixo do limite. Logo a
+# celula existiria so em documento pequeno, e a operacao viraria proxy do comprimento, que e
+# eixo de fatia diagnostica declarado — pior que celula vazia, porque ninguem le o vies. Acima
+# da fronteira a poda derruba o pai humano (a prioridade e ai > mixed > human) e com ele a
+# ponte da ilha. A celula SEGUINTE da mesma operacao fica sempre abaixo de 0,75, que e o
+# supremo da razao nessa geometria — o comprimento o aproxima por baixo e nunca o alcanca
+# (0,7494 em 10.000 tokens) —, e 0,75 esta abaixo do limite de poda.
 MIX_CELL_EXCLUDED: tuple[tuple[str, int], ...] = (("insercao", 15),)
 
 
@@ -3156,16 +3160,35 @@ def assert_island_plan_is_a_partition(plan: tuple[dict, ...]) -> None:
     # O VOCABULARIO antes do passeio, porque a disjuncao so significa algo se as chaves
     # forem as operacoes: chave a mais nao tem celula no plano, chave a menos deixa a ilha
     # sem cluster para aquela operacao, e uma grafia acentuada contrabandearia duas
-    # identidades da mesma operacao sob nomes diferentes. Uma igualdade recusa as tres.
-    operacoes = tuple(sorted(MIX_OPERATIONS))
+    # identidades da mesma operacao sob nomes diferentes.
+    #
+    # A FORMA vem antes das chaves, e nao e zelo: o passeio de disjuncao adiante chama
+    # `.items()`, entao um `mixingTemplates` que nao e mapa morre la num `AttributeError` —
+    # e uma tupla com os tres NOMES DE OPERACAO chega intacta a esta conferencia. E a
+    # comparacao e de CONJUNTOS com a ordenacao guardada para a mensagem (`key=repr`):
+    # `sorted()` sobre chave que nao e str levanta `TypeError`, e o chamador desta funcao
+    # captura `IslandPlanRefused` e mais nada, entao qualquer uma das duas excecoes troca a
+    # recusa com razao por um traceback.
+    operacoes = set(MIX_OPERATIONS)
     for ilha in plan:
-        declaradas = tuple(sorted(ilha["mixingTemplates"]))
+        bruto = ilha["mixingTemplates"]
+        if not isinstance(bruto, Mapping):
+            raise IslandPlanRefused(
+                f"a ilha {ilha['island']!r} declara `mixingTemplates` que nao e mapa e sim "
+                f"{type(bruto).__name__}: sem chave por operacao nao ha o que conferir, e um "
+                "plano assim atravessa a conferencia de chaves quando os elementos SAO os "
+                "nomes das operacoes"
+            )
+        declaradas = set(bruto)
         if declaradas != operacoes:
             raise IslandPlanRefused(
-                f"a ilha {ilha['island']!r} declara templates de mistura para {declaradas} "
-                f"e as operacoes sao {operacoes}: sem uma chave por operacao a ilha carrega "
-                "menos operacoes do que a curva compra, ou compra celula que o plano nao "
-                "declara — e as duas so aparecem na montagem, depois de a cota estar gasta"
+                f"a ilha {ilha['island']!r} declara chaves de mistura que nao sao as "
+                f"operacoes: sobrando {sorted(declaradas - operacoes, key=repr)}, faltando "
+                f"{sorted(operacoes - declaradas, key=repr)} (declaradas "
+                f"{sorted(declaradas, key=repr)}; operacoes {sorted(operacoes, key=repr)}). "
+                "Sem uma chave por operacao a ilha carrega menos operacoes do que a curva "
+                "compra, ou compra celula que o plano nao declara — e as duas so aparecem na "
+                "montagem, depois de a cota estar gasta"
             )
     # Um eixo de REGISTRO por entrada, e os campos do plano que o escrevem. `promptTemplate`
     # recebe DOIS campos, porque as linhas `ai` e as mistas escrevem o mesmo eixo.
@@ -3223,19 +3246,47 @@ def assert_island_plan_realizes_the_five_fractions(plan: tuple[dict, ...]) -> No
     realizam `cal-A` em 6,65 % contra um alvo de 10 %, fora da tolerancia. Uma guarda que
     comparasse "entre 15 e 20 ilhas de 200 a 270 linhas" aprovaria os tres.
     """
-    registros = [linha for ilha in plan for linha in _island_component(ilha)]
+    por_ilha = [(ilha["island"], _island_component(ilha)) for ilha in plan]
+    registros = [linha for _, linhas in por_ilha for linha in linhas]
     # UMA ilha e UM componente conexo, e este e o criterio do proprio conceito — nao uma
     # condicao deduzida dele. Sem esta perna a guarda julga as fracoes de um corpo cujas
     # ilhas podem ter-se fundido, e o colapso aparece na montagem, depois da cota. Medido:
     # tres clusters de mistura cobrindo as duas metades de template somados mas nenhum
     # individualmente dao 40 componentes onde o plano declara 20.
-    ilhas_medidas = len(set(connected_components(registros).values()))
-    if ilhas_medidas != len(plan):
+    #
+    # E a conferencia e a BIJECAO ilha <-> componente nas DUAS direcoes, porque CONTAR
+    # componentes nao e o criterio: medido, rachar `ilha_05` e `ilha_06` por paridade e
+    # cruzar cada metade com a outra ilha por UM pai de mista devolve 20 componentes de 500
+    # linhas com o perfil 200/200/100 de uma ilha natural — a contagem fica intacta e nenhuma
+    # das duas ilhas particiona eixo algum. As direcoes sao independentes: uma ilha em mais de
+    # um componente e duas ilhas no mesmo componente aparecem sozinhas (o `mixingTemplates`
+    # da ultima ilha igual ao da primeira funde duas sem rachar nenhuma), entao cada uma tem
+    # a sua recusa e a mensagem nomeia a que foi MEDIDA.
+    raizes = connected_components(registros)
+    raizes_por_ilha = [
+        (nome, {raizes[linha["id"]] for linha in linhas}) for nome, linhas in por_ilha
+    ]
+    componentes = len(set(raizes.values()))
+    rachadas = {nome: len(das) for nome, das in raizes_por_ilha if len(das) != 1}
+    if rachadas:
         raise IslandPlanRefused(
             f"o plano declara {len(plan)} ilha(s) e o corpo modelado fecha em "
-            f"{ilhas_medidas} componente(s) conexo(s): uma ilha que se funde com outra nao "
-            "particiona eixo algum, e as fracoes realizadas por um corpo desses nao dizem "
-            "nada sobre o plano"
+            f"{componentes} componente(s) conexo(s), e ha ilha que nao e UM deles: "
+            f"{rachadas} (ilha -> componentes em que as linhas dela caem). Uma ilha rachada "
+            "nao particiona eixo algum, e as fracoes realizadas por um corpo desses nao "
+            "dizem nada sobre o plano"
+        )
+    donas: dict[str, list[str]] = {}
+    for nome, das in raizes_por_ilha:
+        donas.setdefault(next(iter(das)), []).append(nome)
+    partilhadas = {raiz: nomes for raiz, nomes in donas.items() if len(nomes) > 1}
+    if partilhadas:
+        raise IslandPlanRefused(
+            f"o plano declara {len(plan)} ilha(s) e o corpo modelado fecha em "
+            f"{componentes} componente(s) conexo(s), e ha componente reclamado por mais de "
+            f"uma ilha: {partilhadas} (raiz -> ilhas que a partilham). Duas ilhas no mesmo "
+            "componente sao UMA ilha no grafo, e as fracoes realizadas por um corpo desses "
+            "nao dizem nada sobre o plano"
         )
     try:
         assert_components_can_fill_five_partitions(registros)

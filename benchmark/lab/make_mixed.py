@@ -13,8 +13,21 @@ Two modes:
 
 Sealed-corpus rule: parents MUST come from the reserved bucket (never trained).
 
+`--island` is required in BOTH modes and judged at the parser, and what the guard
+buys is refusal BEFORE the provider is reached — not anything about the row that
+gets written. The island the parser returns is never read again: `emit` stamps
+`promptTemplateId` from `MIX_TEMPLATES`, or from the pair's own field, and never
+from `island["mixingTemplates"]`, so a slate that DID satisfy the plan would let
+this lane write mixed rows whose template identity belongs to no island. Nothing
+runs under such a slate today: the sixty mixing identities the plan asks for and
+the three recipes served here have empty intersection, so every island of the plan
+is refused at the parser.
+The parser is also what holds the guard over a mode this file does not have yet:
+`type=island_plan` runs before `main` dispatches on the mode at all.
+
 Usage (generation, resume-safe):
-  python make_mixed.py --generate --parents ../data/dataset/reserved.jsonl \
+  python make_mixed.py --generate --island ilha_00 \
+    --parents ../data/dataset/reserved.jsonl \
     --output ../data/candidates/mixed_candidates.jsonl --target 100
 """
 
@@ -182,6 +195,67 @@ def mix_template_digest(template_id: str) -> str:
     ).hexdigest()
 
 
+def assembler():
+    """`assemble_corpus`, importado TARDE e com o diretorio do lab garantido no path.
+
+    Este arquivo roda como script, e o montador arrasta `artifact_gate` ->
+    `generate_ai` consigo. O import mora aqui, e nao no topo, porque o `type=` do
+    argparse e o unico ponto deste arquivo que precisa do plano.
+    """
+    lab = str(Path(__file__).resolve().parent)
+    if lab not in sys.path:
+        sys.path.insert(0, lab)
+    import assemble_corpus
+
+    return assemble_corpus
+
+
+def island_plan(value: str) -> dict:
+    """`--island`'s type: a ilha cujo slate de MISTURA esta servido, ou a recusa.
+
+    As quatro primeiras pernas sao as de `generate_ai.island_plan`, pelas MESMAS
+    funcoes de producao e nao por numero comparado: o plano e uma particao, a
+    geometria realiza as cinco fracoes, a reserva deixa lugar de nucleo no bloco
+    cego, e `--island` nomeia uma ilha do plano. A QUINTA e o que esta pista troca:
+    onde a lane de geracao confere `templates` contra `RECIPES`, esta confere os tres
+    `mixingTemplates` da ilha contra `MIX_TEMPLATES`, que e o slate de mistura que o
+    plano pede desta pista. A conferencia nao liga a ilha a linha: a ilha devolvida
+    aqui nao e lida em ponto algum de `main`, e o `promptTemplate` de uma linha mista
+    deste arquivo sai de `MIX_TEMPLATES`. A perna da geracao nao serve aqui:
+    `RECIPES` escreve o eixo nas linhas `ai`.
+
+    A intersecao entre os dois conjuntos e VAZIA hoje, e para as sessenta identidades
+    do plano e nao so para a ilha de uma corrida — o plano pede tres por ilha, todas
+    prefixadas `mix-`, e este arquivo serve tres receitas `mix_*_v1`, uma por banda do
+    nudge. Isso e a decisao de coleta do operador aparecendo na entrada em vez de na
+    montagem: o que a funcao possui e que a cota nao pode ser gasta enquanto o slate
+    de mistura nao cumpre o plano.
+    """
+    lab = assembler()
+    try:
+        lab.assert_island_plan_is_a_partition(lab.ISLAND_PLAN)
+        lab.assert_island_plan_realizes_the_five_fractions(lab.ISLAND_PLAN)
+        lab.assert_island_plan_leaves_core_in_the_blind_block(lab.ISLAND_PLAN)
+        island = lab.island_named(lab.ISLAND_PLAN, value)
+    except lab.IslandPlanRefused as refused:
+        raise argparse.ArgumentTypeError(str(refused)) from None
+    pedidos = tuple(
+        island["mixingTemplates"][operacao]
+        for operacao in sorted(island["mixingTemplates"])
+    )
+    faltando = tuple(nome for nome in pedidos if nome not in MIX_TEMPLATES)
+    if faltando:
+        raise argparse.ArgumentTypeError(
+            f"a ilha {value!r} pede os templates de mistura {pedidos} e este "
+            f"arquivo serve {tuple(sorted(MIX_TEMPLATES))}: os que faltam sao "
+            f"{faltando}. Cresca `MIX_TEMPLATES` ate cobrir o plano, ou emende o "
+            "plano — misturar sob um slate que o plano nao cumpre produz linha mista "
+            "cuja identidade de template nao pertence a ilha alguma, e a montagem a "
+            "recusa depois de a cota estar gasta"
+        )
+    return island
+
+
 # The keys a parent row contributes to a mixed pair, in ONE place because there are
 # two callers reading two different files: the reserved pool (`id`/`text`) and a pairs
 # file written by another lane (`parentId`/`parentText`).
@@ -263,6 +337,18 @@ def emit(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    # REQUIRED nos DOIS modos, e o `type=` e onde o plano e julgado. Ligar a
+    # exigencia ao `--generate` deixaria de fora todo modo acrescentado depois — e o
+    # `--from-pairs` importa linhas que carregam `promptTemplate` do mesmo jeito, so
+    # que a cota delas foi gasta por outro arquivo.
+    parser.add_argument(
+        "--island",
+        required=True,
+        type=island_plan,
+        metavar="{"
+        + ",".join(ilha["island"] for ilha in assembler().ISLAND_PLAN[:2])
+        + ",...}",
+    )
     parser.add_argument("--from-pairs", type=Path, default=None)
     parser.add_argument("--generate", action="store_true")
     parser.add_argument("--parents", type=Path, default=None)
