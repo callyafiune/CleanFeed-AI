@@ -8652,3 +8652,35 @@ A leitura que eu adoto, e registro: o que foi ratificado em 12-08 foi o NÚMERO,
 Escrever quarenta prompts é material de corpus, e material de corpus com uma frase falsa ao lado é pior que
 material ausente — a semana inteira foi sobre isso. Então parei neste item e não no outro: a guarda da
 pista mista é mecanismo, é minha, e segue; os quarenta prompts vão ao operador com a medição na mão.
+
+### A segunda refutação da mesma etapa: a guarda mista também existe, e o acoplamento que a renomeação quebraria (2026-08-18)
+
+Continuei a medição do desenho e a § 7 errou pela quarta vez na mesma unidade.
+
+**A guarda pré-cota da classe mista EXISTE.** `make_mixed.py:213` tem o seu próprio `type=island_plan`,
+fiado no argparse em `:347`, com as quatro pernas da pista de geração — pelas mesmas funções de produção — e
+uma **quinta**: confere os três `mixingTemplates` da ilha contra `MIX_TEMPLATES`. A interseção dos dois
+conjuntos é vazia hoje, e o docstring diz por escrito que é vazia "para as sessenta identidades do plano e
+não só para a ilha de uma corrida". Então ela recusa toda ilha, antes de qualquer chamada de provedor, com
+a mensagem nomeando o que falta. `MIX_TEMPLATES` serve três receitas `mix_*_v1`, uma por banda de nudge, e
+os três escritores pinam `mix_edit_v1`.
+
+**Conclusão que reorganiza a unidade:** as duas guardas que eu ia construir já estão construídas, as duas
+recusam, e o que falta às duas é a MESMA coisa — material. 40 identidades de geração e 60 de mistura, as
+100 que a § 3.3 já contava certo. Não há mecanismo de guarda a escrever; há um slate a escrever e duas
+dívidas pequenas de mecanismo (a banda, e a identidade por linha vir da ilha × operação).
+
+**E um acoplamento que a renomeação quebraria em silêncio.** `assemble_corpus.py:1247` declara
+`REWRITING_RECIPES = {"parafrase"}` e `:1727` o lê para decidir se `derivationRoot` nomeia o pai:
+`if parent and recipe in REWRITING_RECIPES`. Isto é CONECTIVIDADE — só a reescrita faz a linha ser derivação
+do pai; `original`, `social` e `humanizado` nomeiam a semente e não a derivação. Trocar os quatro nomes de
+gênero por quarenta nomes de ilha (`pt-ilha-NN-a`) faria esse conjunto casar com nada, e toda linha gerada
+sairia `notApplicable` no eixo — componentes diferentes, sem um teste vermelho, porque nenhum teste compara
+a classificação com a tarefa que a receita pede.
+
+Logo o slate de 40 não pode ser um dicionário de nomes opacos: cada entrada tem de DECLARAR a tarefa (e o
+registro), e a classificação a jusante passa a ler o campo em vez de casar o nome. É a mesma correção de
+forma que a onda 2 fez três vezes: a decisão lê o que foi declarado, não o que o nome sugere.
+
+Uma segunda cópia do slate está em `codex_batch.py:49-66`, com os quatro prompts escritos de novo. Ela entra
+na mesma emenda ou passa a servir outro corpus que o plano não descreve.
