@@ -8762,3 +8762,24 @@ dois arquivos do lab esta em `EVALUATOR_FILES`), prosa e contagens da § 1 reesc
 **O que fica:** a tabela de quarenta prompts vai ao sim do operador antes de qualquer cota, como o plano
 exige. E a metade de MISTURA continua devendo etapa 1 propria — as 60 identidades e a banda que admite os
 niveis 75 e 90 —, pela razao ja registrada: a terceira coordenada toca a fronteira de Jaccard medida.
+
+### A tabela de quarenta ratificada, e a banda que era um literal (2026-08-18)
+
+**O operador deu ok a tabela de quarenta linhas** — ilha, slot, tarefa, registro. E a impressao rendeu um
+achado que assercao nenhuma pegaria: **as tres ilhas reservadas carregam duas tarefas so**, `didatico` e
+`comentario`, porque a regra agrupa tarefas de cinco em cinco e as reservadas sao as tres ultimas. A reserva
+mede novidade de FAMILIA e nao de tarefa, mas a populacao em que ela mede fica com 2 de 8 tarefas.
+Registrado como numero, nao permutado: espalhar as reservadas pelos grupos e desenho de medicao.
+
+**A banda mista deixou de ser literal.** `MIXED_BAND = (0,05-0,7)` recusava os niveis 75 e 90 da curva
+ratificada e admitia de 0,05 a 0,15, que nivel nenhum reivindica. Eu disse antes que derivar exigiria uma
+tolerancia escolhida pelo operador; estava errado, e a aritmetica corrige: o § 3.3 ratifica a coorte de v4
+como [0,50-0,55] e `midpoint(50, 60)` e 55, logo a regra JA estava ratificada — do proprio nivel ao ponto
+medio ate o seguinte, piso fechado, teto aberto, o ultimo fechando abaixo de 1,0.
+
+A guarda e a igualdade com a banda ratificada, e ela tem bateria: trocar o divisor do ponto medio (200 ->
+100) derruba **11** assercoes, inclusive a de v4. Restaurado com sha256 identico; lab **712 / 518**.
+
+**O que NAO foi feito, e nao e esquecimento:** o escritor que nao normaliza (`make_mixed.emit` sem
+`common.normalize_text`, 8,67 % dos vaos com corrida de espaco) e as 60 identidades de mistura. O primeiro
+e mecanismo e cabe na volta seguinte; o segundo espera a quarta lista.

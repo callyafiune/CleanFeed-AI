@@ -3146,5 +3146,43 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         self.assertEqual(len(distintos), len(generate_ai.RECIPES))
 
 
+class ABandaMistaEDerivadaDosNiveis(unittest.TestCase):
+    """A banda de cada nivel sai de `MIX_LEVELS`, e a regra reproduz a unica ratificada.
+
+    Sem esta igualdade a regra do ponto medio e uma escolha de quem a escreveu: qualquer
+    largura particionaria os sete niveis, e o teste ficaria verde sobre uma tolerancia que
+    politica alguma declarou. A banda de v4 — fechada por baixo em [0,50-0,55], § 3.3 do
+    ESTADO — e o que a fixa, porque `midpoint(50, 60)` e 55.
+    """
+
+    def test_a_banda_de_v4_e_a_ratificada(self):
+        import make_mixed
+
+        por_nivel = {nivel: (piso, teto) for nivel, piso, teto in make_mixed.mixed_bands()}
+        self.assertEqual(por_nivel[50], (0.50, 0.55))
+
+    def test_as_bandas_particionam_a_curva_sem_lacuna_e_sem_sobreposicao(self):
+        import make_mixed
+
+        bandas = make_mixed.mixed_bands()
+        self.assertEqual([nivel for nivel, _, _ in bandas], list(assemble_corpus.MIX_LEVELS))
+        for (_, _, teto), (_, piso_seguinte, _) in zip(bandas, bandas[1:]):
+            self.assertLessEqual(teto, piso_seguinte)
+        self.assertEqual(bandas[-1][2], 1.0)
+
+    def test_a_curva_RATIFICADA_inteira_e_admitida_e_o_que_nenhum_nivel_pede_nao_e(self):
+        import make_mixed
+
+        # A metade que a banda unica de antes reprovava: v6 e v7 sao a curva, nao excecao.
+        for nivel in assemble_corpus.MIX_LEVELS:
+            with self.subTest(nivel=nivel):
+                self.assertEqual(
+                    make_mixed.mixed_level_of({"aiFraction": nivel / 100}), nivel
+                )
+        # E a outra metade: fracao que nivel algum reivindica nao entra. 0,05 e 0,14 entravam.
+        for fracao in (0.04, 0.05, 0.14, 0.55, 0.70, 1.0):
+            with self.subTest(fracao=fracao):
+                self.assertIsNone(make_mixed.mixed_level_of({"aiFraction": fracao}))
+
 if __name__ == "__main__":
     unittest.main()

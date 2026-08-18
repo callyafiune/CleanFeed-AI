@@ -129,12 +129,46 @@ def compute_mixture(parent: str, edited: str) -> dict:
     }
 
 
-MIXED_BAND = (0.05, 0.7)
+def mixed_bands() -> tuple[tuple[int, float, float], ...]:
+    """A banda de cada nivel: (nivel, piso, teto), DERIVADA de `MIX_LEVELS`.
+
+    A regra e uma so — do proprio nivel ao ponto MEDIO ate o nivel seguinte — e ela nao e uma
+    tolerancia escolhida aqui: ela REPRODUZ a unica banda que a politica ratificou, a de v4,
+    fechada por baixo em [0,50-0,55] (ESTADO § 3.3), porque `midpoint(50, 60)` e 55. Um teste
+    nomeado afirma essa igualdade, e e o que impede a regra de virar outra coisa em silencio.
+    O ultimo nivel fecha abaixo de 1,0: documento integralmente de IA nao tem origem dividida,
+    e `mixture` e proibida fora de `mixed` por esse motivo.
+
+    O piso e FECHADO e o teto ABERTO, o que faz as sete bandas particionarem sem lacuna e sem
+    sobreposicao — e uma fracao abaixo do primeiro nivel nao cai em banda alguma. A banda
+    unica de antes admitia de 0,05 a 0,70, isto e, admitia fracao que nivel nenhum reivindica
+    e RECUSAVA v6 e v7, que a curva ratificada exige.
+    """
+    niveis = assembler().MIX_LEVELS
+    bandas = []
+    for indice, nivel in enumerate(niveis):
+        seguinte = niveis[indice + 1] if indice + 1 < len(niveis) else None
+        teto = (nivel + seguinte) / 200 if seguinte is not None else 1.0
+        bandas.append((nivel, nivel / 100, teto))
+    return tuple(bandas)
+
+
+def mixed_level_of(mixture: dict) -> int | None:
+    """O nivel de que esta fracao observada e, ou `None` se de nenhum.
+
+    A coorte de uma linha e decidida pela fracao OBSERVADA e nunca pelo alvo da operacao: um
+    v4 que aterrissa em 0,48 sai da coorte, e e essa a razao de a banda existir.
+    """
+    fracao = mixture["aiFraction"]
+    for nivel, piso, teto in mixed_bands():
+        if piso <= fracao < teto:
+            return nivel
+    return None
 
 
 def in_mixed_band(mixture: dict) -> bool:
     """An edit that rewrote (quase) tudo não é "misto"; idem cópia fiel."""
-    return MIXED_BAND[0] <= mixture["aiFraction"] <= MIXED_BAND[1]
+    return mixed_level_of(mixture) is not None
 
 
 def interleave_by_family(pending: list[dict]) -> list[dict]:
@@ -576,7 +610,7 @@ def main() -> None:
                     # produced by different recipes in one promptTemplate cluster.
                     template_id = (
                         "mix_change_less_v1"
-                        if mixture["aiFraction"] > MIXED_BAND[1]
+                        if mixture["aiFraction"] >= mixed_bands()[-1][2]
                         else "mix_change_more_v1"
                     )
                     template = MIX_TEMPLATES[template_id]()
