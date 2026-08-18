@@ -8613,3 +8613,42 @@ O que **não** mudei, e a razão: a fila de dez unidades (§ 7) continua dizendo
 codex, porque ela fala de outra fila — os 23 bloqueantes da auditoria de 2026-08-10, mais as 14 de
 pré-publicação e as 31 menores. Nenhum achado desta onda mordeu naquela lista, então mexer nela seria
 declarar pago o que não foi.
+
+## Etapa 1 da unidade das duas guardas pré-cota: o desenho refutou o próprio ESTADO em três pontos (2026-08-17)
+
+O escopo autorizado era: crescer o slate até o plano, emendar `_island()` para três slots de mistura, e a
+guarda pré-cota da classe mista — só as duas guardas, nenhuma chamada de provedor, pelas três etapas. A
+etapa 1 mediu o estado antes de desenhar, e o que ela achou muda a unidade.
+
+**1. O número não é 100, é 40.** `island_plan` (leg 4) confere `island["templates"]` contra `RECIPES`, e
+`templates` são DOIS por ilha sobre vinte ilhas. As 100 identidades são do CORPUS — 40 de geração mais 60
+de mistura —, e as de mistura são servidas pela pista mista, que `RECIPES` não alcança. O docstring de
+`_island()` já dizia quarenta; a linha da § 7 dizia cem. É o mesmo erro que esta semana registrou duas
+vezes: um número que viaja para o lugar errado e passa a descrever outra coisa.
+
+**2. Os três slots de mistura JÁ EXISTEM.** `_island()` declara `mixingTemplates` como dicionário chaveado
+pela operação, derivado de `MIX_OPERATIONS`, com a razão escrita no próprio docstring — um slot único
+confundiria a operação com a ilha, porque `dev` recebe uma ilha só. A § 7 dizia que "a forma do plano
+também não hospeda o desenho"; hospeda. Metade do item que eu ia implementar estava feita desde 12-08, e
+foi a § 3.3 que registrou certo enquanto a § 7 envelheceu.
+
+**3. O que sobra da guarda mista é real, e é outra coisa.** Medido agora: `make_mixed_agy.py:39` e
+`make_mixed_codex.py:41` declaram `TEMPLATE_ID = "mix_edit_v1"`, `make_mixed.py:562` escreve o mesmo, e
+`MIXED_BAND = (0.05, 0.7)` em `make_mixed.py:132` recusaria os níveis 75 e 90 da curva ratificada. Então a
+dívida não é a forma do plano — é a pista **escrever a identidade por ilha × operação** em vez de um nome
+só, e a banda admitir a curva que a política congelou.
+
+### A pergunta que fica, e por que ela não é minha
+
+Crescer `RECIPES` a 40 é escrever **quarenta prompts materialmente distintos**. O digest guarda contra
+cópia literal (`island_plan` recusa bytes idênticos, com a razão escrita: a partição de ilha ficaria
+NOMINAL), mas não contra quarenta variações vazias — e "materialmente distinto por ilha" é justamente o
+que sustenta a independência de template que o split modela e o recall certifica. Dois documentos desta
+árvore discordam sobre de quem é isso: `_island()` e `island_plan` declaram por escrito que o slate é
+**decisão de coleta do operador** e que este arquivo não a toma; a § 7 diz que **deixou de ser pendência do
+operador** porque o número foi ratificado.
+
+A leitura que eu adoto, e registro: o que foi ratificado em 12-08 foi o NÚMERO, não a autoria dos prompts.
+Escrever quarenta prompts é material de corpus, e material de corpus com uma frase falsa ao lado é pior que
+material ausente — a semana inteira foi sobre isso. Então parei neste item e não no outro: a guarda da
+pista mista é mecanismo, é minha, e segue; os quarenta prompts vão ao operador com a medição na mão.
