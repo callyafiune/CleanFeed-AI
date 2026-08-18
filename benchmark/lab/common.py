@@ -33,7 +33,20 @@ MAXIMUM_WORDS = 5_000
 
 
 def normalize_text(text: str) -> str:
-    """NFC + LF + trimmed, mirroring benchmark/corpus-import.ts semantics."""
+    """NFC + LF + espaco colapsado + trim. NAO e a regra SELADA, e a diferenca decide corpus.
+
+    `benchmark/corpus-import.ts::normalizeCorpusText` faz DUAS coisas — CRLF/CR para LF e NFC —
+    e e ela que o caminho selado aplica antes de hashear e guardar. Esta faz mais TRES: colapsa
+    `[ 	]+` dentro da linha, apara cada linha, e colapsa `
+{3,}`. Logo ela REESCREVE
+    espacamento que a regra selada preserva, e um pool escrito com esta regra nao e
+    byte-identico ao que a ingestao produziria do mesmo texto.
+
+    Medido em 2026-08-18, e e por isso que a frase antiga saiu: ela dizia espelhar a semantica
+    de `corpus-import.ts`, e nao espelha. Quem for normalizar um escritor novo tem de escolher
+    a regra de proposito — a selada preserva o espacamento que o gate antiartefato acusa, esta
+    o apaga — em vez de herdar esta por ela estar a mao.
+    """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = unicodedata.normalize("NFC", text)
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]

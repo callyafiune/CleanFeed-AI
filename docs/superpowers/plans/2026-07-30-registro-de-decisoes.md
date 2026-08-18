@@ -8783,3 +8783,76 @@ A guarda e a igualdade com a banda ratificada, e ela tem bateria: trocar o divis
 **O que NAO foi feito, e nao e esquecimento:** o escritor que nao normaliza (`make_mixed.emit` sem
 `common.normalize_text`, 8,67 % dos vaos com corrida de espaco) e as 60 identidades de mistura. O primeiro
 e mecanismo e cabe na volta seguinte; o segundo espera a quarta lista.
+
+### Cinco lentes em paralelo sobre os itens 1 e 2, e as duas dissolveram (2026-08-18)
+
+O operador autorizou agentes em paralelo. Paralelizei a MEDIÇÃO — quatro perguntas independentes mais uma
+contra-lente — e não a escrita, porque os dois consertos caem no mesmo arquivo e em funções vizinhas. As
+cinco voltaram e o resultado é uma refutação dupla: **item 2 não tem trabalho de mecanismo, e o item 1 não
+se conserta como o ESTADO o prescrevia.**
+
+#### Item 2: não existe fiação a fazer
+
+Os dois `emit` (`make_mixed.py:466` e `:635`) são filhos LEXICAIS de `main()`, e `args.island` está no
+escopo dos dois. **A menor mudança de assinatura é zero.** O que eu chamei de "fiar a ilha até o escritor",
+lendo o docstring de `island_plan` ("a ilha devolvida aqui não é lida em ponto algum de `main`"), era leitura
+minha de que faltava caminho. Não falta: falta identidade.
+
+E a identidade não é escrevível hoje, medido: `emit` deriva o digest do slate local
+(`mix_template_digest` → `MIX_TEMPLATES[template_id]()`), e passar `mix-substituicao-ilha-00` estoura
+`KeyError` antes de escrever byte algum. Duas armadilhas que a lente nomeou e que eu poderia ter caído:
+crescer `MIX_TEMPLATES` por **alias** — 60 nomes apontando para 3 corpos — satisfaz a guarda e mente, porque
+identidade É o digest dos bytes e os 60 teriam 3 digests; e o **nudge não cabe nos três slots**, porque os
+slots são por OPERAÇÃO e as três receitas de hoje são por BANDA de nudge.
+
+#### Item 1: três razões pelas quais o remédio prescrito está errado
+
+1. **Ordem.** Os vãos são offsets sobre o texto EDITADO (`_word_offsets(edited)`, fecho `len(edited)`).
+   Normalizar depois de `compute_mixture` deixa o último vão apontando fora da cadeia escrita — 77 contra 73,
+   medido por duas lentes independentemente — e a jusante ninguém reclama: `mixed_record` recomputa
+   `aiFraction` sobre denominador errado e o `artifact_gate` fatia a cadeia errada. Só `schema.ts:719` recusa,
+   já do outro lado da fronteira.
+2. **Insuficiência.** O veredito de banda é decidido FORA de `emit` e antes dele (`:451` no `--from-pairs`,
+   `:628` no `--generate`), sobre texto cru. Normalizar dentro de `emit` desalinha o veredito da linha
+   escrita, e a mudança de admissão foi medida nas DUAS direções: 0,4286 (nível 40) para 0,4521 (banda
+   nenhuma) e 0,5621 (hoje descartado) para 0,5444 (nível 50, aceito). Isto é a banda ratificada mudando de
+   população, não um detalhe de espaçamento.
+3. **A regra é a errada.** `common.normalize_text` faz CINCO coisas e a regra SELADA
+   (`corpus-import.ts::normalizeCorpusText`) faz DUAS: CRLF/CR para LF e NFC. A do lab colapsa `[ \t]+`,
+   apara cada linha e colapsa `\n{3,}` — logo reescreve espaçamento que a selada preserva. E a docstring dela
+   **afirmava espelhar a semântica de `corpus-import.ts`**. Frase falsa, em produção, e carga: era ela que
+   faria "normalizar com a regra do lab" parecer alinhado ao caminho selado. Saiu nesta volta.
+
+#### O defeito maior, que ninguém tinha nomeado
+
+O pai vem normalizado (por `CandidateWriter.offer`) e o editado vem cru, então a assimetria **NFC** corrompe
+o próprio diff. Medido: texto editado em NFD contra pai em NFC dá **6 vãos e `aiFraction` 0,5263** — nível 50,
+dentro da banda — contra **2 vãos e 0,2037** quando os dois lados são normalizados. A linha declararia nível
+50 sobre um texto que é 20 % de IA. Isso é maior que a corrida de espaço que a § 7 registrava, e é a razão
+de a normalização ter de tocar os DOIS lados antes do diff, não só a saída.
+
+#### O que mais as lentes mediram, e que restringe quem for consertar
+
+- **Sem fixture novo o conserto entra verde e invisível**: os quatro fixtures de `emit` são invariantes por
+  normalização, e nenhum teste da árvore afirma o campo `text` da linha escrita. A invariante que falta é
+  `spans[-1]["end"] == len(record["text"])` sobre a SAÍDA de `emit` — hoje o ladrilho é afirmado contra o
+  argumento que o próprio teste passou a `compute_mixture`, o que não mata a mutação "normalizar depois".
+- **População dividida**: as linhas em disco guardam texto cru e vãos de offset cru. A metade `--from-pairs`
+  reemite sem cota se os arquivos de pares existirem; a `--generate` só volta com cota.
+- **A dedup muda por normalização e não por conteúdo**: `norm_hash` sobre o texto é a chave, então duas
+  linhas que hoje diferem só em espaço passam a colidir.
+- **O gate perde discriminação**: `space-run` (8,67 %) e `trailing-space-before-newline` (5,29 %) vão a zero
+  na classe mista. É o conserto certo e ao mesmo tempo apaga a única discriminação medida das duas sondas.
+- **A fixture de teto pinada é HUMANA e não se move**: união 10/1.000 = 1,0 % contra teto de 2 %, byte a byte
+  igual depois de normalizar as 1.000 linhas. O `0,809 %` do ESTADO não é pinado por teste, é comentário.
+- **E NFC pode CRIAR acusação de encoding**, medido: `"A" + U+0303 + U+00A7` não é acusado cru e vira
+  `mojibake-utf8-as-latin1` depois de normalizar. Raro, e na direção oposta à intenção.
+
+#### O que fiz, e o que não é meu
+
+Fiz o que não depende de decisão: a docstring falsa saiu, com a diferença medida escrita no lugar dela, e a
+linha da § 7 passou a carregar as três razões em vez de prescrever um remédio que a medição refuta.
+
+O que **não** fiz e não é meu: escolher a regra. Normalizar o pool misto muda ADMISSÃO sob banda ratificada
+e divide a população em disco em dois regimes de espaçamento — as duas coisas são decisão do operador, e
+nenhuma das duas é reversível por mim depois de o pool existir.
