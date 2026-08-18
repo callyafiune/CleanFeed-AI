@@ -8730,3 +8730,35 @@ fim de uma unidade, sem etapa de desenho própria, seria repetir o erro.
 Então o slate fica no patch, a árvore fica verde, e a decisão que falta é uma só: as duas medições passam a
 ser lidas **do pool** (o fato não precisa do montador), ou o slate de 40 espera a unidade que aposentar os
 pools do slate de quatro.
+
+### O slate de 40 fecha, e "ler do pool" virou outra coisa ao ser medido (2026-08-18)
+
+O operador mandou ler do pool. Medi o que isso custaria antes de escrever: o pool tem **4.048** linhas `ai`
+e as CONSTRUIDAS sao **1.170**, porque as outras caem em `UnmappableLane` e vizinhas. As corridas
+641/231/213/85 que o catalogo cita descrevem a classe construida, nao o pool — logo ler do pool exigiria
+reimplementar a admissao dentro do teste, que e a segunda autoridade que esta arvore passa a semana
+tirando. A intencao da ordem era desbloquear sem esperar, e o que a serve melhor e outra coisa.
+
+**O conserto: o slate RETIRADO e fato historico, declarado.** `RETIRED_GENERATION_TASKS` nomeia as quatro
+receitas do slate de quatro e a tarefa de cada uma. A tarefa de uma linha JA ESCRITA nao e inventavel nem
+recuperavel do slate de hoje, e nada no arquivo escrito a diz; com a tabela, as linhas daqueles pools voltam
+a ser classificaveis e os dois testes seguem medindo pela MONTAGEM, que e onde eles valem. A tabela nao
+readmite nada: quem decide o que entra num release e o plano de ilhas, e nome retirado nao pertence a ilha
+alguma. Fora dela e do slate vigente, a recusa continua por linha.
+
+**O que a unidade entregou, medido:** 40 entradas, 40 pares (tarefa, registro) distintos, 40 digests
+distintos, nomes iguais por igualdade aos do plano, nenhuma ilha repetindo coordenada, sondas de eco 19 ->
+32 (contra ~190 de quarenta prompts de prosa propria), o picker por provedor removido com guarda de que nao
+volta, e a classificacao de derivacao lendo o campo `task`.
+
+**Tres testes que pinavam o slate de quatro passaram a medir o de quarenta**, e um deles ensinou uma coisa: o
+caso emprestava templates de OUTRA ilha, e sob o slate novo isso faz duas ilhas partilharem valor — a guarda
+de particao recusou na entrada. O emprestimo existia porque o slate nao servia os nomes da propria ilha;
+agora serve, e o caso mede a restricao com os templates dela mesma.
+
+Fechamento: vitest **172 / 3.097**, pytest do lab **709 / 505**, `evaluatorDigest` inalterado (nenhum dos
+dois arquivos do lab esta em `EVALUATOR_FILES`), prosa e contagens da § 1 reescritas pelo medido.
+
+**O que fica:** a tabela de quarenta prompts vai ao sim do operador antes de qualquer cota, como o plano
+exige. E a metade de MISTURA continua devendo etapa 1 propria — as 60 identidades e a banda que admite os
+niveis 75 e 90 —, pela razao ja registrada: a terceira coordenada toca a fronteira de Jaccard medida.

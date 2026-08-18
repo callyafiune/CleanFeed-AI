@@ -84,6 +84,24 @@ def run_writer(tmp: Path, name: str, fn) -> tuple[list[dict], dict]:
     return rows, stats
 
 
+def receita_da_tarefa(tarefa: str) -> str:
+    """A primeira receita do slate cuja tarefa e esta.
+
+    Os fixtures pedem a receita pela TAREFA e nao pelo nome: o slate e particionado por
+    ilha, entao `pt-ilha-05-a` nao diz que tarefa e, e um nome digitado aqui envelheceria na
+    primeira vez que a atribuicao do plano mudasse. O que estes fixtures precisam distinguir
+    e uma tarefa que escreve texto novo de uma que REESCREVE o pai, porque so a segunda faz
+    a linha ser derivacao.
+    """
+    import generate_ai
+
+    return next(
+        nome
+        for nome, spec in sorted(generate_ai.RECIPES.items())
+        if spec["task"] == tarefa
+    )
+
+
 class CommonTests(unittest.TestCase):
     def test_normalize_collapses_whitespace_and_newlines(self) -> None:
         self.assertEqual(
@@ -662,22 +680,65 @@ class GenerateAiTests(unittest.TestCase):
                         escolhidos[primeira] & escolhidos[segunda], set()
                     )
 
-    def test_recipe_assignment_is_deterministic_and_weighted(self) -> None:
-        from collections import Counter
+    def test_the_slate_is_the_plan_and_the_per_provider_picker_is_gone(self) -> None:
+        """Os nomes do slate SAO os do plano, por igualdade, e o picker por provedor saiu.
 
-        from generate_ai import RECIPES, recipe_for, template_digest
+        A igualdade e o espelho: `generate_ai` nao pode LER o plano no import — o ciclo
+        `assemble_corpus` -> `artifact_gate` -> `RECIPES` e real e foi medido —, entao ele
+        deriva os nomes da mesma convencao e esta assercao e o que impede as duas de
+        divergirem. Pertinencia nao bastaria: um slate com trinta e nove nomes do plano mais
+        um alheio passaria.
 
-        ids = [f"src_x_{i:06d}" for i in range(2000)]
-        first = [recipe_for("openai", cid) for cid in ids]
-        second = [recipe_for("openai", cid) for cid in ids]
-        self.assertEqual(first, second)
-        counts = Counter(first)
-        # Weights 5/2/2/1 over deterministic buckets of 10.
-        self.assertGreater(counts["original"], counts["parafrase"])
-        self.assertGreater(counts["parafrase"], counts["humanizado"])
-        for name in RECIPES:
-            self.assertIn(name, counts)
-            self.assertEqual(len(template_digest(name)), 64)
+        E o picker POR PROVEDOR nao existe mais. Ele escolhia entre as receitas em baldes de
+        dez, o que sobre um slate de quarenta pesos alcanca so as dez primeiras — e a
+        atribuicao tem de ser por ILHA, senao a identidade escrita numa linha vem de fora da
+        ilha dela e a particao de template fica decorativa.
+        """
+        import assemble_corpus
+        import generate_ai
+
+        do_plano = sorted(
+            nome for ilha in assemble_corpus.ISLAND_PLAN for nome in ilha["templates"]
+        )
+        self.assertEqual(sorted(generate_ai.RECIPES), do_plano)
+        self.assertEqual(len(do_plano), 40)
+        self.assertFalse(hasattr(generate_ai, "recipe_for"))
+        for nome in generate_ai.RECIPES:
+            self.assertEqual(len(generate_ai.template_digest(nome)), 64)
+
+    def test_the_two_recipes_of_one_island_differ_in_BOTH_coordinates(self) -> None:
+        """Tarefa E registro, e a razao de serem as duas: uma coordenada so faz variantes.
+
+        Duas receitas que compartilhassem a tarefa seriam o mesmo pedido em dois tons, e o
+        digest distinto faria a particao de template parecer modelada quando a dependencia de
+        prompt continuaria inteira. Os quarenta pares (tarefa, registro) sao distintos por
+        igualdade de contagem, e nenhuma ilha repete coordenada.
+        """
+        import assemble_corpus
+        import generate_ai
+
+        pares = set()
+        for ilha in assemble_corpus.ISLAND_PLAN:
+            coordenadas = [
+                (
+                    generate_ai.RECIPES[nome]["task"],
+                    generate_ai.RECIPES[nome]["register"],
+                )
+                for nome in ilha["templates"]
+            ]
+            with self.subTest(ilha=ilha["island"]):
+                (tarefa_a, registro_a), (tarefa_b, registro_b) = coordenadas
+                self.assertNotEqual(tarefa_a, tarefa_b)
+                self.assertNotEqual(registro_a, registro_b)
+            pares.update(coordenadas)
+        self.assertEqual(len(pares), 40)
+        # Nao vacuo nas duas listas: as oito tarefas e os cinco registros aparecem todos.
+        self.assertEqual(
+            {tarefa for tarefa, _ in pares}, set(generate_ai.GENERATION_TASKS)
+        )
+        self.assertEqual(
+            {registro for _, registro in pares}, set(generate_ai.GENERATION_REGISTERS)
+        )
 
     def test_writer_without_cutoff_accepts_current_dates(self) -> None:
         from datetime import datetime, timezone
@@ -739,68 +800,40 @@ class FrozenLaneEntryTests(unittest.TestCase):
         for lane in ("agy", "codex", "gemini", "gemini_cli"):
             self.assertIn(lane, proc.stderr)
 
-    def test_the_slate_that_does_not_meet_the_island_plan_is_refused_at_the_entry(
+    def test_the_island_whose_templates_the_slate_does_not_serve_is_refused(
         self,
     ) -> None:
-        """A mesma fronteira, para `--island`: o slate que nao cumpre o plano recusa na entrada.
+        """A guarda que cobra o slate, medida sob um slate CURTO em vez de contra o de hoje.
 
-        E a recusa que vale HOJE, e ela nomeia a decisao do operador em vez de a esconder: o
-        plano pede dois templates por ilha em vinte ilhas e `RECIPES` declara quatro nomes,
-        entao a cota nao pode ser gasta ate o slate crescer. Subprocesso de verdade, no molde
-        de `--provider`: exit 2, saida INEXISTENTE, razao no stderr.
+        O slate de producao cumpre o plano, entao a recusa nao tem mais entrada natural: o
+        que a alcanca e um slate a que falta UM nome. A recusa nomeia o que falta e diz o que
+        fazer, porque quem a le esta a decidir se cresce o slate ou emenda o plano — e ela
+        acontece no `type=` do argparse, antes do arquivo de sementes, do lock e da primeira
+        chamada de provedor.
         """
-        import subprocess
-        import sys
+        import argparse
+        from unittest import mock
 
-        script = Path(__file__).with_name("generate_ai.py")
-        with tempfile.TemporaryDirectory() as raw:
-            output = Path(raw) / "ai_agy.jsonl"
-            proc = subprocess.run(
-                [
-                    sys.executable,
-                    str(script),
-                    "--provider",
-                    "agy",
-                    "--island",
-                    "ilha_00",
-                    "--humans",
-                    str(Path(raw) / "humans.jsonl"),
-                    "--output",
-                    str(output),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            self.assertFalse(output.exists())
-            self.assertFalse(output.with_name(output.name + ".lock").exists())
-        self.assertEqual(proc.returncode, 2, proc.stderr)
-        self.assertIn("o slate declara", proc.stderr)
-        self.assertIn("depois de a cota estar gasta", proc.stderr)
-        # E uma ilha que o plano nao declara e recusada pela mesma fronteira, com a lista das
-        # admissiveis — o precedente e `frozen_lane`, que lista as quatro lanes.
-        with tempfile.TemporaryDirectory() as raw:
-            output = Path(raw) / "ai_agy.jsonl"
-            proc = subprocess.run(
-                [
-                    sys.executable,
-                    str(script),
-                    "--provider",
-                    "agy",
-                    "--island",
-                    "ilha_99",
-                    "--humans",
-                    str(Path(raw) / "humans.jsonl"),
-                    "--output",
-                    str(output),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            self.assertFalse(output.exists())
-        self.assertEqual(proc.returncode, 2, proc.stderr)
-        self.assertIn("nao esta no plano", proc.stderr)
-        self.assertIn("ilha_00", proc.stderr)
+        import assemble_corpus
+        import generate_ai
 
+        faltante = assemble_corpus.ISLAND_PLAN[0]["templates"][1]
+        curto = {
+            nome: spec
+            for nome, spec in generate_ai.RECIPES.items()
+            if nome != faltante
+        }
+        with mock.patch.object(generate_ai, "RECIPES", curto):
+            with self.assertRaises(argparse.ArgumentTypeError) as ctx:
+                generate_ai.island_plan("ilha_00")
+        mensagem = str(ctx.exception)
+        self.assertIn(faltante, mensagem)
+        self.assertIn("Cresca `RECIPES`", mensagem)
+        # E o slate INTEIRO nao recusa a mesma ilha: sem isto a assercao acima passaria
+        # tambem se a guarda recusasse toda ilha, que era o estado anterior a esta unidade.
+        self.assertEqual(
+            generate_ai.island_plan("ilha_00")["island"], "ilha_00"
+        )
     def test_the_admissible_lanes_are_the_frozen_ones_and_each_has_a_default(
         self,
     ) -> None:
@@ -916,7 +949,7 @@ class BuildDatasetTests(unittest.TestCase):
             ai_rows = [
                 {"candidateId": f"src_ai_{i:04d}", "text": f"{PROSE_60} ia {i}",
                  "domainSource": "ai_x", "wordCount": 61,
-                 "meta": {"pairedWith": f"src_h_{i:04d}", "family": "f", "recipe": "original"}}
+                 "meta": {"pairedWith": f"src_h_{i:04d}", "family": "f", "recipe": receita_da_tarefa("original")}}
                 for i in range(50)
             ]
             # one exact duplicate of a human text -> must be dropped
@@ -3712,7 +3745,9 @@ class LaneIdentityTests(unittest.TestCase):
     def test_an_api_lane_carries_the_temperature_it_actually_applied(self) -> None:
         from assemble_corpus import ai_record
 
-        candidate = self._ai_candidate("gemini", "gemini-3.5-flash-lite", "original")
+        candidate = self._ai_candidate(
+            "gemini", "gemini-3.5-flash-lite", receita_da_tarefa("original")
+        )
         candidate["meta"]["temperature"] = "0.8"
         record = ai_record(candidate)
         self.assertEqual(
@@ -3730,7 +3765,9 @@ class LaneIdentityTests(unittest.TestCase):
         # provider, including the three CLI lanes it invokes with no sampling flag.
         # The frozen policy sets decodingConfigurable false for them, so the number
         # describes nothing and the record must not carry it.
-        candidate = self._ai_candidate("agy", "gemini-3.5-flash-medium", "original")
+        candidate = self._ai_candidate(
+            "agy", "gemini-3.5-flash-medium", receita_da_tarefa("original")
+        )
         candidate["meta"]["temperature"] = "0.8"
         record = ai_record(candidate)
         self.assertEqual(record["generation"]["decoding"], {"configurable": False})
@@ -3738,7 +3775,9 @@ class LaneIdentityTests(unittest.TestCase):
     def test_an_uncaptured_harness_version_is_unknown_and_not_invented(self) -> None:
         from assemble_corpus import ai_record
 
-        candidate = self._ai_candidate("agy", "claude-sonnet-4-6", "original")
+        candidate = self._ai_candidate(
+            "agy", "claude-sonnet-4-6", receita_da_tarefa("original")
+        )
         record = ai_record(candidate)
         # agy is an agent-CLI lane: claiming notApplicable would be false about it,
         # and inventing a version string would be false about the world. `unknown`
@@ -3757,7 +3796,9 @@ class LaneIdentityTests(unittest.TestCase):
         # repeats the same rule). The pools carry the pair already — `"seed": ""` plus
         # a reason — and an EMPTY seed is not a seed: writing both keys, or writing
         # `seed: ""`, are the two ways to fail this.
-        candidate = self._ai_candidate("agy", "claude-sonnet-4-6", "original")
+        candidate = self._ai_candidate(
+            "agy", "claude-sonnet-4-6", receita_da_tarefa("original")
+        )
         candidate["meta"]["seed"] = ""
         candidate["meta"]["seedNullReason"] = "provider API does not expose a seed"
         generation = ai_record(candidate)["generation"]
@@ -3778,7 +3819,9 @@ class LaneIdentityTests(unittest.TestCase):
         # that is a property of the LANES rather than of a pool row, so a row that
         # recorded neither gets the reason and never a synthesized seed. The default
         # fills in the REASON, which is the safe half of the pair to default.
-        candidate = self._ai_candidate("agy", "claude-sonnet-4-6", "original")
+        candidate = self._ai_candidate(
+            "agy", "claude-sonnet-4-6", receita_da_tarefa("original")
+        )
         generation = ai_record(candidate)["generation"]
         self.assertNotIn("seed", generation)
         self.assertEqual(generation["seedNullReason"], SEED_NULL_REASON)
@@ -3794,7 +3837,9 @@ class LaneIdentityTests(unittest.TestCase):
         # being given a level nobody read. Loosening the policy to admit
         # "not-supported" on codex would be relaxing a frozen contract to make data
         # fit (R3), which is not this task's call.
-        candidate = self._ai_candidate("codex", "gpt-5.6-luna", "original")
+        candidate = self._ai_candidate(
+            "codex", "gpt-5.6-luna", receita_da_tarefa("original")
+        )
         with self.assertRaises(MissingRecipe) as caught:
             ai_record(candidate)
         self.assertIn("not-supported", str(caught.exception))
@@ -3820,7 +3865,9 @@ class LaneIdentityTests(unittest.TestCase):
         # exists as a session flag in parallel, so the precedence between them is
         # undetermined (to be measured by --dry-run before D3). Reading "medium" off
         # the suffix would be an identity we made up, which R6 forbids.
-        candidate = self._ai_candidate("agy", "gpt-oss-120b-medium", "original")
+        candidate = self._ai_candidate(
+            "agy", "gpt-oss-120b-medium", receita_da_tarefa("original")
+        )
         record = ai_record(candidate)
         self.assertEqual(
             record["generation"]["effort"],
@@ -3843,7 +3890,9 @@ class LaneIdentityTests(unittest.TestCase):
     def test_a_provider_outside_the_frozen_lanes_is_refused(self) -> None:
         from assemble_corpus import UnmappableLane, ai_record
 
-        candidate = self._ai_candidate("gemini", "gemini-3.5-flash-lite", "original")
+        candidate = self._ai_candidate(
+            "gemini", "gemini-3.5-flash-lite", receita_da_tarefa("original")
+        )
         candidate["meta"]["provider"] = "anthropic"
         del candidate["meta"]["generationLane"]
         # Four lanes are frozen. A fifth is not a lane to add here: the record has
@@ -3883,7 +3932,7 @@ class DerivationLineageTests(unittest.TestCase):
         from assemble_corpus import ai_record
 
         candidate = LaneIdentityTests()._ai_candidate(
-            "gemini", "gemini-3.5-flash-lite", "original"
+            "gemini", "gemini-3.5-flash-lite", receita_da_tarefa("original")
         )
         candidate["meta"]["temperature"] = "0.8"
         record = ai_record(candidate)
@@ -3903,7 +3952,7 @@ class DerivationLineageTests(unittest.TestCase):
         from assemble_corpus import ai_record
 
         candidate = LaneIdentityTests()._ai_candidate(
-            "gemini", "gemini-3.5-flash-lite", "parafrase"
+            "gemini", "gemini-3.5-flash-lite", receita_da_tarefa("parafrase")
         )
         candidate["meta"]["temperature"] = "0.8"
         record = ai_record(candidate)
@@ -3919,7 +3968,7 @@ class DerivationLineageTests(unittest.TestCase):
         from assemble_corpus import ai_record
 
         candidate = LaneIdentityTests()._ai_candidate(
-            "gemini", "gemini-3.5-flash-lite", "original"
+            "gemini", "gemini-3.5-flash-lite", receita_da_tarefa("original")
         )
         candidate["meta"]["temperature"] = "0.8"
         # The ONLY path that can recover a parent for a pool row written before
@@ -4101,7 +4150,7 @@ class GenerationBatchAxisTests(unittest.TestCase):
             "family": "gemini-3.5-flash-lite",
             "model": "gemini-3.5-flash-lite",
             "version": "gemini-3.5-flash-lite",
-            "recipe": "original",
+            "recipe": receita_da_tarefa("original"),
             "promptId": "original_src_b2w_00848b3bc692",
             "promptSha256": self.TEMPLATE_DIGEST,
             "promptTemplateDigest": self.TEMPLATE_DIGEST,
@@ -7461,7 +7510,7 @@ class AssemblyRunTests(unittest.TestCase):
             "family": family,
             "model": family,
             "version": f"{family}-build-{index:04d}",
-            "recipe": "original",
+            "recipe": receita_da_tarefa("original"),
             "generationLane": self.LANE_OF[provider],
             "promptId": f"original_ausente_{index:04d}",
             "promptSha256": digest,

@@ -78,6 +78,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import artifact_gate
+import generate_ai
 import group_axes
 import near_dupes
 
@@ -1238,13 +1239,47 @@ def parent_of_prompt(prompt_id: str) -> str | None:
     return parent or None
 
 
-# Which recipes REWRITE their parent text rather than writing new text about the
-# same subject. Only a rewrite makes the row a DERIVATION of the parent; `original`,
-# `social` and `humanizado` all produce new text from a seed, so their
-# `derivationRoot` is notApplicable while their `humanSeed` is known. Collapsing the
-# two axes would either invent a derivation or lose the seed, which is why
-# benchmark/schema.ts keeps them separate.
-REWRITING_RECIPES = {"parafrase"}
+# Whether a recipe REWRITES its parent text rather than writing new text about the same
+# subject. Only a rewrite makes the row a DERIVATION of the parent; a recipe that writes
+# fresh text from a seed leaves `derivationRoot` notApplicable while its `humanSeed` is
+# known, and collapsing the two axes would either invent a derivation or lose the seed —
+# which is why benchmark/schema.ts keeps them separate.
+#
+# It reads the slate's DECLARED `task` field and never the recipe NAME: the slate is
+# partitioned by island, so the name is `pt-ilha-07-a` and says nothing about the task. A
+# recipe the slate does not declare is refused ROW BY ROW, because guessing either way
+# writes a connectivity axis out of nothing — `False` would silently drop the derivation of
+# every paraphrase, and no count would move.
+# O slate RETIRADO de quatro generos -> a tarefa de cada uma das receitas dele. Os pools em
+# disco foram gerados sob ele, e a tarefa de uma linha JA ESCRITA e fato historico: nao e
+# inventavel, nao e recuperavel do slate de hoje — que e particionado por ilha e nao carrega
+# aqueles nomes — e nada no arquivo escrito a diz. Sem esta tabela toda linha daqueles pools
+# seria recusada por receita nao declarada, e o que se perderia nao e material: e a MEDICAO
+# que dois testes fazem sobre eles (a igualdade `version == family` sobre as 1.170 linhas e as
+# corridas de template que o catalogo compartilhado cita).
+#
+# A tabela nao readmite nada: quem decide o que entra num corpus de release e o plano de
+# ilhas, e um nome retirado nao pertence a ilha alguma. O que ela permite e LER o que ja foi
+# escrito, que e outra pergunta.
+RETIRED_GENERATION_TASKS: dict[str, str] = {
+    "original": "original",
+    "parafrase": "parafrase",
+    "social": "feed",
+    "humanizado": "comentario",
+}
+
+
+def recipe_rewrites_parent(recipe: object) -> bool:
+    if recipe is None:
+        return False
+    nome = str(recipe)
+    try:
+        return generate_ai.recipe_rewrites_the_parent(nome)
+    except generate_ai.UnknownRecipe as refusal:
+        tarefa = RETIRED_GENERATION_TASKS.get(nome)
+        if tarefa is None:
+            raise MissingRecipe(str(refusal)) from None
+        return tarefa in generate_ai.REWRITING_TASKS
 
 
 def generation_axes(
@@ -1724,7 +1759,7 @@ def ai_record(cand: dict) -> dict:
             "nearDuplicate": near_duplicate_axis(rec_id),
             "derivationRoot": (
                 group_axes.known(group_axes.axis_token(str(parent)))
-                if parent and recipe in REWRITING_RECIPES
+                if parent and recipe_rewrites_parent(recipe)
                 else group_axes.not_applicable(group_axes.NO_DERIVATION)
             ),
         },

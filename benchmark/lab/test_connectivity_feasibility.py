@@ -2414,18 +2414,22 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         ]
         self.assertEqual(len(set(templates)), len(templates))
         self.assertEqual(len(templates), 40)
-        # E o slate nao os serve: a ilha e recusada e a razao NOMEIA os que faltam.
-        self.assertEqual(len(generate_ai.RECIPES), 4)
-        for ilha in assemble_corpus.ISLAND_PLAN[:3]:
-            with self.subTest(ilha=ilha["island"]):
-                with self.assertRaises(argparse.ArgumentTypeError) as recusa:
-                    generate_ai.island_plan(ilha["island"])
-                self.assertIn("os que faltam sao", str(recusa.exception))
-        # E a recusa vale para TODAS as vinte, o que se mede sem pagar a geometria vinte
-        # vezes: nenhum template do plano esta no slate.
-        self.assertEqual(
-            [nome for nome in templates if nome in generate_ai.RECIPES], []
-        )
+        # E o slate SERVE o plano, por igualdade: os quarenta nomes sao os mesmos.
+        self.assertEqual(sorted(generate_ai.RECIPES), sorted(templates))
+        # A recusa continua tendo entrada que a alcanca — um slate a que falta UM nome —, e a
+        # razao NOMEIA o que falta. Sem esta metade a igualdade acima passaria tambem se a
+        # guarda nunca recusasse nada.
+        faltante = templates[1]
+        curto = {
+            nome: spec
+            for nome, spec in generate_ai.RECIPES.items()
+            if nome != faltante
+        }
+        with mock.patch.object(generate_ai, "RECIPES", curto):
+            with self.assertRaises(argparse.ArgumentTypeError) as recusa:
+                generate_ai.island_plan(assemble_corpus.ISLAND_PLAN[0]["island"])
+        self.assertIn("os que faltam sao", str(recusa.exception))
+        self.assertIn(faltante, str(recusa.exception))
 
     def test_o_plano_de_producao_e_o_que_a_politica_de_release_declara(self):
         """As contagens por classe do plano SAO `RELEASE_CORPUS_POLICY.counts`, lidas do TS.
@@ -2492,9 +2496,12 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         o `recipe` de CADA linha gravada — todas elas — mais o artefato de lote, que passou a
         declarar so as receitas da ilha.
 
-        Os templates da ilha sao os dois de MENOR peso do slate (`social` 2, `humanizado` 1,
-        contra `original` 5): sob a mutacao, `recipe_for` sorteia por peso e as linhas caem em
-        `original` com probabilidade dominante, entao a mutacao morde em vez de coincidir.
+        Os templates sao os DA PROPRIA ilha, e nao emprestados: o slate serve os nomes do
+        plano agora, e emprestar os de outra ilha faria o plano deixar de particionar o eixo —
+        a guarda de particao recusa isso na entrada, medido. O que da entrada a medicao e a
+        mutacao do lado oposto: uma escolha que ignore a lista da ilha tira a identidade do
+        slate INTEIRO, e ai a identidade escrita nao pertence a esta ilha. O peso nao entra
+        nisso — o slate e uniforme, e o picker por provedor que sorteava por peso saiu.
         """
         import json as _json
         import tempfile
@@ -2502,7 +2509,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
 
         import generate_ai
 
-        receitas = ("social", "humanizado")
+        receitas = assemble_corpus.ISLAND_PLAN[0]["templates"]
         for nome in receitas:
             self.assertIn(nome, generate_ai.RECIPES)
         plano = tuple(
@@ -3095,7 +3102,7 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         import generate_ai
 
         ilha = assemble_corpus.ISLAND_PLAN[0]
-        mesmo_texto = generate_ai.RECIPES["original"]["template"]
+        mesmo_texto = generate_ai.RECIPES[ilha["templates"][0]]["template"]
         gemeas = {
             nome: {"weight": 1, "template": mesmo_texto} for nome in ilha["templates"]
         }

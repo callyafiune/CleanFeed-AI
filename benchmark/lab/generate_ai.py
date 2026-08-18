@@ -420,51 +420,177 @@ def gemini_cli_text(payload: str) -> str:
 # (hard positive for TRAINING ONLY — the sealed eval assembly's cross-lineage
 # near-dup refusal would reject it, by design). `humanizado` measures robustness
 # to "make it sound human" prompting. Weights sum to 10 (deterministic buckets).
-RECIPES: dict[str, dict] = {
-    "original": {
-        "weight": 5,
-        "template": (
-            "Escreva um texto original em português do Brasil sobre o mesmo "
-            "assunto do texto de referência abaixo, com aproximadamente {words} "
-            "palavras. Não copie frases nem a estrutura do texto de referência; "
-            "produza um texto novo, seu, sobre o mesmo tema. Responda apenas com "
-            "o texto, sem título e sem comentários.\n\n"
-            "=== TEXTO DE REFERÊNCIA ===\n{reference}"
-        ),
-    },
-    "parafrase": {
-        "weight": 2,
-        "template": (
-            "Reescreva o texto abaixo em português do Brasil com as suas "
-            "próprias palavras, mantendo o mesmo significado e aproximadamente "
-            "{words} palavras. Responda apenas com o texto reescrito, sem título "
-            "e sem comentários.\n\n=== TEXTO ===\n{reference}"
-        ),
-    },
-    "social": {
-        "weight": 2,
-        "template": (
-            "Escreva um post de rede social profissional em português do Brasil "
-            "sobre o tema central do texto de referência abaixo, com "
-            "aproximadamente {words} palavras. Tom de publicação de feed "
-            "(parágrafos curtos), sem hashtags inventadas em excesso, sem "
-            "título. Não copie frases da referência. Responda apenas com o "
-            "post.\n\n=== TEXTO DE REFERÊNCIA ===\n{reference}"
-        ),
-    },
-    "humanizado": {
-        "weight": 1,
-        "template": (
-            "Escreva um texto casual e espontâneo em português do Brasil sobre "
-            "o mesmo assunto do texto de referência abaixo, com aproximadamente "
-            "{words} palavras, como uma pessoa comum escreveria rapidamente — "
-            "natural, direto, com leve informalidade, sem parecer redação "
-            "polida. Não copie frases da referência. Responda apenas com o "
-            "texto.\n\n=== TEXTO DE REFERÊNCIA ===\n{reference}"
-        ),
-    },
+# As oito TAREFAS do slate, cada uma a instrucao inteira de um pedido. A frase carrega
+# `{words}` porque o comprimento pedido e o da propria semente humana (`target_word_count`),
+# e nao um alvo do slate.
+GENERATION_TASKS: dict[str, str] = {
+    "original": (
+        "Escreva um texto original em portugues do Brasil sobre o mesmo assunto do "
+        "texto de referencia abaixo, com aproximadamente {words} palavras, sem copiar "
+        "frases nem a estrutura dele."
+    ),
+    "parafrase": (
+        "Reescreva o texto de referencia abaixo em portugues do Brasil com as suas "
+        "proprias palavras, mantendo o mesmo significado e aproximadamente {words} "
+        "palavras."
+    ),
+    "resumo": (
+        "Resuma o texto de referencia abaixo em portugues do Brasil em aproximadamente "
+        "{words} palavras, preservando os fatos principais e descartando o acessorio."
+    ),
+    "didatico": (
+        "Explique em portugues do Brasil, para quem nunca leu sobre o assunto, o que o "
+        "texto de referencia abaixo trata, em aproximadamente {words} palavras."
+    ),
+    "verbete": (
+        "Escreva um verbete enciclopedico em portugues do Brasil sobre o tema central "
+        "do texto de referencia abaixo, com aproximadamente {words} palavras, comecando "
+        "pela definicao."
+    ),
+    "noticia": (
+        "Escreva uma noticia curta em portugues do Brasil a partir do tema do texto de "
+        "referencia abaixo, com aproximadamente {words} palavras, dizendo o que "
+        "aconteceu e por que importa."
+    ),
+    "feed": (
+        "Escreva uma publicacao de feed profissional em portugues do Brasil sobre o "
+        "tema do texto de referencia abaixo, com aproximadamente {words} palavras, em "
+        "paragrafos curtos e sem hashtags."
+    ),
+    "comentario": (
+        "Escreva um comentario pessoal em portugues do Brasil reagindo ao assunto do "
+        "texto de referencia abaixo, com aproximadamente {words} palavras, dizendo o "
+        "que voce acha e por que."
+    ),
 }
 
+# Os cinco REGISTROS, cada um a clausula que modula a tarefa.
+GENERATION_REGISTERS: dict[str, str] = {
+    "formal": (
+        "Use registro formal: vocabulario preciso, frases completas, sem contracoes "
+        "nem giria."
+    ),
+    "neutro": (
+        "Use registro neutro: nem cerimonioso nem coloquial, do jeito que um texto de "
+        "consulta e escrito."
+    ),
+    "coloquial": (
+        "Use registro coloquial: escreva como quem conversa com um conhecido, frases "
+        "curtas e palavras do dia a dia."
+    ),
+    "tecnico": (
+        "Use registro tecnico: termos da area quando forem necessarios, precisao acima "
+        "de fluidez."
+    ),
+    "apressado": (
+        "Use registro apressado: escreva rapido, sem polir, do jeito que sai na "
+        "primeira passada."
+    ),
+}
+
+# O fecho, identico em todos: ele existe para o provedor devolver texto e nao um recado, e
+# como a sonda de eco do gate antiartefato e um dicionario CHAVEADO PELO CHUNK, uma frase
+# repetida nos quarenta templates vale UMA sonda.
+_TASK_CLOSING = "Responda apenas com o texto, sem titulo e sem comentarios."
+
+# As duas receitas de uma ilha diferem nas DUAS coordenadas, e e a regra que o impoe: o slot
+# `a` tira a tarefa das quatro primeiras e o `b` das quatro ultimas, e o registro do `b` e
+# deslocado de dois. Duas receitas que compartilhassem a tarefa ou o registro seriam
+# variantes uma da outra, e a particao de template que o split modela ficaria decorativa —
+# os digests seriam distintos e a dependencia de prompt, nao.
+_REGISTER_SHIFT = 2
+
+# Quantas ilhas o slate serve. E um ESPELHO de `assemble_corpus.ISLAND_COUNT`, e nao a
+# leitura dele, porque ler o plano aqui fecha um ciclo de import MEDIDO: este modulo importa
+# `assemble_corpus`, que importa `artifact_gate`, que le `RECIPES` no import dele — e
+# `RECIPES` ainda nao existe. O espelho e pinado por igualdade em teste nomeado, contra os
+# nomes que `_island()` declara em `templates`: o plano crescer sem o slate crescer fica
+# vermelho la, e nao em silencio aqui.
+_SLATE_ISLAND_COUNT = 20
+
+
+def _slate_pair(indice: int) -> tuple[tuple[str, str], tuple[str, str]]:
+    """As duas coordenadas (tarefa, registro) dos dois slots de uma ilha."""
+    tarefas = tuple(GENERATION_TASKS)
+    registros = tuple(GENERATION_REGISTERS)
+    metade = len(tarefas) // 2
+    grupo, resto = divmod(indice, len(registros))
+    return (
+        (tarefas[grupo], registros[resto]),
+        (
+            tarefas[metade + grupo],
+            registros[(resto + _REGISTER_SHIFT) % len(registros)],
+        ),
+    )
+
+
+def _slate_template(tarefa: str, registro: str) -> str:
+    return (
+        f"{GENERATION_TASKS[tarefa]} {GENERATION_REGISTERS[registro]} {_TASK_CLOSING}"
+        "\n\n=== TEXTO DE REFERENCIA ===\n{reference}"
+    )
+
+
+def _build_slate() -> dict[str, dict]:
+    """O slate DERIVADO do plano de ilhas, e nao quarenta literais.
+
+    Duas razoes para derivar, e a segunda e medida. A primeira: os nomes tem de ser
+    exactamente os que `assemble_corpus._island()` declara em `templates`, e uma segunda
+    escrita deles divergiria sem nada reprovar. A segunda: o gate antiartefato deriva as
+    sondas de ECO da prosa de instrucao de cada template (`artifact_gate`), chaveadas pelo
+    chunk, e a taxa dessas sondas sobre a classe HUMANA em moldura tem teto pre-inscrito de
+    2 %. Quarenta prompts de prosa propria multiplicariam a superficie de eco por dez contra
+    esse teto; compor os quarenta de oito tarefas mais cinco registros mantem os chunks
+    distintos na ordem de grandeza de hoje, porque a frase repetida vale UMA sonda.
+
+    `weight` e uniforme porque numa ilha ele e o rateio entre os DOIS slots: qualquer outra
+    mistura precisaria de um alvo por tarefa que autoridade alguma declara, e a mistura
+    antiga (5/2/2/1 entre generos) era do slate de quatro, que nao era particionado por ilha.
+    `task` e `register` sao campos DECLARADOS porque decisao a jusante le o campo e nunca o
+    nome: `assemble_corpus` decide por eles se a linha e derivacao do pai.
+    """
+    slate: dict[str, dict] = {}
+    for indice in range(_SLATE_ISLAND_COUNT):
+        nomes = (f"pt-ilha-{indice:02d}-a", f"pt-ilha-{indice:02d}-b")
+        for nome, (tarefa, registro) in zip(nomes, _slate_pair(indice), strict=True):
+            slate[nome] = {
+                "weight": 1,
+                "template": _slate_template(tarefa, registro),
+                "task": tarefa,
+                "register": registro,
+            }
+    return slate
+
+
+RECIPES: dict[str, dict] = _build_slate()
+
+# As tarefas que REESCREVEM o pai em vez de escrever texto novo sobre o mesmo assunto. So a
+# reescrita faz a linha ser DERIVACAO do pai; as outras nomeiam a semente e deixam
+# `derivationRoot` em `notApplicable`, e colapsar os dois eixos inventaria uma derivacao ou
+# perderia a semente. `assemble_corpus` le esta lista pelo CAMPO `task` da receita, nunca
+# pelo nome dela: com o slate particionado por ilha, o nome nao diz mais que tarefa e.
+REWRITING_TASKS: frozenset[str] = frozenset({"parafrase"})
+
+
+class UnknownRecipe(RuntimeError):
+    """Uma receita que o slate nao declara, e por isso nao tem tarefa a ler."""
+
+
+def recipe_rewrites_the_parent(recipe: str) -> bool:
+    """Se a receita reescreve o pai. Levanta em receita que o slate nao declara.
+
+    Fail-fechado de proposito: adivinhar `False` para uma receita desconhecida escreveria
+    `notApplicable` num eixo de conectividade sem que nada acuse, e adivinhar `True`
+    inventaria derivacao. Quem chama trata a recusa por linha.
+    """
+    spec = RECIPES.get(recipe)
+    if spec is None:
+        raise UnknownRecipe(
+            f"o slate nao declara a receita {recipe!r}: as tarefas dele sao "
+            f"{tuple(sorted(GENERATION_TASKS))} e a classificacao de derivacao le o "
+            "campo `task`, entao uma receita de fora dele nao tem tarefa a ler"
+        )
+    return str(spec["task"]) in REWRITING_TASKS
 
 class SeedLengthOutOfWindow(RuntimeError):
     """A human seed whose length the extractor's own window would have refused."""
@@ -530,18 +656,6 @@ def _weighted_recipe(names: tuple[str, ...], salt: str) -> str:
         if bucket < cursor:
             return name
     return names[-1]
-
-
-def recipe_for(provider: str, candidate_id: str) -> str:
-    """Deterministic recipe assignment honoring the weight mix (buckets of 10)."""
-    digest = hashlib.sha256(f"recipe:{provider}:{candidate_id}".encode()).digest()
-    bucket = digest[0] % 10
-    cursor = 0
-    for name, spec in RECIPES.items():
-        cursor += spec["weight"]
-        if bucket < cursor:
-            return name
-    return "original"
 
 
 def recipe_for_island(island: dict, candidate_id: str) -> str:
