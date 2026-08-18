@@ -8684,3 +8684,49 @@ forma que a onda 2 fez três vezes: a decisão lê o que foi declarado, não o q
 
 Uma segunda cópia do slate está em `codex_batch.py:49-66`, com os quatro prompts escritos de novo. Ela entra
 na mesma emenda ou passa a servir outro corpus que o plano não descreve.
+
+### O slate de 40 foi construído e medido, e parou num bloqueio que não é meu (2026-08-18)
+
+Construí o slate inteiro sob as duas listas que o operador aprovou — oito tarefas × cinco registros — e a
+implementação **funciona**. Ela está preservada como patch fora do repositório; a árvore voltou verde
+(708 / 488) porque o bloqueio que apareceu no fim é decisão, não conserto.
+
+**O que ficou medido, e vale independentemente do bloqueio:**
+
+- **40 entradas, 40 pares (tarefa, registro) distintos, 40 digests distintos**, e os nomes do slate iguais
+  aos que `_island()` declara em `templates` — por igualdade, não por pertinência;
+- a regra das duas coordenadas funciona: o slot `a` tira a tarefa das quatro primeiras e o `b` das quatro
+  últimas, com o registro deslocado de dois, então **nenhuma ilha repete tarefa nem registro**. `ilha_00`
+  sai `(original, formal)` e `(verbete, coloquial)`; `ilha_07`, `(parafrase, coloquial)` e
+  `(noticia, apressado)`;
+- **a razão de derivar em vez de escrever quarenta literais é MEDIDA, e é o gate antiartefato.** Ele deriva
+  as sondas de ECO da prosa de instrução de cada template, chaveadas pelo chunk, e a taxa dessas sondas
+  sobre a classe humana em moldura tem teto pré-inscrito de 2 %. Quatro templates dão **19** sondas; os
+  quarenta compostos dão **32** — e quarenta prompts de prosa própria dariam da ordem de 190, décuplo,
+  contra esse teto. A frase repetida vale UMA sonda, e é isso que a composição compra;
+- **um ciclo de import real**, que só aparece ao tentar derivar o slate lendo o plano: `generate_ai` importa
+  `assemble_corpus`, que importa `artifact_gate`, que lê `RECIPES` no import dele — e `RECIPES` ainda não
+  existe. O slate ficou espelho local com igualdade pinada por teste, que é o idioma da casa;
+- **o picker por provedor (`recipe_for`) estava quebrado para o slate novo e não tinha chamador de
+  produção**: baldes de dez sobre pesos somando quarenta alcançam só as dez primeiras receitas. Saiu, com
+  guarda de que não volta.
+
+**O bloqueio, e por que ele é do operador.** `REWRITING_RECIPES` decidia por NOME se a linha é derivação do
+pai; passou a ler o campo `task` do slate, e uma receita que o slate não declara é recusada **linha por
+linha** (`MissingRecipe`) em vez de classificada por chute — adivinhar `False` escreveria `notApplicable`
+num eixo de conectividade sem nada acusar. A consequência apareceu no fim: os **pools em disco foram
+gerados sob o slate de quatro**, então nenhuma linha deles é classificável sob o slate novo, e dois testes
+que medem um FATO dos pools através de `ai_record` — `version == family` sobre as 1.170 linhas, e as
+corridas de template 641/231/213/85 que o caso `forma-medida-da-classe-gerada` cita — deixam de ter
+portador.
+
+Isso é o mecanismo funcionando: o plano diz que a classe gerada tem de ser CONSTRUÍDA em ilhas, e a forma
+dos pools é justamente a que a emenda de 2026-08-12 passou a recusar. Mas as duas medições que perdem
+portador estão **citadas no catálogo compartilhado e no comentário de `SPLIT_GROUP_KEYS`**, e reescrevê-las
+para medir o fato direto do pool em vez de pela montagem muda o que dois testes afirmam. Trocar o que um
+teste mede é exatamente a classe de mudança que esta semana mostrou ser onde os defeitos moram, e fazê-la no
+fim de uma unidade, sem etapa de desenho própria, seria repetir o erro.
+
+Então o slate fica no patch, a árvore fica verde, e a decisão que falta é uma só: as duas medições passam a
+ser lidas **do pool** (o fato não precisa do montador), ou o slate de 40 espera a unidade que aposentar os
+pools do slate de quatro.
