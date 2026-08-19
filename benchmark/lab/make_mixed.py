@@ -389,6 +389,19 @@ def emit(
     template_id: str,
     harness_version: str | None = None,
 ) -> None:
+    # A invariante de `emit`, conferida nele e nao prometida pelos chamadores: as duas
+    # cadeias que entram aqui JA sao canonicas. Ela morava so nos dois sitios de `main`, e
+    # um chamador novo — ou um teste — podia escrever cru sem que nada acusasse; a
+    # canonizacao e idempotente, entao esta conferencia e exacta e nao aproximada. Levanta em
+    # vez de canonizar aqui de proposito: canonizar seria um SEGUNDO sitio de decisao, e o
+    # veredito de banda que corre antes de `emit` leria outra cadeia que a escrita.
+    for papel, cadeia in (("parent_row['text']", parent_row["text"]), ("edited", edited)):
+        if cadeia != canonical_text(cadeia):
+            raise ValueError(
+                f"{papel} chegou a `emit` fora da forma canonica da pista: a banda foi "
+                "decidida sobre outra cadeia que a escrita, e os vaos indexariam um texto "
+                "que ninguem gravou. Canonize na entrada (`canonical_text`), nao aqui"
+            )
     mixture = compute_mixture(parent_row["text"], edited)
     record = {
         "parentId": parent_row["id"],
@@ -653,8 +666,13 @@ def main() -> None:
             template_id = "mix_edit_v1"
             pai = canonical_text(parent["text"])
             try:
+                # O prompt sai da cadeia CANONICA, e nao da crua: o corte em 6.000
+                # caracteres depende do espacamento, entao com pai cru o material enviado e
+                # o material comparado podiam divergir na truncagem. Hoje o pool reservado
+                # chega canonico (medido, 0 de 2.247 fora da forma), logo isto nao muda o
+                # que se envia — e e o que impede a premissa de virar acidente.
                 result = edit_with_failover(
-                    MIX_TEMPLATES[template_id]().format(parent=parent["text"][:6000])
+                    MIX_TEMPLATES[template_id]().format(parent=pai[:6000])
                 )
                 if result is not None:
                     result = (canonical_text(result[0]), result[1])
@@ -673,7 +691,7 @@ def main() -> None:
                     )
                     template = MIX_TEMPLATES[template_id]()
                     result = edit_with_failover(
-                        template.format(parent=parent["text"][:6000])
+                        template.format(parent=pai[:6000])
                     )
                     if result is not None:
                         result = (canonical_text(result[0]), result[1])

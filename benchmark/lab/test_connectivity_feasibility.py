@@ -1887,7 +1887,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                                         make_mixed.main()
                     sem_identidade_de_ilha(saida)
 
-    def _pista_mista_in_process(self, editado_cru, pares_extra=()):
+    def _pista_mista_in_process(self, editado_cru, pares_extra=(), pai_cru=None):
         """Roda os dois modos de `make_mixed.main()` e devolve as linhas escritas por modo.
 
         O MESMO chassi do caso acima — slate crescido para a ilha passar no parser, provedor
@@ -1910,8 +1910,9 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                 for nome in ilha["mixingTemplates"].values()
             },
         }
-        pai = " ".join(f"palavra{i:02d}" for i in range(60))
+        pai = pai_cru or " ".join(f"palavra{i:02d}" for i in range(60))
         escritas: dict[str, list[dict]] = {}
+        enviados: list[str] = []
         with tempfile.TemporaryDirectory() as bruto:
             temporario = Path(bruto)
             pares = temporario / "pares.jsonl"
@@ -1965,7 +1966,16 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                 registrado = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", newline="\n")
                 with mock.patch.object(make_mixed, "MIX_TEMPLATES", crescido):
                     with mock.patch.object(
-                        generate_ai, "call_with_retries", return_value=editado_cru
+                        generate_ai,
+                        "call_with_retries",
+                        # `call_with_retries(transport, *args)`: o primeiro argumento e a
+                        # funcao de transporte, e o prompt vem depois dela. Guardo TODO argumento
+                        # de texto em vez de assumir a posicao, que e o erro que a primeira
+                        # versao desta captura cometeu.
+                        side_effect=lambda *a, **k: (
+                            enviados.extend(x for x in a if isinstance(x, str)),
+                            editado_cru,
+                        )[1],
                     ):
                         with mock.patch.dict(
                             os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
@@ -1978,7 +1988,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                     for l in saida.read_text(encoding="utf-8").splitlines()
                     if l.strip()
                 ]
-        return pai, escritas
+        return pai, escritas, enviados
 
     def test_a_linha_ESCRITA_e_canonica_nos_dois_modos(self):
         """A guarda que a canonizacao nao tinha: a linha escrita, e nao a funcao.
@@ -2006,17 +2016,28 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         # A combinante vai DEPOIS de vogal: "0" + U+0301 nao compoe, e o fixture ficaria
         # em NFC sem que a assercao de nao-vacuidade morresse por isso.
         palavras[0] = palavras[0] + "a\u0301"
-        cru = "  ".join(palavras[:30]) + " \n" + "  ".join(palavras[30:]) + "   "
+        cru = (
+            "  ".join(palavras[:20])
+            + " \n"
+            + "  ".join(palavras[20:40])
+            + "\n\n\n"
+            + "  ".join(palavras[40:])
+            + "   "
+        )
         canonico = make_mixed.canonical_text(cru)
         # Nao vacuo nas duas pontas: a entrada CARREGA as formas, e a canonica nao.
         self.assertIn("  ", cru)
         self.assertIn(" \n", cru)
+        # A quinta transformacao, que o fixture anterior nao exercitava: sem ela o mutante
+        # `\n{3,}` -> `\n{4,}` sobrevive, e foi assim que ele foi achado.
+        self.assertIn("\n\n\n", cru)
         self.assertFalse(unicodedata.is_normalized("NFC", cru))
         self.assertNotIn("  ", canonico)
         self.assertNotIn(" \n", canonico)
+        self.assertNotIn("\n\n\n", canonico)
         self.assertTrue(unicodedata.is_normalized("NFC", canonico))
 
-        pai, escritas = self._pista_mista_in_process(cru)
+        pai, escritas, _enviados = self._pista_mista_in_process(cru)
         # A banda julga o par CANONICO: se este fixture caisse fora, os dois modos descartariam
         # e as assercoes abaixo ficariam vacuamente verdes por lista vazia.
         self.assertTrue(
@@ -2055,7 +2076,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         outro = "  ".join(palavras)
         self.assertNotEqual(um, outro)
 
-        _pai, escritas = self._pista_mista_in_process(
+        _pai, escritas, _enviados = self._pista_mista_in_process(
             um,
             pares_extra=(
                 {
@@ -2073,6 +2094,85 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         self.assertEqual(linhas[0]["text"], linhas[1]["text"])
         guardadas = assemble_corpus.dedup(linhas, lambda r: r["text"], set())
         self.assertEqual([r["parentId"] for r in guardadas], ["src_pai_0001"])
+
+    def test_emit_RECUSA_cadeia_crua_em_vez_de_confiar_no_chamador(self):
+        """A invariante de `emit` e conferida NELE, e este caso e o unico adversario dela.
+
+        Ela morava so nos dois sitios de `main`: um chamador novo — ou um teste — podia escrever
+        cru sem que nada acusasse, e a linha sairia com vaos indexando um texto que ninguem
+        gravou e com a banda decidida sobre outra cadeia. A recusa nomeia qual das duas cadeias
+        chegou fora da forma, porque quem a le esta a decidir onde canonizar.
+        """
+        import io
+        import json as _json
+
+        import make_mixed
+
+        pai = " ".join(f"palavra{i:02d}" for i in range(60))
+        editado = " ".join(
+            (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
+        )
+        for papel, (pai_arg, editado_arg) in {
+            "edited": (pai, editado.replace(" ", "  ", 1)),
+            "parent_row['text']": (pai.replace(" ", "  ", 1), editado),
+        }.items():
+            with self.subTest(papel=papel):
+                with self.assertRaises(ValueError) as ctx:
+                    make_mixed.emit(
+                        io.StringIO(),
+                        {
+                            "id": "src_pai_0001",
+                            "text": pai_arg,
+                            "family": "gemini-3.5-flash-lite",
+                            "sourceMaterialBatch": "smb_ptwiki_20220301",
+                        },
+                        editado_arg,
+                        provider="gemini",
+                        model="gemini-3.5-flash-lite",
+                        template_id="mix_edit_v1",
+                    )
+                self.assertIn(papel, str(ctx.exception))
+                self.assertIn("forma canonica", str(ctx.exception))
+        # Nao vacuo: com as duas cadeias canonicas o mesmo `emit` escreve.
+        destino = io.StringIO()
+        make_mixed.emit(
+            destino,
+            {
+                "id": "src_pai_0001",
+                "text": pai,
+                "family": "gemini-3.5-flash-lite",
+                "sourceMaterialBatch": "smb_ptwiki_20220301",
+            },
+            editado,
+            provider="gemini",
+            model="gemini-3.5-flash-lite",
+            template_id="mix_edit_v1",
+        )
+        self.assertEqual(_json.loads(destino.getvalue())["text"], editado)
+
+    def test_o_prompt_sai_da_cadeia_CANONICA_e_nao_da_crua(self):
+        """O material ENVIADO e o material COMPARADO sao a mesma cadeia.
+
+        O corte em 6.000 caracteres depende do espacamento, entao com pai cru o prompt e o diff
+        podiam divergir na truncagem. Hoje o pool reservado chega canonico — medido, 0 de 2.247
+        fora da forma —, e e justamente por isso que so um pai CRU de fixture da entrada a esta
+        guarda: sem ela a premissa vira acidente, e ninguem nota quando ela deixar de valer.
+        """
+        import make_mixed
+
+        cru = "  ".join(f"palavra{i:02d}" for i in range(60)) + "   "
+        canonico = make_mixed.canonical_text(cru)
+        self.assertNotEqual(cru, canonico)
+        editado = " ".join(
+            (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
+        )
+        _pai, _escritas, enviados = self._pista_mista_in_process(editado, pai_cru=cru)
+        self.assertTrue(enviados)
+        # A juncao, e nao cada argumento: `call_with_retries` recebe tambem o nome do modelo, e
+        # exigir o pai em TODO argumento de texto reprovava por causa dele.
+        tudo = " ".join(enviados)
+        self.assertIn(canonico, tudo)
+        self.assertNotIn(cru, tudo)
 
     def test_um_plano_de_16_ilhas_de_250_passa_a_geometria_e_NAO_atribui(self):
         """A perna 3 nao e zelo: 16x250 passa o preflight e `_plano_de_blocos` a recusa.

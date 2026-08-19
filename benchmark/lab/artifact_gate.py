@@ -324,12 +324,14 @@ _HARNESS_TOKEN_MARKERS: tuple[str, ...] = (
 # front of it. Measured over the pools, sentence punctuation alone reaches 24 of the 4.048
 # generated rows and the line boundary reaches 146, with zero matches in 42.100 human rows.
 _HARNESS_ROLE_TURN = r"(?:^|[.!?:]\s)assistant\b"
-# Terminal control bytes. `common.normalize_text` touches SIX of the byte values this
-# pattern matches — `.strip()` per line drops every character Python counts as
-# whitespace, and \x0b and \x0c are among them — so an escape sequence a CLI wrote
-# survives into the pool only when it is not one of those six and not at a line edge.
-# Measured in 2026-08-19; the sentence that said it touches none of them was false, and
-# it was false before the mixed lane started canonicalizing.
+# Terminal control bytes. `common.normalize_text` removes one of these ONLY when both
+# halves hold: it is one of the six that Python counts as whitespace (\x0b, \x0c, \x1c,
+# \x1d, \x1e, \x1f) AND it sits at the edge of a line or of the text, where the strips
+# reach. In the INTERIOR of a line all twenty-three survive, measured — so an escape
+# sequence a CLI wrote reaches the pool unless it is one of those six at an edge.
+# Two sentences were wrong here before this one: the first said normalization touches
+# none of them, and the retraction that replaced it made survival conditional on NOT
+# being one of the six, which is the same error with the quantifier moved.
 _HARNESS_CONTROL = r"[\x00-\x08\x0b\x0c\x0e-\x1f]"
 
 # --- the six detections added by D13 ----------------------------------------
@@ -377,6 +379,11 @@ _HARNESS_CONTROL = r"[\x00-\x08\x0b\x0c\x0e-\x1f]"
 # mixed row's span is a SLICE of the text, so a span that ends in a space may just be
 # where `mixture.spans` cut it. Measured, the end-of-text arm would have added 2 rows of
 # 2.135 and both of them are a cut, while the newline arm finds 113.
+# O QUE ESTAS SONDAS MEDEM, declarado no positivo porque a negativa nao basta: elas medem
+# o texto CANONICO PERSISTIDO — a cadeia que ficou no corpus depois da normalizacao —, e
+# nao a qualidade da resposta crua do provedor. Um zero aqui e uma afirmacao sobre o
+# corpus e sobre nada mais.
+#
 # As taxas comentadas abaixo sao do corpus ANTES da canonizacao da pista mista, e a
 # retratacao do paragrafo de abertura vale para toda sonda de assunto RAW e nao so para
 # estas tres: o `.strip()` por linha de `normalize_text` remove todo caractere que o

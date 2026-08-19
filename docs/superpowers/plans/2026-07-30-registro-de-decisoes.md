@@ -9000,3 +9000,52 @@ uma decisao que se pode desfazer.
 
 E reproduzi os numeros da lente por conta propria, em vez de os herdar: **78 de 821** em
 `mixed_candidates.jsonl` e **157 de 1314** em `mixed_from_pairs.jsonl` — os 235 de 2.135 nao canonicas.
+
+### O codex REPROVOU a unidade da canonizacao, e os quatro defeitos estao fechados (2026-08-19)
+
+Mandei a unidade inteira — diff de 22 KB inline, orcamento de seis comandos, `xhigh` — para revisao
+INDEPENDENTE, e a pergunta que mais valia era a que eu nao posso fazer a mim mesmo: **nomeie uma mutacao da
+canonizacao que os meus dois casos novos NAO peguem.** Ele nomeou, e nomeou certo.
+
+**Veredito: REPROVA.** Quatro defeitos, todos reais, todos fechados nesta volta:
+
+1. **A mutacao que sobrevivia:** `common.normalize_text`, trocar `\n{3,}` por `\n{4,}`. O meu fixture
+   adversarial cobria corrida de espaco, espaco antes de quebra, NFC e pontas — e NAO uma corrida de tres
+   quebras, que e a quinta transformacao. Medido depois do conserto: a mutacao derruba
+   `test_a_linha_ESCRITA_e_canonica_nos_dois_modos`. Quatro das cinco pernas guardadas nao e guarda da
+   funcao; e guarda de quatro pernas.
+2. **`emit` confiava nos chamadores.** A invariante "as entradas ja sao canonicas" morava nos dois sitios de
+   `main`, e um chamador novo — ou um teste — escrevia cru sem que nada acusasse. Agora `emit` a confere
+   nele, levantando em vez de canonizar: canonizar seria um SEGUNDO sitio de decisao, e o veredito de banda
+   que corre antes leria outra cadeia que a escrita. Com caso proprio nas duas direcoes, e a mutacao
+   `if False` derruba dois.
+3. **A minha retratacao de `_HARNESS_CONTROL` trocou falsidade por falsidade.** Eu escrevi que um escape
+   sobrevive "so quando nao e um dos seis e nao esta na borda da linha" — conjuncao errada. Medido por mim
+   depois do apontamento: no INTERIOR da linha os vinte e tres sobrevivem, e os seis caem SO na borda. A
+   frase certa e a bicondicional: removido se e somente se e um dos seis E esta numa borda. Duas frases
+   erradas no mesmo sitio, a minha sendo a segunda — e a segunda e pior, porque parecia medida.
+4. **A condicao do gate estava cumprida pela metade.** A minha nota negava a inferencia sobre o provedor e
+   nao declarava POSITIVAMENTE o que o gate mede. Agora declara: texto canonico PERSISTIDO, a cadeia que
+   ficou no corpus depois da normalizacao.
+
+**E o que ninguem tinha visto:** no modo `--generate` o prompt e os nudges eram montados com
+`parent["text"][:6000]` CRU enquanto o diff comparava a cadeia canonica. O corte em 6.000 caracteres depende
+do espacamento, entao o material ENVIADO e o material COMPARADO podiam divergir na truncagem. Hoje e no-op
+porque o pool reservado chega canonico (0 de 2.247 fora da forma), e era exactamente essa a premissa que eu
+tinha declarado no docstring — o conserto e usar `pai[:6000]`, que transforma a premissa em mecanismo. Com
+guarda propria: um pai CRU de fixture, e a reversao derruba o caso.
+
+**As quatro baterias, depois dos consertos:** identidade -> 5 vermelhos; `\n{4,}` -> 1; invariante de `emit`
+desligado -> 2; prompt de volta ao cru -> 1. Restauro com sha256 identico em todas, e a suite fecha em
+**716 passed, 522 subtests**.
+
+**Duas coisas que eu recusei do veredito, e a razao.** Ele listou como `caminho-cru` as 235 linhas antigas em
+disco: elas sao a divida PROSPECTIVA ja declarada na § 7, e nao um caminho cru do escritor — o escritor nao
+tem nenhum. E listou o `emit` de chamada direta, que era caminho de verdade e foi fechado (2). O resto do
+veredito e aceito inteiro.
+
+**Um erro meu no processo, que vale mais que os quatro defeitos:** o primeiro laco de espera do codex
+declarou "PAROU" depois de noventa segundos de silencio, quando um laco agentico em `xhigh` fica calado por
+minutos entre passos, e eu vigiava a linha `EXIT=` do meu proprio wrapper em vez do bloco de veredito do
+codex. Se eu tivesse tratado aquele silencio como morte, teria perdido um veredito que estava a caminho — e
+concluido, errado, que a cota tinha fechado.
