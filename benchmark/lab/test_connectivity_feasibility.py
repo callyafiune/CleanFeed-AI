@@ -1887,6 +1887,193 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                                         make_mixed.main()
                     sem_identidade_de_ilha(saida)
 
+    def _pista_mista_in_process(self, editado_cru, pares_extra=()):
+        """Roda os dois modos de `make_mixed.main()` e devolve as linhas escritas por modo.
+
+        O MESMO chassi do caso acima — slate crescido para a ilha passar no parser, provedor
+        mockado, `GEMINI_API_KEY` falsa, `sys.argv` falsificado —, extraido porque agora dois
+        casos o usam e uma segunda copia dele divergiria sem nada reprovar.
+        """
+        import contextlib
+        import io
+        import json as _json
+        import tempfile
+
+        import generate_ai
+        import make_mixed
+
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        crescido = {
+            **make_mixed.MIX_TEMPLATES,
+            **{
+                nome: (lambda nome=nome: f"reescreva ({nome}):\n{{parent}}")
+                for nome in ilha["mixingTemplates"].values()
+            },
+        }
+        pai = " ".join(f"palavra{i:02d}" for i in range(60))
+        escritas: dict[str, list[dict]] = {}
+        with tempfile.TemporaryDirectory() as bruto:
+            temporario = Path(bruto)
+            pares = temporario / "pares.jsonl"
+            linhas_de_par = [
+                {
+                    "parentId": "src_pai_0001",
+                    "parentText": pai,
+                    "editedText": editado_cru,
+                    "family": "gemini-3.5-flash-lite",
+                    "sourceMaterialBatch": "smb_ptwiki_20220301",
+                    "promptTemplateId": "mix_edit_v1",
+                },
+                *pares_extra,
+            ]
+            pares.write_bytes(
+                b"".join(
+                    _json.dumps(p, ensure_ascii=False).encode("utf-8") + b"\n"
+                    for p in linhas_de_par
+                )
+            )
+            pais = temporario / "pais.jsonl"
+            pais.write_bytes(
+                _json.dumps(
+                    {
+                        "id": "src_pai_0001",
+                        "text": pai,
+                        "label": 0,
+                        "family": "gemini-3.5-flash-lite",
+                        "sourceMaterialBatch": "smb_ptwiki_20220301",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                + b"\n"
+            )
+            modos = {
+                "--from-pairs": (["--from-pairs", str(pares)], temporario / "p.jsonl"),
+                "--generate": (
+                    ["--generate", "--parents", str(pais), "--target", "1", "--sleep", "0"],
+                    temporario / "g.jsonl",
+                ),
+            }
+            for modo, (flags, saida) in modos.items():
+                argv = [
+                    "make_mixed.py",
+                    *flags,
+                    "--island",
+                    ilha["island"],
+                    "--output",
+                    str(saida),
+                ]
+                registrado = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", newline="\n")
+                with mock.patch.object(make_mixed, "MIX_TEMPLATES", crescido):
+                    with mock.patch.object(
+                        generate_ai, "call_with_retries", return_value=editado_cru
+                    ):
+                        with mock.patch.dict(
+                            os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
+                        ):
+                            with mock.patch.object(sys, "argv", argv):
+                                with contextlib.redirect_stdout(registrado):
+                                    make_mixed.main()
+                escritas[modo] = [
+                    _json.loads(l)
+                    for l in saida.read_text(encoding="utf-8").splitlines()
+                    if l.strip()
+                ]
+        return pai, escritas
+
+    def test_a_linha_ESCRITA_e_canonica_nos_dois_modos(self):
+        """A guarda que a canonizacao nao tinha: a linha escrita, e nao a funcao.
+
+        MEDIDO antes de existir: reduzir `canonical_text` a identidade deixava a suite do lab
+        indistinguivel — 712 passed, 518 subtests, o mesmo numero —, porque nenhum caso afirmava
+        o campo `text` da linha e o fixture do caso vizinho e canonico POR CONSTRUCAO
+        (`palavra00 palavra01 ...`), onde canonizar nao faz nada. Este fixture e adversarial de
+        proposito, e a forma canonica dele e exactamente o fixture do vizinho: corrida de
+        espaco entre toda palavra, espaco antes de uma quebra de linha, espacos nas pontas e uma
+        combinante em NFD na primeira palavra reescrita.
+
+        As tres coisas que se afirmam da linha, e cada uma morre sob a identidade: o `text` E a
+        forma canonica da entrada crua e DIFERENTE dela; os vaos ladrilham o texto ESCRITO de 0
+        a `len(text)`; e a `aiFraction` gravada recomputa dos vaos sobre esse mesmo texto — as
+        tres derivam de uma cadeia so, que e o que a decisao de 2026-08-19 compra.
+        """
+        import unicodedata
+
+        import make_mixed
+
+        palavras = [
+            (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
+        ]
+        # A combinante vai DEPOIS de vogal: "0" + U+0301 nao compoe, e o fixture ficaria
+        # em NFC sem que a assercao de nao-vacuidade morresse por isso.
+        palavras[0] = palavras[0] + "a\u0301"
+        cru = "  ".join(palavras[:30]) + " \n" + "  ".join(palavras[30:]) + "   "
+        canonico = make_mixed.canonical_text(cru)
+        # Nao vacuo nas duas pontas: a entrada CARREGA as formas, e a canonica nao.
+        self.assertIn("  ", cru)
+        self.assertIn(" \n", cru)
+        self.assertFalse(unicodedata.is_normalized("NFC", cru))
+        self.assertNotIn("  ", canonico)
+        self.assertNotIn(" \n", canonico)
+        self.assertTrue(unicodedata.is_normalized("NFC", canonico))
+
+        pai, escritas = self._pista_mista_in_process(cru)
+        # A banda julga o par CANONICO: se este fixture caisse fora, os dois modos descartariam
+        # e as assercoes abaixo ficariam vacuamente verdes por lista vazia.
+        self.assertTrue(
+            make_mixed.in_mixed_band(make_mixed.compute_mixture(pai, canonico))
+        )
+        for modo, linhas in escritas.items():
+            with self.subTest(modo=modo):
+                self.assertEqual(len(linhas), 1)
+                linha = linhas[0]
+                self.assertEqual(linha["text"], canonico)
+                self.assertNotEqual(linha["text"], cru)
+                vaos = linha["mixture"]["spans"]
+                self.assertEqual(vaos[0]["start"], 0)
+                self.assertEqual(vaos[-1]["end"], len(linha["text"]))
+                de_ia = sum(
+                    v["end"] - v["start"] for v in vaos if v["origin"] == "ai"
+                )
+                self.assertAlmostEqual(
+                    linha["mixture"]["aiFraction"],
+                    de_ia / len(linha["text"]),
+                    places=6,
+                )
+
+    def test_dois_pares_que_diferem_SO_em_espaco_colidem_no_dedup(self):
+        """A colisao e DELIBERADA, e e a consequencia que a decisao de 2026-08-19 aceitou.
+
+        Duas linhas mistas que diferissem apenas em espaco descreveriam o mesmo texto sob dois
+        digests, e o dedup da montagem compara por igualdade exacta. Sob a canonizacao as duas
+        viram a MESMA cadeia e o dedup guarda uma — o que se afirma aqui e que a colisao e dita,
+        nao incidental: sem canonizacao os dois textos diferem e as duas linhas sobrevivem.
+        """
+        palavras = [
+            (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
+        ]
+        um = " ".join(palavras)
+        outro = "  ".join(palavras)
+        self.assertNotEqual(um, outro)
+
+        _pai, escritas = self._pista_mista_in_process(
+            um,
+            pares_extra=(
+                {
+                    "parentId": "src_pai_0002",
+                    "parentText": " ".join(f"palavra{i:02d}" for i in range(60)),
+                    "editedText": outro,
+                    "family": "gemini-3.5-flash-lite",
+                    "sourceMaterialBatch": "smb_ptwiki_20220301",
+                    "promptTemplateId": "mix_edit_v1",
+                },
+            ),
+        )
+        linhas = escritas["--from-pairs"]
+        self.assertEqual(len(linhas), 2)
+        self.assertEqual(linhas[0]["text"], linhas[1]["text"])
+        guardadas = assemble_corpus.dedup(linhas, lambda r: r["text"], set())
+        self.assertEqual([r["parentId"] for r in guardadas], ["src_pai_0001"])
+
     def test_um_plano_de_16_ilhas_de_250_passa_a_geometria_e_NAO_atribui(self):
         """A perna 3 nao e zelo: 16x250 passa o preflight e `_plano_de_blocos` a recusa.
 

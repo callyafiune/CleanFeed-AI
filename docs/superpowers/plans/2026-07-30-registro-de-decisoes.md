@@ -8937,3 +8937,39 @@ era evidencia de que a reversao passa em silencio.
 mockado, e a mais barata e a colisao de dedup. Nao a escrevi as cegas no fim desta volta: a canonizacao
 mora nos CHAMADORES e nao em `emit`, entao so um teste que dirija `main()` a ve — e escrever dentro de um
 chassi de trezentas linhas sem o ler e como se produz teste que passa pela razao errada.
+
+### A guarda que faltava, e a mutacao que era invisivel deixou de ser (2026-08-19)
+
+A volta anterior deixou a canonizacao dentro e a divida escrita: reduzir `canonical_text` a identidade
+deixava a suite do lab INDISTINGUIVEL — 712 passed, 518 subtests, exactamente igual. Essa mutacao agora
+derruba dois casos, e o que a fez morder foi ler o chassi antes de escrever, que e a razao de eu nao ter
+escrito a guarda no fim da volta passada.
+
+**Por que o chassi importava.** O caso vizinho (`test_a_linha_que_a_pista_de_MISTURA_escreve_NAO_carrega_a
+ilha`) ja dirigia `main()` in-process nos DOIS modos, com o slate crescido para a ilha passar no parser, o
+provedor mockado e `sys.argv` falsificado. O que o tornava cego era o FIXTURE: `palavra00 palavra01 ...` e
+canonico por construcao, entao canonizar nao faz nada nele. Extrai o chassi para `_pista_mista_in_process`
+— dois casos o usam agora, e uma segunda copia dele divergiria sem nada reprovar — e dei-lhe um fixture
+ADVERSARIAL cuja forma canonica e exactamente o fixture do vizinho: corrida de espaco entre toda palavra,
+espaco antes de uma quebra de linha, espacos nas pontas e uma combinante em NFD.
+
+**Um erro meu no fixture, que a propria assercao de nao-vacuidade pegou:** pus a combinante depois de `"0"`,
+e `"0" + U+0301` nao compoe — a cadeia ja estava em NFC e `assertFalse(is_normalized(...))` ficou vermelha.
+A combinante foi para depois de vogal. E vale registrar o que isso diz do metodo: a assercao que existia
+para impedir vacuidade foi a que apanhou o fixture errado, antes de o teste poder passar pela razao errada.
+
+**As tres coisas que o caso afirma da LINHA ESCRITA**, cada uma morrendo sob a identidade: o `text` e a
+forma canonica da entrada crua e DIFERENTE dela; os vaos ladrilham o texto escrito de 0 a `len(text)`; e a
+`aiFraction` gravada recomputa dos vaos sobre esse mesmo texto. As tres derivam de uma cadeia so, que e o
+que a decisao da regra do LAB compra.
+
+**E o segundo caso afirma a consequencia que o consenso aceitou:** dois pares cujo `editedText` difere APENAS
+em espaco produzem duas linhas de `text` identico, e `dedup` guarda uma. A colisao e DITA, nao incidental —
+sem canonizacao os dois textos diferem e as duas linhas sobrevivem.
+
+Bateria: mutacao em bytes de `canonical_text` para a identidade, `2 failed, 712 passed` (os dois novos, e so
+eles), restauro com sha256 identico, e lab de volta a **714 passed, 520 subtests**.
+
+**O que continua aberto, e nao mudou:** a canonizacao e PROSPECTIVA. As 235 linhas em disco na forma antiga
+seguem la, `already_done` chaveia por `parentId`, e fechar exige apagar os dois `.jsonl` antes de
+reexecutar — com os 4 pares que mudam de veredito de banda a serem reimportados, nao migrados.
