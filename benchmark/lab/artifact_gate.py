@@ -324,8 +324,12 @@ _HARNESS_TOKEN_MARKERS: tuple[str, ...] = (
 # front of it. Measured over the pools, sentence punctuation alone reaches 24 of the 4.048
 # generated rows and the line boundary reaches 146, with zero matches in 42.100 human rows.
 _HARNESS_ROLE_TURN = r"(?:^|[.!?:]\s)assistant\b"
-# Terminal control bytes. `common.normalize_text` collapses spaces and normalizes line
-# ends and does not touch these, so an escape sequence a CLI wrote survives into the pool.
+# Terminal control bytes. `common.normalize_text` touches SIX of the byte values this
+# pattern matches — `.strip()` per line drops every character Python counts as
+# whitespace, and \x0b and \x0c are among them — so an escape sequence a CLI wrote
+# survives into the pool only when it is not one of those six and not at a line edge.
+# Measured in 2026-08-19; the sentence that said it touches none of them was false, and
+# it was false before the mixed lane started canonicalizing.
 _HARNESS_CONTROL = r"[\x00-\x08\x0b\x0c\x0e-\x1f]"
 
 # --- the six detections added by D13 ----------------------------------------
@@ -342,10 +346,26 @@ _HARNESS_CONTROL = r"[\x00-\x08\x0b\x0c\x0e-\x1f]"
 # Whitespace no candidate writer leaves behind. `common.normalize_text` collapses
 # `[ \t]+` inside a line, strips each line and trims the text, and EVERY pool written
 # through `CandidateWriter.offer` has run it — the human extractors, `generate_ai` and
-# `import_public_corpus` alike. `make_mixed.emit` does NOT: it writes `text: edited`
-# straight from the editor's output. That asymmetry is why these probes discriminate at
-# all, and it is the measurement: 0 of 11.000 ptwiki rows and 0 of 19.673 `ai` rows
-# carry a space run, against 185 of 2.135 mixed AI spans (8,67 %).
+# `import_public_corpus` alike.
+#
+# THE ASYMMETRY THESE PROBES WERE BUILT ON IS GONE, and the retraction belongs here
+# rather than further down: the sentence this paragraph used to carry said that
+# `make_mixed.emit` writes the editor's output straight through, and that the asymmetry
+# was why the probes discriminate at all. Since 2026-08-19 the mixed lane canonicalizes
+# before it writes (`make_mixed.canonical_text`), so BOTH write paths of this repository
+# normalize and no lane can produce these forms any more. What the probes measured was
+# real: 0 of 11.000 ptwiki rows and 0 of 19.673 `ai` rows carried a space run, against
+# 185 of 2.135 mixed AI spans (8,67 %) — those are the rates of the corpus BEFORE the
+# lane was closed, and the mixed pool on disk still holds 235 non-canonical rows, so the
+# gate does not read zero over it today.
+#
+# They stay, and the reason is the direction of the guard: a writer added later that
+# skips canonicalization is exactly what they would catch, and a probe removed because
+# nothing currently trips it is a guard deleted at the moment it became preventive. What
+# must NOT be read out of a zero here is a claim about the PROVIDER: the evidence of the
+# raw response is not in this corpus and is not reconstructable from it
+# (`docs/corpus-collection-runbook.md` declares that `_session/*.raw` holds extracted
+# text, not the HTTP body).
 #
 # A SPACE BEFORE PUNCTUATION IS NOT HERE, and that is measured, not an omission. It
 # fires on 7,15 % of the in-frame human rows against 0,55 % of the generated ones — 13
@@ -357,6 +377,14 @@ _HARNESS_CONTROL = r"[\x00-\x08\x0b\x0c\x0e-\x1f]"
 # mixed row's span is a SLICE of the text, so a span that ends in a space may just be
 # where `mixture.spans` cut it. Measured, the end-of-text arm would have added 2 rows of
 # 2.135 and both of them are a cut, while the newline arm finds 113.
+# As taxas comentadas abaixo sao do corpus ANTES da canonizacao da pista mista, e a
+# retratacao do paragrafo de abertura vale para toda sonda de assunto RAW e nao so para
+# estas tres: o `.strip()` por linha de `normalize_text` remove todo caractere que o
+# Python conta como whitespace, entao ele tambem apaga formas que `INVISIBLE_PROBES`
+# acusa. Quantas sondas ficam sem entrada nao esta escrito aqui de proposito: o numero
+# depende do material, medido — no pool real outras SETE etiquetas disparam, numa linha
+# sintetica que carrega todas as formas 17 de 20 sobrevivem —, e um numero fixo aqui
+# seria a alegacao que a medicao refuta.
 SPACING_PROBES: dict[str, str] = {
     # 0 / 0 / 8,67 %
     "space-run": r"  +",

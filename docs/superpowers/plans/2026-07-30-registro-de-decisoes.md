@@ -8894,3 +8894,46 @@ zero SEM mover os outros onze.
 A decisao continua sendo do operador: as duas regras mexem em admissao sob banda ratificada. O que mudou e
 que agora ela chega com os dois lados de acordo, a objecao que a derrubaria descartada por busca, e a
 condicao que a torna defensavel escrita.
+
+### A canonizacao entra, e cinco lentes acham nove defeitos nela — cinco deles frases minhas (2026-08-19)
+
+O operador ratificou o consenso (regra do LAB) e eu implementei: `canonical_text` em `make_mixed.py`, a
+normalizacao correndo antes do diff e da banda nos dois modos, `emit` inalterado recebendo entradas ja
+canonicas. Lab verde. Depois rodei cinco lentes adversariais no proprio diff, e o resultado justifica o
+aparato: **todas as cinco devolveram DEFEITO**, nove achados, e cinco sao frases minhas ou frases que a
+minha mudanca tornou falsas.
+
+**O achado que importa mais: a mudanca nao tem guarda.** Reduzir `canonical_text` a identidade deixa a
+suite do lab INDISTINGUIVEL — 712 passed, 518 subtests, exactamente igual —, medido com plugin de pytest.
+Os dois testes que dirigem os dois modos de ponta a ponta usam fixture ja canonico (`palavra00 palavra01
+...`), onde canonizar e no-op POR CONSTRUCAO. Verde nao era evidencia de que a representacao esta presa:
+era evidencia de que a reversao passa em silencio.
+
+**As cinco frases, retratadas nesta volta:**
+
+1. `artifact_gate.py` dizia que `emit` escreve a saida do editor direto e que "that asymmetry is why these
+   probes discriminate at all". A assimetria acabou com a minha mudanca. Pior: medido, os dois arquivos
+   mistos eram a UNICA fonte daquelas formas — 76+1 em 821 e 151+157 em 1314 contra 0/0/0 em 65.691 linhas
+   dos outros 25 pools —, entao as tres sondas ficaram sem entrada possivel. Elas FICAM, e a razao esta
+   escrita: um escritor futuro que salte a canonizacao e exactamente o que elas pegariam, e apagar uma
+   sonda porque nada a dispara e apagar a guarda no momento em que ela virou preventiva.
+2. A nota que eu mesmo acrescentei tinha escopo errado: a propriedade nao e "destas tres" e sim de toda
+   sonda de assunto RAW, porque o `.strip()` por linha remove todo whitespace do Python e alcanca tambem
+   `INVISIBLE_PROBES`. E ela autorizava ler o zero como "o corpus nao carrega a forma" quando o zero e
+   outra coisa: NENHUMA pista deste repositorio pode mais carregar a forma.
+3. O numero ONZE que o consenso mandou prender ("as duas sondas zeram sem mover as outras onze") **nao se
+   reproduz**: no pool real disparam outras SETE etiquetas, e numa linha sintetica com todas as formas 17
+   de 20 sobrevivem. Nao escrevi essa assercao — teria sido alegacao falsa presa por teste.
+4. `_HARNESS_CONTROL` afirmava que `normalize_text` "does not touch these". Falso, e falso ANTES da minha
+   mudanca: ela toca SEIS dos bytes que o padrao casa — 0xb, 0xc, 0x1c, 0x1d, 0x1e, 0x1f —, que eu
+   reconferi por conta propria.
+5. O meu proprio docstring dizia "a jusante ninguem reclama". Dentro do lab, verdade; a ingestao SELADA
+   recusa (`corpus-import.ts` troca o texto e so depois valida, `schema.ts` levanta "out of text bounds"),
+   o que faz do defeito uma recusa TARDIA e nao um silencio. E a promessa "a pista tem uma representacao
+   so" era falsa para o corpus que existe: 235 linhas em disco estao na forma antiga.
+
+**O que fica devendo, declarado na § 7 e nao escondido:** a guarda. Ela cabe no chassi de
+`test_connectivity_feasibility.py:1471`, que ja roda `main()` in-process nos dois modos com provedor
+mockado, e a mais barata e a colisao de dedup. Nao a escrevi as cegas no fim desta volta: a canonizacao
+mora nos CHAMADORES e nao em `emit`, entao so um teste que dirija `main()` a ve — e escrever dentro de um
+chassi de trezentas linhas sem o ler e como se produz teste que passa pela razao errada.

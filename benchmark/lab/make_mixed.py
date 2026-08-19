@@ -129,6 +129,58 @@ def compute_mixture(parent: str, edited: str) -> dict:
     }
 
 
+def canonical_text(text: str) -> str:
+    """A cadeia CANONICA da pista mista, e e nesta forma que tudo a jusante a le.
+
+    A normalizacao e a REPRESENTACAO da pista e nao um passo do escritor: ela corre antes do
+    diff, da decisao de banda, do hash e do `emit`, e os tres leem a MESMA cadeia. Duas razoes
+    medidas, e as duas doem:
+
+    * os vaos de `compute_mixture` sao offsets sobre o texto editado e o fecho e `len(edited)`,
+      entao normalizar DEPOIS do diff deixa o ultimo vao apontando fora da cadeia escrita — 77
+      contra 73, medido. Dentro do lab ninguem reclama: `mixed_record` recomputa `aiFraction`
+      sobre o denominador errado e o gate antiartefato fatia a cadeia errada. Quem recusa e a
+      ingestao SELADA, do outro lado da fronteira — `corpus-import.ts` troca o texto por
+      `normalizeCorpusText(text)` e so depois valida, e `schema.ts` levanta
+      "mixture.spans[i] out of text bounds" —, o que faz do defeito uma recusa tardia e nao
+      um silencio;
+    * o pai chega NORMALIZADO (`CandidateWriter.offer`) e o editado chega cru, e a assimetria
+      NFC corrompe o proprio diff: medido, editado em NFD contra pai em NFC da 6 vaos e
+      `aiFraction` 0,5263 — nivel 50, DENTRO da banda — contra 2 vaos e 0,2037 com os dois lados
+      canonizados. A linha declararia nivel 50 sobre um texto que e 20 % de IA.
+
+    A regra e a do LAB (`common.normalize_text`) e nao a SELADA
+    (`corpus-import.ts::normalizeCorpusText`, que faz so CRLF/CR -> LF e NFC). A escolha e
+    deliberada e tem preco: o `text` guardado e texto CANONICO e nao a resposta verbatim do
+    provedor. A alternativa foi medida e recusada — a selada preserva o espacamento que o
+    provedor produz, entao a lane nasceria acima do teto de 2 % das sondas de espacamento em
+    TODA corrida, e regenerar a lane reproduziria a brecha em vez de a fechar.
+
+    Vale igualmente para `--from-pairs`, cujo `editedText` foi escrito por OUTRA pista:
+    canonizar aqui reescreve o que ela escreveu, e isso e deliberado — duas linhas mistas que
+    diferissem apenas em espaco descreveriam o mesmo texto sob dois digests.
+
+    O QUE ISTO NAO ALCANCA, e o limite e operacional: a canonizacao e PROSPECTIVA. As linhas
+    ja escritas nao sao migradas — `already_done` chaveia por `parentId` e `--output` abre em
+    append —, e 235 das 2.135 mistas em disco estao na representacao antiga, medido. Enquanto
+    elas estiverem la a pista tem DUAS representacoes, o dedup da montagem compara por
+    igualdade exata e nao ve atraves das duas, e o remedio que
+    `assert_no_lane_needs_regeneration` prescreve ("regenerate the lane") e NO-OP: reexecutar
+    o comando importa apenas os pares ainda nao feitos. Fechar exige apagar
+    `mixed_candidates.jsonl` e `mixed_from_pairs.jsonl` antes de reexecutar, e essa e a unica
+    forma medida de a promessa acima valer para o corpus inteiro.
+
+    Importado TARDE, no molde de `assembler()`: este arquivo roda como script, e um import de
+    topo amarraria a cwd.
+    """
+    lab = str(Path(__file__).resolve().parent)
+    if lab not in sys.path:
+        sys.path.insert(0, lab)
+    from common import normalize_text
+
+    return normalize_text(text)
+
+
 def mixed_bands() -> tuple[tuple[int, float, float], ...]:
     """A banda de cada nivel: (nivel, piso, teto), DERIVADA de `MIX_LEVELS`.
 
@@ -447,7 +499,9 @@ def main() -> None:
             for pair in read_jsonl(args.from_pairs):
                 if pair["parentId"] in done:
                     continue
-                mixture = compute_mixture(pair["parentText"], pair["editedText"])
+                pai = canonical_text(pair["parentText"])
+                editado = canonical_text(pair["editedText"])
+                mixture = compute_mixture(pai, editado)
                 if not in_mixed_band(mixture):
                     print(
                         f"  {pair['parentId']} fora da faixa mista "
@@ -465,10 +519,13 @@ def main() -> None:
                     )
                 emit(
                     output,
-                    parent_projection(
-                        pair, id_key="parentId", text_key="parentText"
-                    ),
-                    pair["editedText"],
+                    {
+                        **parent_projection(
+                            pair, id_key="parentId", text_key="parentText"
+                        ),
+                        "text": pai,
+                    },
+                    editado,
                     provider=pair.get("provider", "external"),
                     model=pair.get("model", "external"),
                     # The template the pair itself declares. A pairs file written
@@ -594,13 +651,14 @@ def main() -> None:
             # Reset PER PARENT, not once outside the loop: a nudge on one row must not
             # leave the next row claiming the corrective template it never saw.
             template_id = "mix_edit_v1"
+            pai = canonical_text(parent["text"])
             try:
                 result = edit_with_failover(
                     MIX_TEMPLATES[template_id]().format(parent=parent["text"][:6000])
                 )
-                mixture = (
-                    compute_mixture(parent["text"], result[0]) if result else None
-                )
+                if result is not None:
+                    result = (canonical_text(result[0]), result[1])
+                mixture = compute_mixture(pai, result[0]) if result else None
                 for _ in range(args.nudge_retries):
                     if result is None or in_band(mixture):
                         break
@@ -618,7 +676,8 @@ def main() -> None:
                         template.format(parent=parent["text"][:6000])
                     )
                     if result is not None:
-                        mixture = compute_mixture(parent["text"], result[0])
+                        result = (canonical_text(result[0]), result[1])
+                        mixture = compute_mixture(pai, result[0])
             except GenerationRefused as refused:
                 print(f"  {parent['id']} recusado: {refused}")
                 continue
@@ -634,7 +693,7 @@ def main() -> None:
             edited, used_model = result
             emit(
                 output,
-                parent,
+                {**parent, "text": pai},
                 edited,
                 provider="gemini",
                 model=used_model,
