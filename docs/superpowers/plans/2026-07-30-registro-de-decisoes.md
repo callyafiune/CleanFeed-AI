@@ -8856,3 +8856,41 @@ linha da § 7 passou a carregar as três razões em vez de prescrever um remédi
 O que **não** fiz e não é meu: escolher a regra. Normalizar o pool misto muda ADMISSÃO sob banda ratificada
 e divide a população em disco em dois regimes de espaçamento — as duas coisas são decisão do operador, e
 nenhuma das duas é reversível por mim depois de o pool existir.
+
+### Consenso com o codex sobre a regra de normalizacao da pista mista (2026-08-19)
+
+O operador autorizou a cota e pediu consenso ANTES da decisao. Rodei uma consulta focada — nao revisao de
+unidade, entao sem `gera-prompt.py` e sem diff: entreguei os dez fatos que as cinco lentes mediram, a minha
+recomendacao COM o argumento dela, e pedi o ataque. Orcamento de seis comandos, esforco `xhigh`, prompt de
+5,3 KB por stdin. Transcrito 82 KB, `EXIT=0`, seis de seis comandos gastos.
+
+**Veredito: LAB, igual ao meu.** E a razao dele acrescenta uma que eu nao tinha escrito: a normalizacao LAB
+tem de ser a REPRESENTACAO CANONICA da pista — antes do diff, da banda, do hash, dos gates e do `emit` —, e
+nao um passo do escritor. Assim ela fecha a assimetria pai/editado e evita uma classe estruturalmente
+incompativel com o teto de artefatos.
+
+**A pergunta que decidiria contra: respondida, e nao existe.** Ele procurou alegacao de fidelidade byte a
+byte em `benchmark/lab`, `docs` e `benchmark/*.ts` e nao achou. `make_mixed.py:343-348` mostra a passagem
+direta e os metadados de geracao, mas nao promete identidade; e `docs/corpus-collection-runbook.md:259-262`
+DOCUMENTA limitacao de reproducao — `modelVersion` nao e persistido e `_session/*.raw` guarda texto
+extraido, nao o corpo HTTP. Isso corta a objecao de proveniencia e, ao mesmo tempo, agrava a de lavagem:
+ja nao se reproduz da resposta crua.
+
+**O ataque dele, que eu aceito como CONDICAO do conserto:** LAB pode "lavar" a medicao — o gate declara o
+corpus limpo porque a evidencia de espacamento foi apagada, nao porque o provedor deixou de a produzir.
+Logo LAB so e defensavel se o gate DECLARAR que mede texto canonico pos-normalizacao, e nao qualidade da
+resposta crua. Isso converte o meu "declarar o preco" numa declaracao com sitio: e no gate que ela vai.
+
+**O achado que nenhuma das cinco lentes viu:** a regra tambem reescreve o `editedText` que chega por
+`--from-pairs` (`make_mixed.py:11` e `:469-472`) — isto e, texto que OUTRA pista ja escreveu, e nao so
+resposta de provedor. A justificativa e os testes tem de cobrir esse modo explicitamente.
+
+**As sete coisas a prender por teste, na lista dele, que e mais completa que a minha:** as cinco
+transformacoes e a preservacao dos 27 code points; os dois modos normalizando antes do diff E da banda;
+vaos cobrindo exactamente `text` e terminando em `len(text)`; `aiFraction`, admissao e hash derivando da
+MESMA cadeia; a colisao de dedup por espaco como deliberada; e os dois detectores de espacamento indo a
+zero SEM mover os outros onze.
+
+A decisao continua sendo do operador: as duas regras mexem em admissao sob banda ratificada. O que mudou e
+que agora ela chega com os dois lados de acordo, a objecao que a derrubaria descartada por busca, e a
+condicao que a torna defensavel escrita.
