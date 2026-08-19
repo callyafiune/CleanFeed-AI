@@ -9049,3 +9049,100 @@ declarou "PAROU" depois de noventa segundos de silencio, quando um laco agentico
 minutos entre passos, e eu vigiava a linha `EXIT=` do meu proprio wrapper em vez do bloco de veredito do
 codex. Se eu tivesse tratado aquele silencio como morte, teria perdido um veredito que estava a caminho — e
 concluido, errado, que a cota tinha fechado.
+
+## Cinco decisoes tomadas por delegacao, e o criterio foi NAO crescer (2026-08-19)
+
+O operador delegou as decisoes com tres restricoes: registrar em arquivo, levar as de grande impacto
+ao consenso do codex, e nao inflar escopo — o projeto tem de ficar factivel, sem regressoes,
+aproveitando o que ja existe, sem gasto de token desnecessario. As cinco abaixo sao as que eu decidi
+SEM consultar ninguem, porque nenhuma delas move corpus nem politica selada. Quatro das cinco sao
+decisoes de NAO FAZER, e isso e o ponto: sob a restricao dada, a decisao barata e a que declara um
+residuo em vez de comprar mecanismo para ele.
+
+Registro aqui e nao em documento novo porque a § 3.7 diz "nenhum documento de plano alem do plano
+unico de entrega do modelo", e porque a convencao decidir-registrar-ratificar ja tem este arquivo
+como lugar. Inventar um `decisoes.md` seria escopo novo para hospedar uma frase.
+
+### D1 — as tres ilhas reservadas FICAM com duas tarefas, e o residuo e declarado
+
+A tabela de quarenta mostrou que `ilha_17`, `ilha_18` e `ilha_19` — as reservadas — carregam so
+`didatico` e `comentario`, porque a regra agrupa tarefas de cinco em cinco e as reservadas sao as
+tres ultimas. **Nao permuto.** A reserva mede novidade de FAMILIA geradora (o teste OOD), nao
+variedade de tarefa; permutar trocaria 40 digests de template para comprar uma propriedade que perna
+alguma da alegacao reivindica. Custo de reversao: **zero hoje** (nada foi gerado) e alto depois da
+primeira linha — entao a decisao esta registrada com o custo, e quem quiser a permutacao tem de a
+pedir ANTES da geracao. Residuo declarado: a populacao em que o OOD mede cobre 2 das 8 tarefas.
+
+### D2 — nao gasto cota numa segunda passada do codex na canonizacao
+
+Ele reprovou, os quatro defeitos foram fechados com bateria, e a mutacao que ele nomeou (`\n{3,}` ->
+`\n{4,}`) esta morta com caso proprio. Uma segunda passada compraria confirmacao, nao medicao. Se
+houver cota a gastar, ela vale mais em **R1** e **R2**, que devem rodada de codex e nunca a tiveram
+(§ 4) — e essa e decisao de dinheiro, logo do operador.
+
+### D3 — a ordem das duas unidades pre-Fase-5: primeiro o recibo, depois o quarto tier
+
+As duas estao na § 7 como unidade propria antes da Fase 5, e nenhuma custa cota. Vou pelo **recibo de
+`consume-holdout` chaveado pela consumacao** primeiro, porque o ESTADO o poe explicitamente ANTES de
+o botao irreversivel ser apertado: deixar para depois e deixar uma guarda em falta atras de uma acao
+que nao se desfaz. A guarda reciproca do quarto tier tambem vence antes da Fase 5, mas nao tem acao
+irreversivel atras dela.
+
+### D4 — a migracao das 235 linhas nao acontece agora, e nao por falta de autorizacao
+
+O operador autorizou apagar e reexecutar; a medicao disse que reexecutar e impossivel enquanto as 60
+identidades nao existirem, porque `--island` e `required=True` e a guarda recusa. Entao a decisao e:
+**esperar a porta**, com o material copiado fora do repositorio e com digests, o que torna a delecao
+futura reversivel. Nao ha nada a fazer aqui que nao seja destruir material.
+
+### D5 — nada de documento novo, e nada de unidade nova enquanto a mista nao fechar
+
+Sob a restricao de escopo, a fila fica exatamente nas quatro coisas que existem: as 60 identidades, a
+migracao que depende delas, o recibo de `consume-holdout` e a guarda do quarto tier. Nao abro frente
+nova — em particular nao toco as fracoes por faixa erradas da pre-inscricao (§ 7), que vencem antes da
+Fase 6 e nao antes disto, nem o eixo de operacao de primeira classe, que e v2 por decisao ja
+registrada.
+
+### D6 e D7 — o codex recusou a minha derivacao, e a recusa esta certa (2026-08-19)
+
+Levei ao consenso a decisao de grande impacto — derivar os 60 prompts de mistura das coordenadas que
+a ilha JA carrega, em vez de pedir uma quarta lista — e o veredito foi **OUTRA**. A razao principal e
+decisiva e eu a aceito inteira: **a identidade ficaria INSTAVEL.** Derivar o digest do slate de
+geracao faz o mesmo `promptTemplateId` adquirir outro digest quando a atribuicao (tarefa, registro)
+mudar, e linhas ja persistidas — que o resume nao reescreve — guardariam o digest antigo sob o mesmo
+id. E a mesma classe de dano que esta semana passou removendo, e ela seria PERMANENTE e invisivel.
+Ironia registrada: eu tinha acabado de decidir em D1 nao permutar as reservadas justamente porque
+permutar move 40 digests — a derivacao tornaria esse acoplamento estrutural.
+
+O segundo argumento tambem procede, e era o meu proprio ataque: as quatro tarefas do slate de geracao
+sao transformacoes de DOCUMENTO INTEIRO, nao generos de trecho local. Pedir um enxerto "no genero de
+`resumo`" e categoria errada.
+
+**D6 — o slate misto e uma lista ESTATICA de quatro intencoes de edicao LOCAL, congelada nele.**
+A aritmetica nao muda (4 x 5 registros = 20 ilhas, x 3 operacoes = 60), e o que muda e a fonte: lista
+propria e congelada, nao derivada de outro slate. Proponho as quatro, e nenhuma toca a GEOMETRIA do
+enxerto — elas dizem o que o trecho DIZ, nao onde entra nem quanto ocupa, o que preserva a medicao de
+Jaccard que excluiu `(insercao, 15)`:
+
+  * `explicar` — o trecho explica um termo que o pai usa sem definir;
+  * `exemplificar` — da um exemplo concreto do que o pai afirma em abstrato;
+  * `contextualizar` — acrescenta o contexto que o pai pressupoe;
+  * `qualificar` — acrescenta a ressalva ou o limite do que o pai afirma.
+
+Sao quatro frases, e e por isso que isto NAO e inflar escopo: a alternativa que o consenso derrubou
+economizava quatro frases ao preco de identidade instavel.
+
+**D7 — o nudge deixa de trocar de TEMPLATE e passa a reexecutar o MESMO no nivel vizinho.** E o
+achado do codex que eu nao tinha conectado: o escritor trata `edit`/`change_less`/`change_more` como
+identidades distintas, e o plano reserva UMA por operacao x ilha, entao 60 subcontaria. Das tres
+saidas — manter o nudge e explodir para 180 identidades, retirar o nudge e perder rendimento, ou
+mover a correcao para o PARAMETRO — escolho a terceira, e ela nao e politica nova: a § 3.3 ja declara
+que "o nivel [e] parametro preenchido (que nao muda o digest)". Entao a correcao passa a ser "o mesmo
+template, no nivel adjacente", o que preserva o mecanismo de rendimento, mantem uma identidade por
+slot e nao cria nada. Custo de reversao: baixo enquanto nenhuma linha mista nova existir; vai a
+ratificacao do operador no marco, como aplicacao de politica ja ratificada e nao como politica nova.
+
+**O que NAO decidi, e por que:** se o operador quiser trocar as quatro intencoes, sao dele — eu as
+propus, nao as impus. E nao gastei uma terceira rodada de codex nisto: o consenso resolveu a pergunta
+de grande impacto (derivar contra congelar), e D7 aplica uma frase ja selada em vez de decidir uma
+nova.
