@@ -8973,3 +8973,30 @@ eles), restauro com sha256 identico, e lab de volta a **714 passed, 520 subtests
 **O que continua aberto, e nao mudou:** a canonizacao e PROSPECTIVA. As 235 linhas em disco na forma antiga
 seguem la, `already_done` chaveia por `parentId`, e fechar exige apagar os dois `.jsonl` antes de
 reexecutar — com os 4 pares que mudam de veredito de banda a serem reimportados, nao migrados.
+
+### "Pode executar" era sobre apagar material, e a medicao disse para nao apagar (2026-08-19)
+
+O operador autorizou a migracao da divida prospectiva — apagar os dois `.jsonl` mistos e reexecutar a pista.
+Medi o alvo antes de apagar, como a regra manda, e a migracao NAO E EXECUTAVEL hoje:
+
+    --island e required=True, e o type=island_plan recusa:
+      a ilha 'ilha_00' pede ('mix-concatenacao-ilha-00', 'mix-insercao-ilha-00',
+      'mix-substituicao-ilha-00') e este arquivo serve ('mix_change_less_v1',
+      'mix_change_more_v1', 'mix_edit_v1')
+
+A pista mista nao pode rodar ate as 60 identidades existirem, que e a metade que espera a quarta lista.
+Apagar agora destruiria 2.135 linhas sem nada capaz de as reescrever: a metade `--generate` so volta com
+cota, e mesmo com cota a nossa propria guarda pre-cota a barra. A evidencia independente de que ela barra e
+que o chassi de teste TEM de mockar `MIX_TEMPLATES` para `main()` rodar.
+
+**Entao a minha frase da § 7 estava incompleta de um jeito que engana:** ela prescrevia "apagar os dois
+`.jsonl` antes de reexecutar" sem dizer que reexecutar e impossivel. Corrigida: a migracao esta atras da
+MESMA porta que a metade de mistura.
+
+**O que executei, porque e reversivel e e precondicao:** copia dos cinco arquivos — os dois de saida e os
+TRES de pares — para fora do repositorio, em `repositorios/snapshots/mixed-pre-canonizacao-2026-08-19/`,
+com `SHA256SUMS.txt`. Sem isso, uma delecao futura da metade `--generate` seria irreversivel; com isso, e
+uma decisao que se pode desfazer.
+
+E reproduzi os numeros da lente por conta propria, em vez de os herdar: **78 de 821** em
+`mixed_candidates.jsonl` e **157 de 1314** em `mixed_from_pairs.jsonl` — os 235 de 2.135 nao canonicas.
