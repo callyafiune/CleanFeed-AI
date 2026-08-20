@@ -99,6 +99,7 @@ import {
   runEvaluate,
   thresholdBinding,
 } from "./evaluate.ts";
+import { canonicalSha256 } from "../../contracts/canonical-json.ts";
 import {
   CommandError,
   readJsonFile,
@@ -327,8 +328,15 @@ export async function runConsumeHoldout(
   // carry this file: `fit-summary.json` publishes the cut's `artifactDigest`, and matching
   // that digest against the cut checked before the lease needs the receipt in the run's
   // work directory.
+  const blockIdentityDigest = await canonicalSha256(identity);
+  await assertReceiptIsNotBeingReplaced(
+    preExposureReceiptPath,
+    blockIdentityDigest,
+    preExposureCut.artifactDigest,
+  );
   await writeJsonAtomic(preExposureReceiptPath, {
     schemaVersion: 1,
+    blockIdentityDigest,
     frozenEvaluatorDigest: frozen.evaluatorDigest,
     observedEvaluatorDigest,
     provisionalThresholdArtifactDigest: preExposureCut.artifactDigest,
@@ -617,6 +625,70 @@ async function countExposedShards(directory: string): Promise<number> {
 
 // The scientific tuple that identifies the lease — byte-for-byte the identity
 // `evaluate` rebuilds from the same frozen calibration and split artifact.
+/**
+ * The record of the blind-time blessing cannot be REPLACED, and this is where that is
+ * enforced. It closes the two sequences the previous shape left open, both measured:
+ *
+ *   * a legitimate run over a DIFFERENT block sharing the `--work-dir` used to overwrite the
+ *     record, because the file carried no block identity;
+ *   * a run pointed at an EMPTY `--ledger` read the block as unspent, reached the write, and
+ *     replaced the cut the first attempt had blessed while the block was still blind — after
+ *     which the resume bound itself to a POST-exposure reading.
+ *
+ * What it does NOT claim: this file is not the authority on "spent". That stays with the
+ * ledger, under the lock, in `assertHoldoutAvailable` — keying the refusal on the file would
+ * let deleting one file turn a spent block back into a writable blessing. This guard is
+ * narrower and its scope is exactly that: an existing record is never silently replaced.
+ *
+ * The identity is the SCIENTIFIC TUPLE, digested — the same `HoldoutIdentity` the ledger
+ * locks on, so the two cannot disagree about which block this is. It travels INSIDE the file
+ * rather than in its name because the resume guard reads the receipt before the split
+ * artifact is opened, and moving that read earlier would reorder a sequence whose order is
+ * what keeps a doomed run from spending anything.
+ *
+ * A resume over the same block with the same cut rewrites the same bytes and is allowed:
+ * refusing it would break the retry the whole design rests on.
+ */
+async function assertReceiptIsNotBeingReplaced(
+  receiptPath: string,
+  blockIdentityDigest: string,
+  blessedCutDigest: string,
+): Promise<void> {
+  // Tolerant of the absent file, for the same reason and in the same shape as
+  // {@link readBlessedCutDigest}: a FRESH run in a new directory has no record to preserve,
+  // and an unreadable receipt authorizes no replacement either. What separates the two cases
+  // is the resume guard, which refuses on that same absence.
+  let existing: {
+    blockIdentityDigest?: unknown;
+    provisionalThresholdArtifactDigest?: unknown;
+  };
+  try {
+    existing = JSON.parse(await readTextFile(receiptPath)) as typeof existing;
+  } catch {
+    return;
+  }
+  const recorded = existing.blockIdentityDigest;
+  if (typeof recorded === "string" && recorded !== blockIdentityDigest) {
+    throw new CommandError(
+      "PRE_EXPOSURE_RECEIPT_FOREIGN_CONSUMPTION",
+      `${receiptPath} records the pre-exposure check of another block ` +
+        `(${recorded.slice(0, 12)}, this run is ${blockIdentityDigest.slice(0, 12)}): ` +
+        "writing here would destroy the only record of that block's blind-time cut. Use a " +
+        "work directory of this consumption instead",
+    );
+  }
+  const cut = existing.provisionalThresholdArtifactDigest;
+  if (typeof cut === "string" && cut !== blessedCutDigest) {
+    throw new CommandError(
+      "PRE_EXPOSURE_RECEIPT_CUT_CONFLICT",
+      `${receiptPath} records ${cut.slice(0, 12)} as the cut blessed before the exposure ` +
+        `and this run read ${blessedCutDigest.slice(0, 12)}: the block is already spent, so ` +
+        "this reading is not a blessing, and replacing the record would bind a resume to a " +
+        "post-exposure cut",
+    );
+  }
+}
+
 function buildIdentity(
   frozen: FrozenCalibrationArtifact,
   artifact: SplitArtifact,

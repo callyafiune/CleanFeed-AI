@@ -9146,3 +9146,43 @@ ratificacao do operador no marco, como aplicacao de politica ja ratificada e nao
 propus, nao as impus. E nao gastei uma terceira rodada de codex nisto: o consenso resolveu a pergunta
 de grande impacto (derivar contra congelar), e D7 aplica uma frase ja selada em vez de decidir uma
 nova.
+
+### A unidade do recibo: as duas sequencias fechadas, sem reordenar o comando (2026-08-19)
+
+Prossegui pela minha propria D3 — o recibo de `consume-holdout` chaveado pela consumacao, que o ESTADO poe
+ANTES de o botao irreversivel ser apertado. Etapa 1 mediu tres coisas que decidiram a forma:
+
+1. **O conceito de `consumptionId` JA existe** no comando, mas nasce do `session`, isto e, DEPOIS do lease
+   — e o recibo precede o lease por desenho, porque ele e o registro da bencao feita enquanto o bloco ainda
+   era cego. Logo a chave nao podia ser essa.
+2. A `HoldoutIdentity` — a tupla cientifica que o ledger tranca — esta disponivel ANTES da escrita, na linha
+   257, e e ela a identidade do bloco.
+3. Mas a guarda da RETOMADA le o recibo na linha 231, e o artefato de split so e aberto na 250. Entao por a
+   chave no NOME do arquivo obrigaria a ler o artefato mais cedo, isto e, a reordenar uma sequencia cuja
+   ordem esta documentada como o que impede uma corrida condenada de gastar qualquer coisa.
+
+**A decisao, e ela e de escopo:** a chave viaja DENTRO do recibo, nao no nome. Um campo
+(`blockIdentityDigest`) e uma guarda antes da escrita, e zero reordenacao. A alternativa correta-e-maior foi
+recusada por isso: sob a restricao do operador, reordenar um comando de caminho selado para ganhar um nome de
+arquivo mais bonito e regressao esperando acontecer.
+
+**As duas sequencias, agora recusadas por codigo nomeado:** `PRE_EXPOSURE_RECEIPT_CUT_CONFLICT` para a
+corrida que chega a escrita sobre bloco cujo recibo ja registra outro corte, e
+`PRE_EXPOSURE_RECEIPT_FOREIGN_CONSUMPTION` para a corrida legitima sobre outro bloco no mesmo `--work-dir`.
+As duas provas afirmam que o registro alheio fica **intacto**, e nao apenas que houve recusa — sem essa
+metade, uma guarda que recusasse DEPOIS de escrever passaria.
+
+**Uma escolha de fixture que virou cobertura de graca:** o caso do corte semeia um recibo SEM
+`blockIdentityDigest`, que e a forma que os recibos em disco tem hoje. Entao a prova cobre tambem o recibo
+legado, e o corte dele continua protegido — se eu tivesse semeado a forma nova, a legada ficaria substituivel
+justamente pela sequencia que a guarda existe para fechar.
+
+**O que NAO foi revogado, e nao precisa ser:** a objecao que derrubou a alternativa anterior, "protege um
+arquivo com um arquivo", segue valendo. A autoridade sobre "gasto" continua sendo o ledger sob o lock, e esta
+guarda nao a disputa; ela garante uma coisa mais estreita — registro existente nunca e substituido em
+silencio. **Residuo declarado:** apagar o recibo continua possivel, e o efeito e fail-FECHADO — a retomada
+passa a ser recusada por ausencia em vez de se amarrar a um corte errado.
+
+Bateria diagonal, tres mutacoes: o ramo da identidade derruba uma prova, o do corte a outra, a chamada
+inteira derruba as duas. Restauro com sha256 identico. `consume-holdout.ts` esta em `EVALUATOR_FILES`, entao
+o `evaluatorDigest` moveu e foi republicado.
