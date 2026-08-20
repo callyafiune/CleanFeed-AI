@@ -9536,3 +9536,87 @@ repinados; `evaluatorDigest` republicado na § 5.6. `docs:check` OK.
 
 **O que continua atras do operador:** gastar a cota de geracao; o roster do codex, que eu nao medi
 porque medir custa cota; e a ratificacao desta reversao no marco.
+
+### O roster do codex saiu de graça, e ele carrega o mesmo defeito de forma (2026-08-20)
+
+Eu havia declarado o roster como item do operador, "porque medir custa cota". Não custou:
+`-m/--model` do codex é string livre sem `[possible values:]` — o binário não valida id
+localmente, ao contrário do agy —, mas o CLI mantém `~/.codex/models_cache.json`, e ele estava
+buscado no mesmo dia (`fetched_at` 2026-08-20, `client_version` 0.148.0).
+
+**A lista do operador estava certa**, com as grafias exatas: `gpt-5.6-sol`, `gpt-5.6-terra`,
+`gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`. Mais dois slugs que não são produto de
+geração e ficam nomeados para ninguém os confundir com receita: `gpt-reserve` (slot de fallback)
+e `codex-auto-review` (o modelo de revisão).
+
+**E a faixa que ele pediu acerta por uma razão que vale escrever.** A escada de effort é POR
+MODELO — 5.5/5.4/5.4-mini param em `xhigh`, `luna` alcança `max`, `sol` e `terra` alcançam
+`ultra` —, e `low…xhigh` é a INTERSEÇÃO dos seis. É também exactamente o que
+`codex.effortLevels` já declara, então as 24 receitas (6 × 4) não pedem emenda nenhuma. A faixa
+do operador é a única uniforme sobre o roster e a única já legal na política; as duas coisas
+coincidirem não era garantido.
+
+**O defeito, e é o terceiro sítio da mesma família.** A política declara `effortLevels` como UMA
+lista por lane para uma propriedade que varia por modelo — o mesmo que derrubou a tentativa de
+declarar a fonte `flag` do agy, e o mesmo que fez `ollama` não caber num `GenerationChannel` de
+três valores. No codex o efeito é **fail-closed** e não falsidade: uma linha gerada em `max`
+seria recusada por "effort level outside the lane's own scale", então nada está em risco
+enquanto a geração ficar em `low…xhigh`. Vira bloqueio no dia em que alguém quiser `max`.
+
+**Uma ressalva de proveniência que eu não vou alisar:** isto é CACHE do CLI, não sonda contra a
+API, e numa corrida anterior o próprio codex recusou este arquivo para uso próprio (`missing
+field base_instructions`) enquanto continuava a atualizá-lo. É evidência datada de hoje e vinda
+do binário, não medição de primeira mão. O carimbo definitivo custa uma requisição por modelo, e
+essa parte continua sendo cota do operador.
+
+### O codex reprovou o fechamento, e um dos quatro achados era pior do que ele disse (2026-08-20)
+
+Segunda rodada sobre a mesma unidade, com o contrato em `.codex-reviews/contrato-fechamento-lanes.md`
+e o veredito em `codex-fechamento-lanes-veredito.txt`. **REPROVA**, mas com a forma certa: a
+pergunta que mais valia — **a reversao esta completa?** — voltou COMPLETA, e a linha da § 3.3 que
+registra a reversao do operador voltou FIEL. Os quatro achados sao de frase, e os quatro procedem.
+
+**Um quantificador que eu inventei.** Eu escrevi que o binario do agy "recusa TODA chamada ambigua
+pelo nome". Sondei tres casos. Tres recusas nao provam o quantificador, e ele nao era necessario
+para nada — o que os tres estabelecem e que uma corrida ACEITA sabe qual fonte se aplicou, e isso
+basta para nao derivar effort de sufixo. A frase ficou nos tres casos, com o quantificador
+explicitamente nao alegado.
+
+**`effortLevels` e FALSIDADE e nao teto, e eu tinha classificado errado.** Eu escrevi que a lista de
+quatro niveis contra os seis reais do codex era "fail-closed e nao falsidade". O codex apontou a
+definicao: `effortLevels` sao **os niveis da escala**, nao um subconjunto permitido. Logo a lista de
+quatro e descricao INCOMPLETA da escala — falsidade —, e o fail-closed e uma propriedade separada e
+benigna do efeito operacional. As duas coisas agora estao ditas separadas.
+
+**A proveniencia do roster, e aqui o achado dele era pior do que ele formulou.** Ele disse que a
+fonte "agora contem 0.145.0" contra o 0.148.0 que eu publiquei, e eu fui medir esperando encontrar
+deriva do cache. Encontrei outra coisa: `codex --version` devolve **`codex-cli 0.145.0`** e o cache
+declara `client_version` **0.148.0**. Os dois numeros sao de coisas diferentes e **divergem** — o
+cache foi escrito por um cliente mais novo do que o que o le, e e isso que explica o `missing field
+base_instructions` com que o proprio codex recusa o arquivo. Ele apontou para uma discrepancia real
+e trocou a direcao; a discrepancia e mais grave do que a que ele descreveu, porque nao e cache velho,
+e cache de outro cliente. A § 5.6 passou a nomear as duas versoes e o que a divergencia significa.
+
+**E o `fetched_at` envelheceu dentro da propria sessao.** Publiquei 22:46:13; quando fui conferir
+estava 22:58:15, porque cada corrida de codex refresca o arquivo — inclusive as minhas rodadas de
+revisao. Um carimbo de instante que a minha propria ferramenta move nao e proveniencia: a linha
+passou a dizer a DATA, e a declarar que nada ali tem assercao, porque os slugs e os tetos nao existem
+no repositorio. A unica metade que o repositorio sustenta e `codex.effortLevels`, de onde sai o 4 da
+multiplicacao.
+
+**O achado que eu nao nomeei, e e o mais embaraçoso: eu deixei em pe uma divida que eu mesmo paguei
+nesta sessao.** A § 7 continuava a cobrar a emenda da `proxyReason` — "fica falsa e tem de ser
+emendada", com prazo "antes de existir linha mista montada" — enquanto o commit `789d8cf` ja tinha a
+emenda dentro. Pior: a linha da divida repetia o over-claim que o codex acabara de derrubar, dizendo
+que a reamostragem aninhada ISOLA a operacao. A linha foi reescrita para o que resta de facto (o eixo
+lido em vez de inferido, v2) e o over-claim saiu com ela.
+
+**A regra que as duas rodadas produzem, e ela e procedimental:** divida paga na MESMA sessao em que
+foi escrita nao se auto-remove, e e o pior sitio possivel para uma frase velha, porque quem le a § 7
+esta a decidir o que fazer em seguida. Hoje isto aconteceu **duas** vezes — a `RECIPES` declara 4 que
+eu achei de manha, e esta. Ambas eram dividas escritas por mim e pagas por mim sem que eu voltasse a
+lista.
+
+**Medicoes de fechamento:** lab 737 / 742 verde, `docs:check` OK. A emenda selada nao se moveu nesta
+volta — as quatro correcoes sao prosa de `assemble_corpus.py` e de `docs/ESTADO.md`, e nenhuma toca
+`EVALUATOR_FILES`, entao o `evaluatorDigest` continua no valor que `789d8cf` publicou.
