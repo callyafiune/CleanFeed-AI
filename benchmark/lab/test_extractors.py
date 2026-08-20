@@ -3861,10 +3861,11 @@ class LaneIdentityTests(unittest.TestCase):
     def test_effort_is_never_derived_from_the_model_name_suffix(self) -> None:
         from assemble_corpus import ai_record
 
-        # `gpt-oss-120b-medium` EMBEDS its effort in the model id and `--effort`
-        # exists as a session flag in parallel, so the precedence between them is
-        # undetermined (to be measured by --dry-run before D3). Reading "medium" off
-        # the suffix would be an identity we made up, which R6 forbids.
+        # `gpt-oss-120b-medium` EMBEDS its effort in the model id and `--effort` is a
+        # flag in parallel, but the two are mutually EXCLUSIVE per model — agy refuses
+        # the pair by name. Reading "medium" off the suffix would still be an identity
+        # we made up, because it would name a source this run never consulted, which R6
+        # forbids.
         candidate = self._ai_candidate(
             "agy", "gpt-oss-120b-medium", receita_da_tarefa("original")
         )
@@ -3893,11 +3894,13 @@ class LaneIdentityTests(unittest.TestCase):
         candidate = self._ai_candidate(
             "gemini", "gemini-3.5-flash-lite", receita_da_tarefa("original")
         )
-        candidate["meta"]["provider"] = "anthropic"
+        candidate["meta"]["provider"] = "openai"
         del candidate["meta"]["generationLane"]
-        # Four lanes are frozen. A fifth is not a lane to add here: the record has
-        # no admissible `generationLane`, so it leaves the corpus rather than
-        # borrowing a lane it never ran on.
+        # `openai` is not a fictional label: 2.004 rows on disk carry it, from the
+        # direct-API runs that predate the frozen slate. It has no lane because the
+        # slate reaches OpenAI through `codex`, so those rows leave the corpus rather
+        # than borrowing a lane they never ran on. Adding a lane to rescue them would
+        # be declaring a channel nobody ran.
         with self.assertRaises(UnmappableLane):
             ai_record(candidate)
 

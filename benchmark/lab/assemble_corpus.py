@@ -1153,14 +1153,22 @@ def effort_config(lane: str, meta: dict) -> dict:
 
     NOT DERIVED FROM THE MODEL ID SUFFIX, deliberately, even though on `agy` some
     model ids embed the tier (`gpt-oss-120b-medium`, `gemini-3.6-flash-low`) and the
-    temptation to read it off the string is obvious. `--effort` exists as a session
-    flag in parallel, so `model` and `effort` are NOT orthogonal on that lane, and
-    the precedence between them has not been measured (it will be, by `--dry-run`,
-    before D3). Reading "medium" off a suffix would record as an observation
-    something that is a guess about which of two inputs won — the exact shape of
-    invented identity R6 forbids. So the fields are modelled such that the
-    precedence CAN be written down once it is known, and nothing is written until it
-    is.
+    temptation to read it off the string is obvious. The precedence question is
+    SETTLED by probe and the answer removes the need to derive anything: the two
+    sources are mutually EXCLUSIVE per MODEL and the binary refuses every ambiguous
+    call by name — `--model gemini-3.5-flash-low --effort high` exits with "conflicts
+    with", `claude-sonnet-4-6 --effort high` with "not supported for model", and
+    `gemini-3.1-pro --effort medium` with "available: low, high". So a run always
+    knows which source it used, and reading "medium" off a suffix would record a
+    source the run never consulted — the invented identity R6 forbids.
+
+    WHAT IS NOT RECORDABLE, and the residue is a shape and not a value: on a BASE
+    model id the flag IS the source, and no row of this lane can say so. The lane row
+    carries one boolean for a property that is per-model, `schema.ts` refuses
+    `source: "flag"` while `configurable` is false, and flipping the boolean would
+    make every agy record already written invalid. So a run that passed `--effort`
+    has to be recorded as the model-id form or not at all, and a lane row that
+    distinguished per-model effort is the only thing that fixes it.
 
     The `not-supported` arm is only available on a lane whose frozen row offers it.
     `codex` does not: its `effortSources` are `flag` and `provider-default`, and both

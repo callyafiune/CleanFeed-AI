@@ -257,23 +257,26 @@ class ClosedPolicyParse(unittest.TestCase):
             self.assertIn("byte for byte", message)
 
     def test_it_refuses_a_reserialized_copy_of_the_sealed_values(self) -> None:
-        # The three byte counts are ASSERTED here and not merely written down, and the
-        # one that carries the claim is the DIFFERENCE: `json.dumps(json.loads(sealed),
-        # indent=2)` is one byte shorter than what `write_policy` puts on disk, because
-        # that function appends the trailing newline. Both stand against the tracked
-        # file, so a policy retyped or reformatted on the way to Colab carries the
-        # sealed values and different bytes — which is what the digest refuses.
+        # The three byte counts are ASSERTED here and not merely written down, and TWO
+        # differences carry the claim. `write_policy`'s output is one byte longer than
+        # its own reserialization, because that function appends the trailing newline.
+        # And both are LONGER than the tracked file, by a margin that is not formatting
+        # at all: `json.dumps` escapes non-ASCII by default while the tracked file keeps
+        # accented Portuguese literal, so the margin is a function of how much accented
+        # prose the policy carries. Either way a policy retyped or reformatted on the way
+        # to Colab carries the sealed values and different bytes — which is what the
+        # digest refuses.
         reserialized = json.dumps(
             json.loads(POLICY_PATH.read_bytes().decode("utf-8")), indent=2
         ).encode("utf-8")
         with tempfile.TemporaryDirectory() as tmp:
             path = write_policy(Path(tmp))
             on_disk = path.read_bytes()
-            self.assertEqual(len(reserialized), 12_089)
-            self.assertEqual(len(on_disk), 12_090)
+            self.assertEqual(len(reserialized), 12_294)
+            self.assertEqual(len(on_disk), 12_295)
             self.assertEqual(len(on_disk) - len(reserialized), 1)
             self.assertEqual(on_disk, reserialized + b"\n")
-            self.assertEqual(len(POLICY_PATH.read_bytes()), 11_876)
+            self.assertEqual(len(POLICY_PATH.read_bytes()), 12_070)
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8")),
                 json.loads(POLICY_PATH.read_text(encoding="utf-8")),

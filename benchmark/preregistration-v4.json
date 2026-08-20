@@ -351,7 +351,7 @@
             "axis": "groups.promptTemplate",
             "fallbacks": [],
             "proxyFor": "operação de edição",
-            "proxyReason": "nenhum eixo do schema v4 registra a operação de edição aplicada a uma linha mista; groups.promptTemplate é o eixo mais próximo e tem um único nível sobre as linhas mistas montadas, logo este fator é degenerado por construção até um eixo de operação existir"
+            "proxyReason": "nenhum eixo do schema v4 registra a operação de edição aplicada a uma linha mista: mixOperation é campo da linha de POOL e mixed_record não o carrega para o registro selado, cujos MIXTURE_KEYS e GROUPS_KEYS são fechados; groups.promptTemplate é o eixo mais próximo e carrega TRÊS níveis por ilha, um por operação, então este fator deixa de ser degenerado — mas operação e template ficam colineares dentro da ilha, e nenhuma reamostragem os separa"
           }
         ],
         "unitKind": "multiway"

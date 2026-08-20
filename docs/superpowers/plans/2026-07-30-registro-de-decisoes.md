@@ -9455,3 +9455,84 @@ o `== 3` nunca o fechou. Nos dois casos o remedio proposto era mais forte que o 
 **Medicoes de fechamento, revistas:** lab **737 testes / 742 subtests**; vitest 172 / 3.102 verde em
 rodada unica e quieta; `evaluatorDigest` inalterado; `docs:check` OK; tsc limpo; lint nos 12
 pre-existentes; `git ls-files --eol | grep w/crlf` vazio.
+
+### O codex REPROVOU a emenda das lanes, e a emenda encolheu de quatro itens para um (2026-08-20)
+
+O operador reverteu a reserva por provedor: **as famílias OpenAI vão ao núcleo**, geradas pelo
+**codex CLI** e nao por API; a Anthropic pelo **Claude Code** e nao pelo agy, que fica com Gemini
+e `gpt-oss-120b`; effort de `light` a `extra high`. A razao dele e prevalencia de uso — um detector
+cego para ChatGPT e Claude e cego para o caso dominante. Registro como reversao porque **e uma**: a
+§ 3.3 declarava o contrario, marcada `AG`, e uma sessao anterior prometeu registrar essa mesma
+reversao e nao registrou. A promessa evaporou com a sessao, que e exactamente o defeito que a
+convencao decidir-registrar-ratificar existe para impedir.
+
+**O que a decisao FORÇA, e eu medi antes de escrever.** `gpt-oss-120b-medium` e linhagem OpenAI:
+reserva-la com o codex no treino seria reservar receita de fornecedor visto, o defeito de reservar
+sol treinando com luna. Com as duas fora, a reserva fica VAZIA — e `declared_held_out_families`
+recusa, com a docstring dizendo que "'sem reserva' nao e um estado que a governanca consiga
+expressar". Logo nomear uma quarta linhagem deixou de ser opcional. Corrigi tambem um probe meu:
+sondei `assert_slate_roles_are_consistent`, que **nao** confere a reserva; o portao e outro.
+
+**A reserva decidida e local por ollama, e a medicao a tornou forçada e nao preferida.** Contei
+`harnessVersion` nos pools por provedor: `public-dataset` 0 de 12.000, `openai` 0 de 2.004, `gemini`
+0 de 1.650, `codex` 0 de 1.402, `agy` 0 de 419, `anthropic` 0 de 122 — e **`ollama` 400 de 400**.
+Como `countsTowardHeldOutFloor` filtra o piso de 200 positivos da reserva por `recordEligibility`, e
+`recordEligibility` conta eixo em `unknown`, so material com versao capturada consegue cumprir o
+piso. O ollama nao e a melhor escolha para a reserva: e a **unica** que a cumpre hoje. E a alegacao
+encolhe com ela — a fatia OOD passa a medir "linhagem de pesos abertos nao vista", com o vies
+otimista de um 7B quantizado escrito no model card.
+
+**A emenda que eu escrevi, e o veredito.** Ela levava quatro itens num movimento de digesto: as duas
+lanes novas, `agy.effortSources` ganhando `"flag"`, e a `proxyReason`. O operador autorizou gastar
+cota de codex; sonda de cota `EXIT=0`, mandato em `.codex-reviews/contrato-emenda-lanes.md`, veredito
+em `codex-emenda-lanes-veredito.txt`. **REPROVA, quatro dos seis itens derrubados**, e os quatro
+procedem:
+
+* **o arm que eu criei era INABITÁVEL, e este e o achado que me pega de cheio.** `schema.ts:3225`
+  recusa `source: "flag"` com `configurable: false`. Eu acrescentei `"flag"` a `effortSources` do
+  agy mantendo o booleano em `false` — entao nenhuma linha agy poderia jamais usar a fonte que a
+  linha passou a oferecer. Eu tinha CHEGADO a virar o booleano, medido 119 vermelhos (o esquema
+  exige que `effort.configurable` iguale o da lane, logo todo registro agy ja escrito viraria
+  invalido) e recuado para a lista — sem ver que o recuo produzia uma opcao que nao se pode exercer.
+  Pior que qualquer das duas pontas;
+* **`ollama` como `channel: "api"` esta errado, e a forma certa e outra.** Eu tratei como escolha
+  entre duas verdades — perder a versao do runtime ou perder o seed — e escolhi qual perder. O
+  codex nomeou a terceira forma que eu listei no contrato e nao tomei: separar transporte de runtime
+  versionado, com canal novo, preservando os dois. Ele esta certo: o que estava errado era a FORMA,
+  e eu ia congelar a escolha numa pre-inscricao;
+* **`claude-code` sem `not-supported` procede como recusa e nao como desenho:** o arm ja dispara por
+  REGISTRO na lane agy, entao a definicao textual ("a lane nao tem nocao de effort") ja e falsa. O
+  conserto e enfraquecer a definicao, nao aceitar que 122 linhas fiquem inescreviveis;
+* **a minha `proxyReason` era FORTE DEMAIS.** Eu escrevi que a reamostragem aninhada
+  `humanSeed x promptTemplate` **isola** a operacao. Nao isola: tres templates correlacionados com
+  tres operacoes sao colineares dentro da ilha, e nada os separa. A frase ficou na versao fraca —
+  o fator deixa de ser degenerado, e operacao e template ficam colineares.
+
+**Uma expectativa maquiada, e ele achou.** Em `schema-v3.test.ts` eu troquei o valor proibido do
+caso (`flag`, que o agy passou a oferecer) por outro valor proibido (`provider-default`) em vez de
+consertar a modelagem. O caso continuava verde medindo outra coisa. Com o item 2 revertido o teste
+voltou inteiro ao que era.
+
+**E um achado que eu nao nomeei:** o comentario que eu escrevi em `preregistration-v4.ts` dizia que
+`agy` serve **tres** vendors, e sob o contrato ratificado ele fica com Gemini e `gpt-oss` — **dois**.
+Frase falsa minha, num `EVALUATOR_FILES`, sem assercao que a sustentasse. Saiu com o revert.
+
+**O que sobrou da emenda: um item.** A `proxyReason`, na versao fraca. Nada mais. As duas lanes
+voltaram para a fila com o remedio do codex escrito na § 7, porque o que elas pedem e mudanca de
+FORMA da linha de lane — canal novo, invariante de decoding emendada, definicao de `not-supported`
+enfraquecida — e isso e unidade propria, com revisao propria. Encolher uma emenda de pre-inscricao
+de quatro itens para um depois de a suite ficar verde nos quatro e o resultado certo: verde media a
+minha consistencia, nao a verdade das frases que eu selei.
+
+**Uma coisa que a implementacao pegou e que nenhuma revisao pediu:** o round-trip por Python
+corrompeu `learningRate` no arquivo selado (`2e-05` contra `0.00002`), e o teste
+`is stored in canonical JSON` reprovou. Reemiti pelo Node, que e a autoridade de formato declarada
+do arquivo. Fica a regra: **`EVALUATOR_FILES` em JSON nao se edita por Python**, porque a
+representacao de numero difere e os bytes sao a identidade.
+
+**Medicoes de fechamento.** vitest 172 / 3.102 e lab 737 / 742, verdes em rodada quieta com a
+emenda encolhida. `SEALED_POLICY_SHA256` e os tres pinos de bytes de `test_backbone_policy.py`
+repinados; `evaluatorDigest` republicado na § 5.6. `docs:check` OK.
+
+**O que continua atras do operador:** gastar a cota de geracao; o roster do codex, que eu nao medi
+porque medir custa cota; e a ratificacao desta reversao no marco.
