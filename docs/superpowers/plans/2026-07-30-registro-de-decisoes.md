@@ -9250,3 +9250,208 @@ duas autoridades independentes, e o preco esta certo.
 **Onde eu paro, e a razao e a restricao do operador:** nao comeco um laco de driver novo com o contexto que
 resta. Meio-implementar o laco e pior que nao o comecar, porque a guarda ficaria aberta entre um commit e o
 seguinte — e a guarda e o que impede a cota de ser gasta sob um slate que o plano nao cumpre.
+
+### A pista mista realiza as tres operacoes, e uma guarda que eu escrevi sobreviveu verde (2026-08-20)
+
+A unidade que D8 delimitou, inteira e num commit so, porque a medicao dele e que as tres partes
+entram juntas: as **60 identidades** de mistura, o **laco por CELULA** e a **linha gravando
+`mixOperation` e `mixLevel`**. Fatiar meio-abriria a guarda pre-cota — `island_plan` pararia de
+recusar com o escritor ainda incapaz de dizer que operacao a linha realizou.
+
+**O que entrou, e as duas coisas que eu acrescentei as tres.** O slate misto e DERIVADO, no molde
+de `generate_ai._build_slate`: `MIX_GEOMETRIES` (uma por operacao, com o nivel como parametro),
+`MIX_INTENTS` (as quatro de D6) e `MIX_REGISTERS` (os proprios cinco, D6 bis), compostos em 60
+receitas mais as tres `mix_*_v1` legadas — 63 nomes, 63 digests. O laco de `--generate` itera
+`mix_cell_allocation()`, funcao nova em `assemble_corpus` de que `mix_lines_by_operation` passou a
+ser apenas a CONTAGEM, e que `_island_component` tambem le: uma aritmetica so, entao o que a pista
+estampa por indice e o que a geometria valida por indice, por construcao e nao por coincidencia de
+duas derivacoes.
+
+As duas que nao estavam na lista de D8, e a razao de eu as ter posto DENTRO da unidade em vez de as
+declarar como divida:
+
+1. **o filtro de bloco de semente no `--generate`.** O driver tomava qualquer pai reservado. Uma
+   linha mista nomeia o pai em `humanSeed` e `derivationRoot`, `connected_components` une POR VALOR,
+   e a § 3.3 ja declara que um pai de outra ilha funde as duas. Abrir a porta pre-cota sem isto seria
+   abrir para um corpus que a montagem recusa DEPOIS de a cota estar gasta — o mesmo dano que a
+   guarda existe para impedir, um nivel abaixo. `generate_ai.select_humans` ja fazia o filtro, com a
+   razao escrita e a medicao (116 de 1046 sementes emparelhando corridas), entao isto e espelho e nao
+   invencao;
+2. **a sexta perna de `island_plan`, contra receitas de BYTES identicos.** E a fraude que crescer o
+   slate abriu, e o codex a nomeou no consenso de D6: sessenta nomes sobre tres corpos passam a
+   conferencia por NOME e mentem, porque identidade E o digesto. `generate_ai.island_plan` tem a
+   perna desde 7ab3e9b; a pista mista nao tinha.
+
+**A decisao de desenho que eu tomei e que resolve uma contradicao aberta.** O contrato de 7ab3e9b
+registrou-a: o ESTADO manda a linha mista gravar `mixLevel` e `mixOperation`, e `MIXTURE_KEYS`
+(`benchmark/schema.ts`) e vocabulario FECHADO que nao os contem — "como esta, o esquema recusaria a
+linha que a decisao ratificada manda escrever". A contradicao dissolve-se ao separar as duas linhas
+que a palavra "linha" confundia: os dois campos vao para o TOPO do registro de POOL, ao lado de
+`promptTemplateId`, e nao para dentro de `mixture` do registro SELADO. `mixed_record` nao os
+carrega, entao `MIXTURE_KEYS` nao se move, o `evaluatorDigest` nao se move, e o eixo de primeira
+classe continua divida da v2. Custo de reversao: baixo — promover o campo a eixo selado depois e a
+mesma mudanca de `V4_GROUP_AXES` que a v2 ja deve, e nenhuma linha escrita fica errada por ter o
+campo no pool.
+
+**A outra, e ela e sobre o que a linha AFIRMA.** `mixLevel` grava o nivel do pedido que SOBREVIVEU,
+nao o alvo da celula. Quando o nudge corre, o texto veio do vizinho; gravar o alvo alegaria um
+pedido que nao produziu este texto. A perda contra o plano aparece como celula sub-preenchida, que e
+fato mensuravel — a alegacao errada nao seria. E a aceitacao continua sendo "cai em ALGUMA banda" e
+nao "cai na banda do alvo": a § 3.3 pressupoe linhas assim ao dizer que um v4 que aterrissa em 0,48
+sai da coorte, entao exigir a banda do alvo seria uma politica minha, mais forte que a ratificada.
+
+**D7 no mecanismo, e a ponta da curva.** O nudge reexecuta o MESMO template no nivel adjacente:
+abaixo quando a resposta veio IA inteira, acima quando veio quase intocada. Na ponta nao ha vizinho
+e a corrida NAO gasta chamada — repetir o mesmo pedido no mesmo nivel compraria outra amostra do
+mesmo sorteio ao preco de cota.
+
+**A BATERIA, e ela tem um achado.** Vinte e quatro mutacoes em tres rodadas, cada uma aplicada em
+bytes no codigo de producao com a suite do lab inteira rodada por mutacao e sha256 conferido na
+restauracao (`.codex-reviews/bateria-pista-mista{,-2,-3}.log`). **Vinte e tres vermelhas no teste
+nomeado. Uma sobreviveu VERDE, e e achado:**
+
+* **mover o resto de `mix_cell_allocation` para as ULTIMAS celulas deixava a suite indistinguivel** —
+  732/718, o mesmo numero. A cota de producao divide exacto (100 em 20 celulas), entao o ramo do
+  resto nao tinha adversario nenhum, e a regra declarada ("o resto vai para as primeiras") era prosa.
+  Ela nao e cosmetica: e ela que decide os totais por operacao num plano cuja cota de ilha nao divide
+  — 15 ilhas dao 133 mistas —, e `_island_component` modela a geometria com esses totais. Conserto:
+  `test_o_RESTO_da_alocacao_vai_para_as_PRIMEIRAS_celulas`, com a borda de uma linha a mais e o caso
+  de 133 (13 celulas com sete, 7 com seis). A mutacao repetida na rodada 2 ficou vermelha.
+
+Uma segunda mutacao sobreviveu e a medicao disse para NAO escrever guarda: trocar a redacao do fecho
+do prompt ("o texto completo resultante" -> "o texto"). Medi a consequencia em vez de a supor — a
+resposta que traga so o trecho novo da `aiFraction` ~1,0, cai fora de banda e e descartada, entao o
+custo e RENDIMENTO e nao linha corrompida; e a sonda de eco `responda apenas com` continua a casar.
+Pinar a redacao seria pinar prosa. Fica declarado.
+
+**O que a bateria mediu de graca, e vira argumento novo para D6 bis.** As sondas de eco de
+`artifact_gate` derivam de `generate_ai.RECIPES` e de mais nada — e, medido, a clausula de REGISTRO
+dos 60 prompts mistos JA e coberta por elas, porque as frases sao byte a byte as do slate de
+geracao. A duplicacao que parecia desperdicio compra duas coisas: independencia de digesto (D6 bis) e
+cobertura de sonda. O fecho tambem e coberto, pela sonda escrita a mao. A GEOMETRIA e a INTENCAO nao
+sao, e isso esta afirmado como residuo em
+`test_a_cobertura_de_sonda_de_ECO_do_prompt_misto_esta_MEDIDA`: quem crescer
+`_echo_probes_from_templates` para ler `MIX_TEMPLATES` deixa o corpo vermelho, que e o ponto dele —
+crescer a superficie de sonda MUDA a taxa medida contra o teto pre-inscrito de 2 %, logo e medicao
+com unidade propria e nao efeito colateral desta.
+
+**Duas frases falsas do ESTADO cairam, e a segunda muda o estado de D4.** (i) A § 7 dizia que
+`RECIPES` declara 4 identidades contra as 40, e a guarda recusa toda ilha — medido, `RECIPES` serve
+as 40 e a ilha `ilha_00` e ACEITA por `generate_ai.island_plan`; a linha virou o residuo que de facto
+sobra dali (as tres ilhas reservadas com 2 das 8 tarefas, de D1), e a porta que resta — gastar cota —
+subiu para a § 4. O nome do teste que a espelhava dizia "o slate declara 4" e tambem era falso.
+(ii) A § 7 dizia que reexecutar a pista mista e IMPOSSIVEL hoje, com a evidencia independente de que
+o chassi de teste TEM de mockar `MIX_TEMPLATES` — as duas caem: a porta abriu, o chassi nao mocka
+mais, e `--from-pairs` reexecuta sem cota nenhuma. **Logo D4 muda de razao:** a migracao das 235
+linhas na representacao antiga deixou de estar atras de um bloqueio de mecanismo e esta atras de um
+ATO DO OPERADOR — apagar `mixed_candidates.jsonl` e `mixed_from_pairs.jsonl`, que e apagar material,
+que e nunca delegado. Nao apaguei nada. O material continua copiado fora do repositorio com digests.
+
+**A `proxyReason` selada, e por que eu paro nela.** O ESTADO ja registrava que ela ficaria falsa; eu
+medi as duas oracoes dela separadamente e so UMA cai. "Nenhum eixo do schema v4 registra a operacao"
+continua verdadeira, porque `mixOperation` e campo de POOL e `mixed_record` nao o carrega.
+"`groups.promptTemplate` tem um unico nivel sobre as linhas mistas montadas" fica falsa na primeira
+montagem sob este desenho — tres niveis por ilha. Emendar move o `evaluatorDigest` e obriga a repinar
+`SEALED_POLICY_SHA256` no mesmo commit, e e emenda de PRE-INSCRICAO: unidade propria, com prazo
+ANTES de existir linha mista montada, e o ESTADO passou a dizer isso em vez de "v2". Nada nesta
+unidade a falsifica hoje, porque linha mista montada nao existe.
+
+**O que esta unidade NAO fez, e nao e esquecimento:** `make_mixed_agy.py` e `make_mixed_codex.py`
+continuam a fazer edit generico pinando `mix_edit_v1`, entao as linhas delas nao pertencem a ilha
+alguma e a montagem as recusa — inalterado, e e a razao de `--assume-template` passar a admitir SO as
+receitas sem operacao declarada. E o par pai/mista continua a nao passar o contrato de `near_dupes`
+NA GERACAO, que a § 3.3 pede: nao esta implementado, nao entrou aqui, e nao e criado por esta unidade.
+
+**Medicoes de fechamento.** vitest 172 arquivos / 3.102 testes verde em rodada unica e quieta —
+nenhum arquivo TypeScript foi tocado, e o total identico ao publicado e a evidencia. Lab
+**737 testes / 742 subtests** (era 716/522). `evaluatorDigest` recomputado pela funcao de producao:
+`67886c9a827de8bbf832bc086f73c97dd86fab29bba240558b6a0e9b9b23fd8b`, **inalterado** — nenhum arquivo
+de `EVALUATOR_FILES` entrou no diff, entao a § 5.6 nao se move. `docs:check` OK (207 links / 35
+arquivos).
+
+**A consequencia que o operador tem de ler antes de qualquer coisa:** depois desta unidade, **nada em
+codigo barra uma corrida de geracao** — os dois slates servem o plano e `island_plan` aceita toda ilha
+nas duas pistas. A unica porta em pe e a chave de API, e as tres linhas da § 4 que vencem antes
+(a razao da cota `mixed = 2000`, o nivel de gerador da classe mista, e agora a emenda da
+`proxyReason`) sao dele.
+
+#### Cinco lentes adversariais na mesma unidade, e o veredito e que a minha bateria era estreita (2026-08-20)
+
+Sem cota de codex, passei a unidade por cinco lentes read-only em paralelo com verificacao
+adversarial de cada achado — 30 achados, **12 confirmados e 18 refutados** pelos verificadores. A
+arvore ficou intacta: as lentes que precisaram mutar fizeram-no em copia fora do repositorio.
+
+**A familia de defeito que elas acharam e sempre a mesma, e e a minha:** frase declarativa cujo
+ADVERSARIO nao existe porque nenhum fixture alcanca o ramo. A minha bateria tinha 24 mutacoes e
+nenhuma delas tocou esses ramos, porque eu mutei o que os testes que EU escrevi olhavam.
+
+* **a celula sob RETOMADA.** O comentario declara que a celula e funcao do pai e nao da ordem da
+  corrida. O codigo esta certo — `ordenados` sai dos pais filtrados por ilha, sem `done` —, mas
+  nenhum corpo rodava `--generate` com o `--output` povoado, entao o mutante que acrescenta o filtro
+  de `done` antes do interleave SOBREVIVIA VERDE. Em producao: a primeira corrida escreve 40 linhas
+  e morre por cota seca; a retomada reindexa, as celulas iniciais ficam pedidas duas vezes e as de
+  nivel 90 — a coorte alta da ilha — nunca sao pedidas;
+* **o TETO da cota.** Todo fixture alimentava pais em numero igual a cota, entao o corte
+  `[: len(alocacao)]` era decoracao: o mutante de atribuicao ciclica sobrevivia. Em producao o pool
+  reservado da ~112 pais por bloco de semente contra 100 mistas, e o 101.o receberia a celula 0;
+* **a ponta ALTA da curva.** O nudge do driver so alcanca a celula 0, entao "na ponta nao ha
+  vizinho" era medido so descendo. O mutante que grampeia apenas a ponta de cima sobrevivia — e o
+  custo dele e uma chamada por linha nas quinze de nivel 90 da ilha;
+* **a GEOMETRIA da insercao.** O comentario dela declara o acoplamento mais carregado do diff: essa
+  prosa e a geometria sobre a qual `MIX_CELL_EXCLUDED` foi medido. Os testes derivavam a geometria
+  (`.split("{nivel}")[0]`), logo a prosa era livre: trocar o enxerto para o FIM do texto deixava a
+  suite inteira verde — e nessa geometria o par mede 0,8421 e 0,8494, os dois ACIMA do limite, entao
+  a razao "proxy de comprimento" que exclui `(insercao, 15)` dissolve-se enquanto a exclusao fica
+  congelada e verde;
+* **a cobertura de sonda de eco.** O corpo inspecionava uma geometria de tres e uma intencao de
+  quatro, entao acrescentar uma sonda para outra geometria deixava-o verde com o residuo do ESTADO
+  ja meio falso.
+
+Os quatro consertos sao assercoes, nao mecanismo — o codigo de producao nao mudou por causa deles,
+com uma excecao de prosa. As guardas novas: `test_a_celula_e_funcao_do_PAI_e_sobrevive_a_retomada_e_ao_excedente`
+(uma sequencia de `(mixOperation, mixLevel)` sobre duas corridas contra o mesmo `--output`, com cinco
+pais a mais que a cota — a mesma assercao separa os tres casos),
+`test_o_nivel_vizinho_NAO_existe_nas_DUAS_pontas_da_curva`, duas assercoes sobre
+`MIX_GEOMETRIES["insercao"]` dentro do proprio pino que mediu a exclusao (o LUGAR e a preservacao
+integral do pai, que sao as duas propriedades que a medicao usa — o resto da redacao fica livre), e a
+cobertura de eco sobre TODAS as geometrias e TODAS as intencoes.
+
+**Quatro frases minhas cairam por serem falsas ou por narrarem a atividade.**
+
+1. **"~223 tokens de pai"**, no comentario de `MIX_GEOMETRIES`. Numero que medicao nenhuma do
+   repositorio produz: os marcos pinados sao 218 (primeiro cruzamento) e 232 (inicio da monotonia), e
+   em 224, 225, 226, 230 e 231 tokens o par fica ABAIXO de 0,82. Eu o copiei do ESTADO — e o ESTADO
+   tambem o carregava, contra o teste que pina 218/232. Corrigi os dois: **o codigo medido vence o
+   ESTADO**, e era o ESTADO que estava velho;
+2. **"`--from-pairs` reescreve os tres arquivos de pares na representacao canonica"**, na § 7. Falso:
+   o arquivo de pares e entrada so-leitura, e o que se reescreve e o `--output`. Um operador que
+   lesse a frase e rodasse o comando teria os pares byte a byte iguais e ZERO linha escrita — e teria
+   tomado a decisao de apagar material sobre uma promessa errada;
+3. a linha do `format:check` justificava o **recorte do commit** ("fica fora deste commit de
+   proposito", "o diff que a revisao tem de ler"). O ESTADO diz o que E: ficou a causa mecanica e a
+   consequencia, e a razao do recorte mora aqui;
+4. a § 4 apontava as travas por POSICAO ("as duas linhas acima"), e as duas linhas acima eram
+   `consume-holdout` e a razao da cota — a do nivel de gerador esta ABAIXO e ficava fora do conjunto.
+   Um operador que usasse a § 4 como checklist geraria a classe mista sem decidir o nivel de gerador,
+   que e a decisao que depois da primeira linha passa a mover o `evaluatorDigest`. Agora as travas
+   sao NOMEADAS.
+
+E duas docstrings de teste narravam a mudanca ("ABRIU", "hoje ela aceita", "tinha de entrar no MESMO
+commit", "a mudanca de estado desta unidade") — proibido no codigo pela regra de comentario, e
+legitimo aqui.
+
+**Bateria da segunda volta:** seis mutacoes novas (25-30), todas VERMELHAS no corpo nomeado, sha256
+restaurado identico (`.codex-reviews/bateria-pista-mista-4.log`; a 30 rodou isolada porque toca
+`artifact_gate.py`, que o chassi da bateria nao tinha no inventario de baseline). Total da unidade:
+**30 mutacoes, 29 vermelhas, uma declarada sem consequencia com a medicao ao lado.**
+
+**Dos 18 refutados, dois merecem registro porque a refutacao ensina:** uma lente alegou que gravar o
+nivel que sobreviveu produz celula SOBRE-preenchida e que a § 7 nomeia a causa errada — medido, a
+perda de banda nao cicatriza na retomada porque o pai descartado nao entra em `done`, e a frase fraca
+do ESTADO e a correta; outra alegou que trocar `== 3` por `== len(digests)` no pino dos digests virou
+tautologia — o verificador mostrou que o cenario alegado esta aberto no HEAD sem mutante nenhum e que
+o `== 3` nunca o fechou. Nos dois casos o remedio proposto era mais forte que o que se afere.
+
+**Medicoes de fechamento, revistas:** lab **737 testes / 742 subtests**; vitest 172 / 3.102 verde em
+rodada unica e quieta; `evaluatorDigest` inalterado; `docs:check` OK; tsc limpo; lint nos 12
+pre-existentes; `git ls-files --eol | grep w/crlf` vazio.

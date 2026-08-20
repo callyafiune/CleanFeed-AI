@@ -4846,14 +4846,19 @@ class GeneratorCaptureTests(unittest.TestCase):
 
         import make_mixed
 
-        # Three templates, three digests: the nudge retry sends a DIFFERENT prompt, so
-        # a row that was nudged came out of that one, and recording only the base
-        # template would pool rows produced by different recipes.
+        # One digest per name, over the WHOLE slate: identity IS the bytes of a prompt,
+        # so an alias — a second name pointing at a body that already has one — would
+        # make the island partition nominal while every count still looked right.
         digests = {
             name: make_mixed.mix_template_digest(name) for name in make_mixed.MIX_TEMPLATES
         }
-        self.assertEqual(len(set(digests.values())), 3, digests)
+        self.assertEqual(len(set(digests.values())), len(digests), digests)
 
+        # The LIVE case is an island identity, and it carries the cell with it: the name
+        # says which slot of which island produced the row, and `mixOperation`/`mixLevel`
+        # say what the run asked for. A row that recorded only the name could not be
+        # distinguished from one that had done some other geometry under it.
+        identidade = "mix-substituicao-ilha-00"
         buffer = io.StringIO()
         make_mixed.emit(
             buffer,
@@ -4866,12 +4871,16 @@ class GeneratorCaptureTests(unittest.TestCase):
             "uma frase reescrita. outra frase. terceira frase.",
             provider="antigravity",
             model="gemini-3.6-flash-low",
-            template_id="mix_change_less_v1",
+            template_id=identidade,
+            mix_operation="substituicao",
+            mix_level=50,
             harness_version="1.2.3",
         )
         row = json.loads(buffer.getvalue())
-        self.assertEqual(row["promptTemplateId"], "mix_change_less_v1")
-        self.assertEqual(row["promptTemplateDigest"], digests["mix_change_less_v1"])
+        self.assertEqual(row["promptTemplateId"], identidade)
+        self.assertEqual(row["promptTemplateDigest"], digests[identidade])
+        self.assertEqual(row["mixOperation"], "substituicao")
+        self.assertEqual(row["mixLevel"], 50)
         self.assertEqual(row["harnessVersion"], "1.2.3")
         # The PARENT's acquisition event travels on the pair row. Without it the pair is
         # unwritable: the axis admits only `known` on a mechanistic mixed row, and the
@@ -4943,6 +4952,8 @@ class GeneratorCaptureTests(unittest.TestCase):
                 provider="antigravity",
                 model="gemini-3.6-flash-low",
                 template_id="mix_edit_v1",
+                mix_operation=None,
+                mix_level=None,
                 harness_version="1.2.3",
             )
             record = json.loads(buffer.getvalue())
@@ -4985,6 +4996,8 @@ class GeneratorCaptureTests(unittest.TestCase):
             provider="antigravity",
             model="gemini-3.6-flash-low",
             template_id="mix_edit_v1",
+            mix_operation=None,
+            mix_level=None,
         )
         row = json.loads(buffer.getvalue())
         self.assertIsNone(row["harnessVersion"])
@@ -5036,32 +5049,69 @@ class GeneratorCaptureTests(unittest.TestCase):
             provider="antigravity",
             model="gemini-3.6-flash-low",
             template_id="mix_edit_v1",
+            mix_operation=None,
+            mix_level=None,
         )
         row = json.loads(buffer.getvalue())
         self.assertEqual(row["parentFamily"], "?")
         with self.assertRaises(MissingRecipe):
             mixed_record(row)
 
-    def test_the_mixing_template_has_no_default_a_caller_can_inherit(self) -> None:
+    def test_the_recipe_claims_have_no_default_a_caller_can_inherit(self) -> None:
         import io
 
         import make_mixed
 
-        # `template_id` carried `= "mix_edit_v1"` until this round. Unreachable from
-        # either production call site — both pass it explicitly — and therefore
-        # unreachable by every test too, which is exactly why it survived the commit
-        # whose subject line was removing the silent default. What a default costs is
-        # paid by the NEXT caller: a lane that does not know which template ran would
+        # `template_id` carried `= "mix_edit_v1"` until the round that removed it.
+        # Unreachable from either production call site — both pass it explicitly — and
+        # therefore unreachable by every test too, which is exactly why it survived the
+        # commit whose subject line was removing the silent default. What a default costs
+        # is paid by the NEXT caller: a lane that does not know which template ran would
         # publish `mix_edit_v1` plus its digest as an observation, and the row would be
         # written as v3 with a recipe nobody sent. The failure has to be at the call.
-        with self.assertRaises(TypeError):
-            make_mixed.emit(  # type: ignore[call-arg]
-                io.StringIO(),
-                {"id": "src_ptso_abc", "text": "uma frase. outra frase.", "family": "ptso_qa"},
-                "uma frase reescrita. outra frase.",
-                provider="antigravity",
-                model="gemini-3.6-flash-low",
-            )
+        #
+        # THREE claims now, and each is checked with the other two supplied, because a
+        # single call omitting all three is satisfied by any one of them still having a
+        # default. The message has to NAME the missing one: `mixOperation` inherited by
+        # default would stamp a geometry the text never had, which is the same class of
+        # falsehood as an inherited recipe.
+        completo = {
+            "template_id": "mix-substituicao-ilha-00",
+            "mix_operation": "substituicao",
+            "mix_level": 50,
+        }
+        for ausente in completo:
+            with self.subTest(ausente=ausente):
+                argumentos = {k: v for k, v in completo.items() if k != ausente}
+                with self.assertRaises(TypeError) as erro:
+                    make_mixed.emit(  # type: ignore[call-arg]
+                        io.StringIO(),
+                        {
+                            "id": "src_ptso_abc",
+                            "text": "uma frase. outra frase.",
+                            "family": "ptso_qa",
+                        },
+                        "uma frase reescrita. outra frase.",
+                        provider="antigravity",
+                        model="gemini-3.6-flash-low",
+                        **argumentos,
+                    )
+                self.assertIn(ausente, str(erro.exception))
+        # Nao vacuo: com os tres a chamada escreve.
+        destino = io.StringIO()
+        make_mixed.emit(
+            destino,
+            {
+                "id": "src_ptso_abc",
+                "text": "uma frase. outra frase.",
+                "family": "ptso_qa",
+            },
+            "uma frase reescrita. outra frase.",
+            provider="antigravity",
+            model="gemini-3.6-flash-low",
+            **completo,
+        )
+        self.assertEqual(json.loads(destino.getvalue())["mixLevel"], 50)
 
 
 class ReviewStateTests(unittest.TestCase):

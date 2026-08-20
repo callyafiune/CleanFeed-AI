@@ -263,6 +263,25 @@ def min_frac(registros: list[dict]) -> float:
     return min(tamanhos.values()) / len(registros)
 
 
+def pais_da_ilha(nome: str, quantos: int = 1) -> list[str]:
+    """Ids de pai que caem no bloco de sementes da ilha `nome`, na ordem em que aparecem.
+
+    A pista mista recusa pai de outra ilha, e o bucket e um `sha256` do id: um id escrito a
+    mao cai em ilha arbitraria, e o fixture ficaria VAZIO sem que a assercao dissesse por
+    que. Procurar aqui e o que torna a filtragem por ilha uma condicao medida do fixture em
+    vez de uma coincidencia.
+    """
+    achados: list[str] = []
+    for i in range(100_000):
+        cid = f"src_pai_{i:06d}"
+        dono = assemble_corpus.island_of_seed(assemble_corpus.ISLAND_PLAN, cid)
+        if dono["island"] == nome:
+            achados.append(cid)
+            if len(achados) == quantos:
+                return achados
+    raise AssertionError(f"nao achei {quantos} pais para {nome!r} em 100.000 ids")
+
+
 class ConectividadeSobAsChavesV4(unittest.TestCase):
     def test_a_uniao_e_exactamente_a_lista_v4(self):
         """Guarda de estado: o TEMPLATE esta DENTRO, a VERSAO e o par GROSSO estao fora.
@@ -1603,7 +1622,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         self.assertIn("nao e mapa e sim tuple", proc.stderr)
         self.assertIn("ilha_19", proc.stderr)
 
-    def test_a_pista_de_MISTURA_recusa_a_ilha_com_exit_2_e_a_razao_no_stderr(self):
+    def test_a_pista_de_MISTURA_recusa_no_PARSER_com_exit_2_e_a_razao_no_stderr(self):
         """A MESMA fronteira em `make_mixed.py`, medida no PROCESSO: codigo de saida e razao.
 
         O que este corpo mede, e so isso: `returncode == 2`, o candidato INEXISTENTE e as
@@ -1612,40 +1631,25 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         pista e o teste in-process ao lado, e os dois medem coisas diferentes: um prende o
         contrato de linha de comando, o outro prende a ORDEM.
 
-        A recusa e do PARSER e nao do modo, e o segundo caso mede isso passando `--from-pairs`:
-        `type=island_plan` roda antes de `main` despachar o modo, entao um modo acrescentado
-        depois nasce guardado. O primeiro caso mede a perna desta pista — os tres
-        `mixingTemplates` da ilha contra `MIX_TEMPLATES`, hoje de intersecao vazia —, e ela
-        nomeia a decisao de coleta que o operador tem de tomar.
+        A recusa e do PARSER e nao do modo, e o primeiro caso mede isso passando
+        `--from-pairs` sem `--island`: `type=island_plan` roda antes de `main` despachar o
+        modo, entao um modo acrescentado depois nasce guardado. O segundo mede a perna que
+        nomeia o plano — uma ilha que ele nao declara. Nenhum dos dois pode ser satisfeito pela
+        perna do slate, que com o slate de producao nao recusa ilha alguma.
+
+        A perna do SLATE e provada por outros dois corpos: o que MINGUA o slate in-process e o
+        que exige a igualdade das sessenta. Um subprocesso nao alcanca nenhum dos dois, porque
+        nao ha como lhe passar um slate.
         """
         import subprocess
         import tempfile
 
         script = Path(__file__).with_name("make_mixed.py")
-        ilha = assemble_corpus.ISLAND_PLAN[0]
         with tempfile.TemporaryDirectory() as raw:
             temporario = Path(raw)
             entrada = temporario / "entrada.jsonl"
             entrada.write_bytes(b"")
             saida = temporario / "mixed_candidates.jsonl"
-            gerando = subprocess.run(
-                [
-                    sys.executable,
-                    str(script),
-                    "--generate",
-                    "--island",
-                    ilha["island"],
-                    "--parents",
-                    str(entrada),
-                    "--output",
-                    str(saida),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            # O candidato nao foi criado — a unica condicao de "nada foi feito" ao alcance de
-            # um subprocesso.
-            self.assertFalse(saida.exists())
             de_pares = subprocess.run(
                 [
                     sys.executable,
@@ -1658,20 +1662,45 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
+            # O candidato nao foi criado — a unica condicao de "nada foi feito" ao alcance de
+            # um subprocesso.
             self.assertFalse(saida.exists())
-        self.assertEqual(gerando.returncode, 2, gerando.stderr)
-        self.assertIn("templates de mistura", gerando.stderr)
-        # As DUAS listas, porque a razao e a intersecao vazia entre elas: a que a ilha pede e a
-        # que este arquivo serve.
-        self.assertIn(ilha["mixingTemplates"]["substituicao"], gerando.stderr)
-        self.assertIn("mix_edit_v1", gerando.stderr)
-        self.assertIn("depois de a cota estar gasta", gerando.stderr)
+            fora_do_plano = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--generate",
+                    "--island",
+                    "ilha_99",
+                    "--parents",
+                    str(entrada),
+                    "--output",
+                    str(saida),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertFalse(saida.exists())
         # O modo que nao gasta cota nenhuma tambem para, e por falta da flag: a exigencia esta
         # no parser, nao no modo.
         self.assertEqual(de_pares.returncode, 2, de_pares.stderr)
         self.assertIn("--island", de_pares.stderr)
-        # E a intersecao vazia vale para as SESSENTA identidades do plano, nao so para a ilha
-        # do subprocesso: e o que sustenta "recusa hoje" como quantificador em vez de anedota.
+        self.assertEqual(fora_do_plano.returncode, 2, fora_do_plano.stderr)
+        self.assertNotIn("Traceback", fora_do_plano.stderr)
+        self.assertIn("nao esta no plano", fora_do_plano.stderr)
+        self.assertIn("ilha_00", fora_do_plano.stderr)
+
+    def test_o_slate_de_MISTURA_serve_as_SESSENTA_e_a_recusa_alcanca_o_que_falta(self):
+        """As sessenta identidades do plano SAO as que declaram operacao no slate desta pista.
+
+        Igualdade de conjuntos e nao contagem: qualquer lista de sessenta nomes satisfaria uma
+        contagem, e um nome de fora do plano satisfaria as duas se so a inclusao fosse aferida.
+
+        A segunda metade e o que impede a igualdade de passar por vacuidade: com UM nome
+        retirado do slate, `island_plan` recusa e NOMEIA o que falta.
+        """
+        import argparse
+
         import make_mixed
 
         do_plano = {
@@ -1683,7 +1712,31 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             len(do_plano),
             len(assemble_corpus.MIX_OPERATIONS) * len(assemble_corpus.ISLAND_PLAN),
         )
-        self.assertEqual(do_plano & set(make_mixed.MIX_TEMPLATES), set())
+        com_operacao = {
+            nome
+            for nome, spec in make_mixed.MIX_TEMPLATES.items()
+            if spec["operation"] is not None
+        }
+        self.assertEqual(com_operacao, do_plano)
+        # E a ilha passa o parser: sem esta assercao a igualdade acima ficaria satisfeita
+        # por um slate que a quinta perna recusasse por outra razao.
+        self.assertEqual(
+            make_mixed.island_plan("ilha_00")["island"],
+            assemble_corpus.ISLAND_PLAN[0]["island"],
+        )
+        # A recusa continua tendo entrada que a alcanca, e a razao nomeia o que falta.
+        faltante = assemble_corpus.ISLAND_PLAN[0]["mixingTemplates"]["insercao"]
+        curto = {
+            nome: spec
+            for nome, spec in make_mixed.MIX_TEMPLATES.items()
+            if nome != faltante
+        }
+        with mock.patch.object(make_mixed, "MIX_TEMPLATES", curto):
+            with self.assertRaises(argparse.ArgumentTypeError) as recusa:
+                make_mixed.island_plan("ilha_00")
+        self.assertIn("os que faltam sao", str(recusa.exception))
+        self.assertIn(faltante, str(recusa.exception))
+        self.assertIn("depois de a cota estar gasta", str(recusa.exception))
 
     def test_a_pista_de_MISTURA_recusa_a_ilha_SEM_tocar_o_provedor(self):
         """O "ANTES de gastar" desta pista, que nao cabe num subprocesso.
@@ -1703,8 +1756,9 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
 
         Os DOIS modos, porque a exigencia e do parser e nao do modo, e cada um com a SUA razao
         no stderr para o exit 2 nao ser lido como recusa por qualquer motivo: `--generate`
-        recusa pela perna dos tres `mixingTemplates`, `--from-pairs` por `--island` ausente, e
-        nenhum dos dois pode ter tocado o provedor para descobrir isso.
+        recusa pela perna dos tres `mixingTemplates` — com o slate MINGUADO, porque a perna so
+        morde quando falta algum —, `--from-pairs` por `--island` ausente, e nenhum dos dois
+        pode ter tocado o provedor para descobrir isso.
         """
         import contextlib
         import io
@@ -1720,6 +1774,14 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         self.assertFalse(hasattr(make_mixed, "call_with_retries"))
 
         ilha = assemble_corpus.ISLAND_PLAN[0]
+        # O slate MINGUADO: sem o slot de `insercao` desta ilha a quinta perna morde, e e ela
+        # que este caso mede. Com o slate de producao a corrida passa o parser e morre adiante,
+        # por falta de chave — o que provaria outra coisa.
+        minguado = {
+            nome: spec
+            for nome, spec in make_mixed.MIX_TEMPLATES.items()
+            if nome != ilha["mixingTemplates"]["insercao"]
+        }
         with tempfile.TemporaryDirectory() as raw:
             temporario = Path(raw)
             entrada = temporario / "entrada.jsonl"
@@ -1745,14 +1807,15 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                     saida = temporario / f"candidatos{modo}.jsonl"
                     argv = ["make_mixed.py", *flags, "--output", str(saida)]
                     erro_padrao = io.StringIO()
-                    with mock.patch.object(generate_ai, "call_provider") as chamada:
-                        with mock.patch.object(
-                            generate_ai, "call_with_retries"
-                        ) as escada:
-                            with mock.patch.object(sys, "argv", argv):
-                                with contextlib.redirect_stderr(erro_padrao):
-                                    with self.assertRaises(SystemExit) as saiu:
-                                        make_mixed.main()
+                    with mock.patch.object(make_mixed, "MIX_TEMPLATES", minguado):
+                        with mock.patch.object(generate_ai, "call_provider") as chamada:
+                            with mock.patch.object(
+                                generate_ai, "call_with_retries"
+                            ) as escada:
+                                with mock.patch.object(sys, "argv", argv):
+                                    with contextlib.redirect_stderr(erro_padrao):
+                                        with self.assertRaises(SystemExit) as saiu:
+                                            make_mixed.main()
                     mensagem = erro_padrao.getvalue()
                     self.assertEqual(saiu.exception.code, 2, mensagem)
                     self.assertIn(razao, mensagem)
@@ -1760,19 +1823,19 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                     chamada.assert_not_called()
                     escada.assert_not_called()
 
-    def test_a_linha_que_a_pista_de_MISTURA_escreve_NAO_carrega_a_ilha(self):
-        """A fronteira do que a guarda compra: recusa antes de gastar, e nada sobre a linha.
+    def test_a_linha_que_a_pista_de_MISTURA_escreve_CARREGA_a_celula_e_nao_a_ilha(self):
+        """O que a linha carrega depois de a porta abrir, e o que ela continua a nao carregar.
 
-        A ilha que o parser devolve nao e lida em ponto algum de `main`, entao `emit` estampa
-        `promptTemplateId` de `MIX_TEMPLATES` e a identidade de mistura da ilha nao alcanca
-        linha alguma. Aqui isso e MEDIDO e nao lido: crescer o slate ate cumprir o plano e o
-        que faz esta pista escrever — o slate de hoje recusa toda ilha do plano no parser —, e
-        sob ele os DOIS modos emitem sem que o nome da ilha ou os seus tres `mixingTemplates`
-        aparecam nos bytes da linha.
+        A ilha que o parser devolve E lida por `main`: o laco tira dela a identidade de
+        mistura da celula, entao a linha carrega `mix-<operacao>-ilha-NN` com `mixOperation` e
+        `mixLevel` ao lado. As tres coisas juntas sao o que impede a alegacao falsa: uma
+        identidade de slot sem a operacao seria um nome sobre um edit generico, e a operacao
+        sem a identidade nao pertenceria a ilha alguma.
 
-        O que este corpo prende e a promessa que a prosa NAO faz: fiar a ilha no `emit` — um
-        campo novo no registro, sem mover nenhum dos que ja estao la — torna este teste
-        vermelho nos dois modos.
+        O que a linha NAO carrega e o NOME da ilha, e isso continua a ser uma medicao: a
+        pertenca de ilha e reconstruida do bloco de semente do pai (`island_of_seed`), que e
+        funcao do id sozinho, entao um campo com o nome seria uma segunda copia capaz de
+        divergir dela.
         """
         import contextlib
         import io
@@ -1782,32 +1845,19 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         import make_mixed
 
         ilha = assemble_corpus.ISLAND_PLAN[0]
-        identidades = (ilha["island"], *ilha["mixingTemplates"].values())
-        crescido = {
-            **make_mixed.MIX_TEMPLATES,
-            **{
-                nome: (lambda nome=nome: f"reescreva ({nome}):\n{{parent}}")
-                for nome in ilha["mixingTemplates"].values()
-            },
-        }
+        celula = assemble_corpus.mix_cell_allocation(ilha["lines"]["mixed"])[0]
+        operacao, nivel = celula
+        esperada = ilha["mixingTemplates"][operacao]
+        (pai_id,) = pais_da_ilha(ilha["island"])
         pai = " ".join(f"palavra{i:02d}" for i in range(60))
         editado = " ".join(
             (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
         )
         # O fixture se confere: fora da faixa mista os dois modos descartam em vez de emitir, e
-        # as assercoes de ausencia ficariam vacuamente verdes.
+        # as assercoes ficariam vacuamente verdes sobre uma lista vazia.
         self.assertTrue(
             make_mixed.in_mixed_band(make_mixed.compute_mixture(pai, editado))
         )
-
-        def sem_identidade_de_ilha(saida: Path) -> None:
-            bruto = saida.read_bytes().decode("utf-8").strip()
-            self.assertEqual(bruto.count("\n"), 0, bruto)
-            # A linha CARREGA uma identidade de template, que e o que torna a ausencia da ilha
-            # uma medicao e nao o silencio de um arquivo vazio.
-            self.assertEqual(json.loads(bruto)["promptTemplateId"], "mix_edit_v1")
-            for nome in identidades:
-                self.assertNotIn(nome, bruto)
 
         with tempfile.TemporaryDirectory() as raw:
             temporario = Path(raw)
@@ -1815,7 +1865,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             pares.write_bytes(
                 json.dumps(
                     {
-                        "parentId": "pai-01",
+                        "parentId": pai_id,
                         "parentText": pai,
                         "editedText": editado,
                         "promptTemplateId": "mix_edit_v1",
@@ -1830,7 +1880,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             pais.write_bytes(
                 json.dumps(
                     {
-                        "id": "pai-01",
+                        "id": pai_id,
                         "text": pai,
                         "label": 0,
                         "family": "wikipedia",
@@ -1842,10 +1892,17 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             )
             de_pares = temporario / "de_pares.jsonl"
             gerada = temporario / "gerada.jsonl"
+            # O modo `--from-pairs` importa o que OUTRA pista escreveu: o par nao declara
+            # celula, entao a linha grava a ausencia em vez de supor uma geometria.
             modos = {
                 "--from-pairs": (
                     ["--from-pairs", str(pares)],
                     de_pares,
+                    {
+                        "promptTemplateId": "mix_edit_v1",
+                        "mixOperation": None,
+                        "mixLevel": None,
+                    },
                 ),
                 "--generate": (
                     [
@@ -1858,9 +1915,14 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                         "0",
                     ],
                     gerada,
+                    {
+                        "promptTemplateId": esperada,
+                        "mixOperation": operacao,
+                        "mixLevel": nivel,
+                    },
                 ),
             }
-            for modo, (flags, saida) in modos.items():
+            for modo, (flags, saida, campos) in modos.items():
                 with self.subTest(modo=modo):
                     argv = [
                         "make_mixed.py",
@@ -1875,24 +1937,42 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                     registrado = io.TextIOWrapper(
                         io.BytesIO(), encoding="utf-8", newline="\n"
                     )
-                    with mock.patch.object(make_mixed, "MIX_TEMPLATES", crescido):
-                        with mock.patch.object(
-                            generate_ai, "call_with_retries", return_value=editado
+                    with mock.patch.object(
+                        generate_ai, "call_with_retries", return_value=editado
+                    ):
+                        with mock.patch.dict(
+                            os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
                         ):
-                            with mock.patch.dict(
-                                os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
-                            ):
-                                with mock.patch.object(sys, "argv", argv):
-                                    with contextlib.redirect_stdout(registrado):
-                                        make_mixed.main()
-                    sem_identidade_de_ilha(saida)
+                            with mock.patch.object(sys, "argv", argv):
+                                with contextlib.redirect_stdout(registrado):
+                                    make_mixed.main()
+                    bruto = saida.read_bytes().decode("utf-8").strip()
+                    self.assertEqual(bruto.count("\n"), 0, bruto)
+                    linha_escrita = json.loads(bruto)
+                    for campo, valor in campos.items():
+                        self.assertEqual(linha_escrita[campo], valor)
+                    # O NOME da ilha nao e campo da linha, em modo algum.
+                    self.assertNotIn(ilha["island"], bruto)
+                    # E as identidades dos OUTROS slots nao aparecem: a linha nomeia UMA
+                    # operacao, nao as tres que a ilha reserva.
+                    for outra, nome in ilha["mixingTemplates"].items():
+                        if nome != linha_escrita["promptTemplateId"]:
+                            with self.subTest(outra=outra):
+                                self.assertNotIn(nome, bruto)
 
-    def _pista_mista_in_process(self, editado_cru, pares_extra=(), pai_cru=None):
+    def _pista_mista_in_process(
+        self, editado_cru, pares_extra=(), pai_cru=None, respostas=None
+    ):
         """Roda os dois modos de `make_mixed.main()` e devolve as linhas escritas por modo.
 
-        O MESMO chassi do caso acima — slate crescido para a ilha passar no parser, provedor
-        mockado, `GEMINI_API_KEY` falsa, `sys.argv` falsificado —, extraido porque agora dois
-        casos o usam e uma segunda copia dele divergiria sem nada reprovar.
+        O chassi partilhado: provedor mockado, `GEMINI_API_KEY` falsa, `sys.argv`
+        falsificado. O slate NAO e mais mockado — ele serve as sessenta identidades do plano,
+        entao a ilha passa o parser com o slate de producao, e mockar aqui esconderia a
+        composicao real do prompt.
+
+        `respostas`, quando dado, e a sequencia de respostas do provedor, uma por chamada: e
+        assim que um caso exercita o nudge, que precisa de uma primeira resposta fora de banda
+        e de uma segunda dentro.
         """
         import contextlib
         import io
@@ -1903,13 +1983,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         import make_mixed
 
         ilha = assemble_corpus.ISLAND_PLAN[0]
-        crescido = {
-            **make_mixed.MIX_TEMPLATES,
-            **{
-                nome: (lambda nome=nome: f"reescreva ({nome}):\n{{parent}}")
-                for nome in ilha["mixingTemplates"].values()
-            },
-        }
+        (pai_id,) = pais_da_ilha(ilha["island"])
         pai = pai_cru or " ".join(f"palavra{i:02d}" for i in range(60))
         escritas: dict[str, list[dict]] = {}
         enviados: list[str] = []
@@ -1918,7 +1992,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             pares = temporario / "pares.jsonl"
             linhas_de_par = [
                 {
-                    "parentId": "src_pai_0001",
+                    "parentId": pai_id,
                     "parentText": pai,
                     "editedText": editado_cru,
                     "family": "gemini-3.5-flash-lite",
@@ -1937,7 +2011,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             pais.write_bytes(
                 _json.dumps(
                     {
-                        "id": "src_pai_0001",
+                        "id": pai_id,
                         "text": pai,
                         "label": 0,
                         "family": "gemini-3.5-flash-lite",
@@ -1964,28 +2038,30 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                     str(saida),
                 ]
                 registrado = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", newline="\n")
-                with mock.patch.object(make_mixed, "MIX_TEMPLATES", crescido):
-                    with mock.patch.object(
-                        generate_ai,
-                        "call_with_retries",
-                        # `call_with_retries(transport, *args)`: o primeiro argumento e a
-                        # funcao de transporte, e o prompt vem depois dela. Guardo TODO argumento
-                        # de texto em vez de assumir a posicao, que e o erro que a primeira
-                        # versao desta captura cometeu.
-                        side_effect=lambda *a, **k: (
-                            enviados.extend(x for x in a if isinstance(x, str)),
-                            editado_cru,
-                        )[1],
+                fila = list(respostas) if respostas is not None else None
+
+                def provedor(*a, **k):
+                    # `call_with_retries(transport, *args)`: o primeiro argumento e a
+                    # funcao de transporte, e o prompt vem depois dela. Guardo TODO argumento
+                    # de texto em vez de assumir a posicao, que e o erro que a primeira
+                    # versao desta captura cometeu.
+                    enviados.extend(x for x in a if isinstance(x, str))
+                    if fila is None:
+                        return editado_cru
+                    return fila.pop(0) if fila else editado_cru
+
+                with mock.patch.object(
+                    generate_ai, "call_with_retries", side_effect=provedor
+                ):
+                    with mock.patch.dict(
+                        os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
                     ):
-                        with mock.patch.dict(
-                            os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
-                        ):
-                            with mock.patch.object(sys, "argv", argv):
-                                with contextlib.redirect_stdout(registrado):
-                                    make_mixed.main()
+                        with mock.patch.object(sys, "argv", argv):
+                            with contextlib.redirect_stdout(registrado):
+                                make_mixed.main()
                 escritas[modo] = [
                     _json.loads(l)
-                    for l in saida.read_text(encoding="utf-8").splitlines()
+                    for l in saida.read_bytes().decode("utf-8").splitlines()
                     if l.strip()
                 ]
         return pai, escritas, enviados
@@ -2076,11 +2152,16 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         outro = "  ".join(palavras)
         self.assertNotEqual(um, outro)
 
+        # O segundo par vem de OUTRA ilha de proposito: `--from-pairs` importa o que outra
+        # pista escreveu e nao filtra por bloco de semente, e a colisao e sobre o TEXTO.
+        primeiro, segundo = pais_da_ilha(
+            assemble_corpus.ISLAND_PLAN[0]["island"]
+        )[0], pais_da_ilha(assemble_corpus.ISLAND_PLAN[1]["island"])[0]
         _pai, escritas, _enviados = self._pista_mista_in_process(
             um,
             pares_extra=(
                 {
-                    "parentId": "src_pai_0002",
+                    "parentId": segundo,
                     "parentText": " ".join(f"palavra{i:02d}" for i in range(60)),
                     "editedText": outro,
                     "family": "gemini-3.5-flash-lite",
@@ -2093,7 +2174,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         self.assertEqual(len(linhas), 2)
         self.assertEqual(linhas[0]["text"], linhas[1]["text"])
         guardadas = assemble_corpus.dedup(linhas, lambda r: r["text"], set())
-        self.assertEqual([r["parentId"] for r in guardadas], ["src_pai_0001"])
+        self.assertEqual([r["parentId"] for r in guardadas], [primeiro])
 
     def test_emit_RECUSA_cadeia_crua_em_vez_de_confiar_no_chamador(self):
         """A invariante de `emit` e conferida NELE, e este caso e o unico adversario dela.
@@ -2130,6 +2211,8 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                         provider="gemini",
                         model="gemini-3.5-flash-lite",
                         template_id="mix_edit_v1",
+                        mix_operation=None,
+                        mix_level=None,
                     )
                 self.assertIn(papel, str(ctx.exception))
                 self.assertIn("forma canonica", str(ctx.exception))
@@ -2147,6 +2230,8 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             provider="gemini",
             model="gemini-3.5-flash-lite",
             template_id="mix_edit_v1",
+            mix_operation=None,
+            mix_level=None,
         )
         self.assertEqual(_json.loads(destino.getvalue())["text"], editado)
 
@@ -2660,7 +2745,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         self.assertIn("seats 1000 line(s)", str(erro.exception))
         self.assertIn("test block holds 800", str(erro.exception))
 
-    def test_o_piso_de_TEMPLATES_de_um_plano_conforme_e_15_e_o_slate_declara_4(self):
+    def test_o_piso_de_TEMPLATES_de_um_plano_conforme_e_15_e_o_slate_serve_os_40(self):
         """O preco em TEMPLATES, que e o que o operador paga, medido nas duas pontas.
 
         O piso de 15 nao e gosto: um plano de 14 ilhas UNIFORMES e recusado pelo preflight
@@ -2668,9 +2753,10 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         particao exige identidade de template em UMA ilha so, entao N ilhas pedem N templates
         DISTINTOS no minimo — logo 15 e o piso de templates de qualquer plano conforme.
 
-        `ISLAND_PLAN` declara 20 ilhas de dois templates e pede 40; `RECIPES` declara quatro
-        nomes. Por isso `island_plan` recusa TODA ilha hoje, e essa recusa e a guarda a
-        funcionar antes da cota — nao um defeito.
+        `ISLAND_PLAN` declara 20 ilhas de dois templates e pede 40, e `RECIPES` serve
+        exactamente esses 40 nomes. A recusa continua a ter entrada que a alcanca — a segunda
+        metade deste corpo retira UM nome —, e sem ela a igualdade passaria tambem se a guarda
+        nunca recusasse nada.
         """
         import argparse
 
@@ -3285,12 +3371,15 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
     def test_a_celula_EXCLUIDA_e_alcancavel_SO_em_pai_curto_e_por_isso_sai(self):
         """A razao de `MIX_CELL_EXCLUDED`, medida com as funcoes de PRODUCAO de `near_dupes`.
 
-        A GEOMETRIA E SUPOSICAO DESTE PINO e nao contrato de pista alguma: a operacao de
-        insercao nao existe em codigo, entao o que se mede aqui e um MODELO dela — uma secao
-        CONTIGUA no meio do pai, com tokens todos distintos. Medido na variante que ANEXA a
-        secao ao fim: 0,8421 em 100 tokens e 0,8494 em 1200, os dois ACIMA do limite, entao
-        nessa geometria a celula nao tem os dois lados e a razao "proxy de comprimento" muda de
-        forma. O numero fica relatado; a decisao nao se reescreve por ele.
+        O modelo aqui e uma secao CONTIGUA no meio do pai, com tokens todos distintos, e as
+        duas propriedades que ele usa sao AFERIDAS contra a geometria que a pista pede —
+        `MIX_GEOMETRIES["insercao"]` —, porque e essa prosa que decide o que o provedor faz. Sem
+        as duas assercoes a prosa fica livre: medido, mudar o enxerto para o FIM do texto deixa
+        a suite inteira verde, e nessa geometria o par mede 0,8421 em 100 tokens e 0,8494 em
+        1200 — os dois ACIMA do limite —, entao a celula deixa de ter os dois lados e a razao
+        "proxy de comprimento" que sustenta a exclusao dissolve-se sem nada acusar. As duas
+        assercoes sao a mais fraca coisa que separa os dois casos: o LUGAR do enxerto e a
+        preservacao INTEGRAL do pai. O resto da redacao continua livre.
 
         Inserir uma secao que leve o documento ao nivel mais baixo preserva o pai INTEIRO, e o
         par pai/mista fica perto do limite de poda — de que lado depende do COMPRIMENTO do pai.
@@ -3307,7 +3396,19 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         LISTA de tokens — passar a string junta mede 5-gramas de CARACTERE, que e outra
         quantidade, e foi o erro que produziu os numeros que este pino corrige.
         """
+        import make_mixed
         import near_dupes
+
+        # As duas propriedades do modelo, aferidas contra a geometria que a pista pede: o
+        # enxerto entra NO MEIO e o pai fica INTEIRO. Mudar qualquer uma obriga a rederivar
+        # esta medicao, e com ela a exclusao de `(insercao, 15)`.
+        geometria = make_mixed.MIX_GEOMETRIES["insercao"]
+        self.assertIn("no meio do texto", geometria)
+        self.assertIn("sem remover nada", geometria)
+        self.assertIn(
+            ("insercao", min(assemble_corpus.MIX_LEVELS)),
+            assemble_corpus.MIX_CELL_EXCLUDED,
+        )
 
         def par(fracao: float, tokens: int, no_fim: bool = False) -> float:
             pai = [f"p{i}" for i in range(tokens)]
@@ -3470,6 +3571,813 @@ class ABandaMistaEDerivadaDosNiveis(unittest.TestCase):
         for fracao in (0.04, 0.05, 0.14, 0.55, 0.70, 1.0):
             with self.subTest(fracao=fracao):
                 self.assertIsNone(make_mixed.mixed_level_of({"aiFraction": fracao}))
+
+SENTINELA_DO_PROMPT = "=== TEXTO ==="
+
+
+def prompts_de(enviados: list[str]) -> list[str]:
+    """Os prompts entre os argumentos de texto que o funil do provedor recebeu.
+
+    `call_with_retries` recebe tambem o nome da lane e o do modelo, entao contar argumentos
+    contaria tres por chamada. A sentinela e a marca do corpo do prompt, e quem usa esta
+    funcao afirma que a lista nao esta vazia — sem isso, um dia em que a composicao deixasse
+    de a conter tornaria toda assercao sobre prompts vacuamente verde.
+    """
+    return [x for x in enviados if SENTINELA_DO_PROMPT in x]
+
+
+class APistaMistaRealizaAsTresOperacoes(unittest.TestCase):
+    """O slate de sessenta, o laco por CELULA e a celula gravada na linha.
+
+    As tres coisas entram juntas porque cada uma sozinha e um dano: as sessenta identidades
+    sem o laco abrem a porta pre-cota com o escritor incapaz de dizer que operacao a linha
+    realizou; o laco sem as identidades estoura no `KeyError` do slate; e a celula nao gravada
+    deixa a curva sem chave, porque chavear pela fracao obtida daria uma chave por linha.
+    """
+
+    def _gerar(
+        self,
+        *,
+        ilha=None,
+        pais=None,
+        respostas=None,
+        target=100,
+        nudge_retries=1,
+        texto_do_pai=None,
+        passos=None,
+    ):
+        """Roda `make_mixed.main() --generate` in-process; devolve (linhas, prompts).
+
+        `pais` sao os ids na ordem em que entram no arquivo, e essa ordem E a que decide a
+        celula: com uma familia so, `interleave_by_family` preserva a ordem do arquivo, entao
+        o pai da posicao `i` recebe `mix_cell_allocation(...)[i]`.
+
+        `passos` e uma lista de `--target`, uma corrida por elemento, TODAS contra o mesmo
+        `--output`: e o unico jeito de a segunda corrida ver `already_done` povoado, que e o
+        estado em que a estabilidade de celula sob retomada se mede.
+        """
+        import contextlib
+        import io
+        import tempfile
+
+        import generate_ai
+        import make_mixed
+
+        ilha = ilha or assemble_corpus.ISLAND_PLAN[0]
+        pais = pais or pais_da_ilha(ilha["island"], ilha["lines"]["mixed"])
+        texto = texto_do_pai or " ".join(f"palavra{i:02d}" for i in range(60))
+        enviados: list[str] = []
+        with tempfile.TemporaryDirectory() as bruto:
+            temporario = Path(bruto)
+            arquivo = temporario / "pais.jsonl"
+            arquivo.write_bytes(
+                b"".join(
+                    json.dumps(
+                        {
+                            "id": pai_id,
+                            "text": texto,
+                            "label": 0,
+                            "family": "ptwiki_lead",
+                            "sourceMaterialBatch": "smb_ptwiki_20220301",
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    + b"\n"
+                    for pai_id in pais
+                )
+            )
+            saida = temporario / "gerada.jsonl"
+            fila = list(respostas) if respostas is not None else None
+            padrao = " ".join(
+                (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
+            )
+
+            def provedor(*a, **k):
+                enviados.extend(x for x in a if isinstance(x, str))
+                if fila is None:
+                    return padrao
+                return fila.pop(0) if fila else padrao
+
+            for alvo in passos or [target]:
+                argv = [
+                    "make_mixed.py",
+                    "--generate",
+                    "--island",
+                    ilha["island"],
+                    "--parents",
+                    str(arquivo),
+                    "--output",
+                    str(saida),
+                    "--target",
+                    str(alvo),
+                    "--sleep",
+                    "0",
+                    "--nudge-retries",
+                    str(nudge_retries),
+                ]
+                registrado = io.TextIOWrapper(
+                    io.BytesIO(), encoding="utf-8", newline="\n"
+                )
+                with mock.patch.object(
+                    generate_ai, "call_with_retries", side_effect=provedor
+                ):
+                    with mock.patch.dict(
+                        os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
+                    ):
+                        with mock.patch.object(sys, "argv", argv):
+                            with contextlib.redirect_stdout(registrado):
+                                make_mixed.main()
+            linhas = [
+                json.loads(l)
+                for l in saida.read_bytes().decode("utf-8").splitlines()
+                if l.strip()
+            ]
+        return linhas, prompts_de(enviados)
+
+    def test_o_slate_misto_compoe_as_TRES_coordenadas_e_os_digestos_sao_DISTINTOS(self):
+        """Identidade E o digest dos bytes, entao a composicao tem de separar as sessenta.
+
+        Sessenta nomes sobre corpos repetidos satisfariam a conferencia do plano por NOME e
+        mentiriam. A assercao e a bijecao nome -> digesto sobre o slate INTEIRO, e ela morre
+        se qualquer uma das tres coordenadas sair da composicao: sem a operacao os tres slots
+        de uma ilha colidem, e sem a intencao ou o registro colidem as vinte ilhas.
+        """
+        import make_mixed
+
+        por_digesto: dict[str, list[str]] = {}
+        for nome in make_mixed.MIX_TEMPLATES:
+            por_digesto.setdefault(make_mixed.mix_template_digest(nome), []).append(nome)
+        repetidos = {d[:16]: n for d, n in por_digesto.items() if len(n) > 1}
+        self.assertEqual(repetidos, {})
+        self.assertEqual(len(por_digesto), len(make_mixed.MIX_TEMPLATES))
+        # E as tres coordenadas estao DECLARADAS na receita, porque quem decide le o campo:
+        # recuperar a operacao partindo o nome faria do nome um esquema.
+        for nome, spec in make_mixed.MIX_TEMPLATES.items():
+            with self.subTest(nome=nome):
+                if spec["operation"] is None:
+                    self.assertIsNone(spec["intent"])
+                    self.assertIsNone(spec["register"])
+                    continue
+                self.assertIn(spec["operation"], assemble_corpus.MIX_OPERATIONS)
+                self.assertIn(spec["intent"], make_mixed.MIX_INTENTS)
+                self.assertIn(spec["register"], make_mixed.MIX_REGISTERS)
+                # A prosa das tres coordenadas esta no corpo, e nao so nos campos.
+                corpo = spec["template"]
+                self.assertIn(make_mixed.MIX_INTENTS[spec["intent"]], corpo)
+                self.assertIn(make_mixed.MIX_REGISTERS[spec["register"]], corpo)
+                self.assertIn(
+                    make_mixed.MIX_GEOMETRIES[spec["operation"]].split("{nivel}")[0],
+                    corpo,
+                )
+
+    def test_o_vocabulario_de_GEOMETRIA_espelha_o_do_plano(self):
+        """As chaves de `MIX_GEOMETRIES` SAO `MIX_OPERATIONS`, e a ordem tambem.
+
+        O espelho existe porque ler o plano no topo deste arquivo obrigaria
+        `make_mixed_agy.py` e `make_mixed_codex.py` a arrastar `artifact_gate` ->
+        `generate_ai` so para compor um prompt. Uma operacao acrescentada ao plano sem
+        geometria aqui deixaria o slate sem o slot dela, e a igualdade e o que faz isso ficar
+        vermelho neste arquivo em vez de silencioso na composicao.
+        """
+        import make_mixed
+
+        self.assertEqual(
+            tuple(make_mixed.MIX_GEOMETRIES), assemble_corpus.MIX_OPERATIONS
+        )
+        self.assertEqual(
+            make_mixed._MIX_SLATE_ISLAND_COUNT, len(assemble_corpus.ISLAND_PLAN)
+        )
+
+    def test_a_atribuicao_de_ilha_a_INTENCAO_e_REGISTRO_e_uma_bijecao_de_vinte(self):
+        """Quatro intencoes por cinco registros dao as vinte ilhas, uma coordenada cada.
+
+        Duas ilhas com a mesma coordenada teriam, por operacao, templates de BYTES identicos
+        — e a particao de ilha viraria nominal sem que contagem alguma se movesse. A cobertura
+        e a outra metade: as vinte coordenadas possiveis sao todas usadas.
+        """
+        import make_mixed
+
+        pares = [
+            make_mixed._mix_pair(i)
+            for i in range(make_mixed._MIX_SLATE_ISLAND_COUNT)
+        ]
+        self.assertEqual(len(set(pares)), len(pares))
+        todas = {
+            (intencao, registro)
+            for intencao in make_mixed.MIX_INTENTS
+            for registro in make_mixed.MIX_REGISTERS
+        }
+        self.assertEqual(set(pares), todas)
+        self.assertEqual(len(todas), 20)
+        # A aritmetica CONGELADA recusa em vez de estourar num IndexError: quem crescer o
+        # plano descobre aqui que tem uma decisao a tomar sobre as listas.
+        with mock.patch.object(make_mixed, "_MIX_SLATE_ISLAND_COUNT", 25):
+            with self.assertRaises(make_mixed.MixSlateArithmetic) as erro:
+                make_mixed._mix_pair(0)
+        self.assertIn("20 coordenadas", str(erro.exception))
+
+    def test_o_NIVEL_e_parametro_preenchido_e_NAO_move_o_digesto(self):
+        """A § 3.3 declara o nivel como parametro que nao move o digesto; aqui isso e medido.
+
+        E o que faz D7 ser aplicacao de politica e nao politica nova: o nudge reexecuta o
+        MESMO template noutro nivel, e o cluster de `promptTemplate` continua a ser um por
+        operacao. As duas metades sao necessarias — o digesto CONSTANTE e o prompt VARIAVEL —,
+        porque um template que ignorasse o nivel teria digesto constante tambem.
+        """
+        import make_mixed
+
+        nome = "mix-substituicao-ilha-00"
+        digesto = make_mixed.mix_template_digest(nome)
+        corpo = make_mixed.MIX_TEMPLATES[nome]["template"]
+        rendidos = {
+            nivel: corpo.format(parent="PAI", nivel=nivel)
+            for nivel in assemble_corpus.MIX_LEVELS
+        }
+        self.assertEqual(len(set(rendidos.values())), len(assemble_corpus.MIX_LEVELS))
+        for nivel, texto in rendidos.items():
+            with self.subTest(nivel=nivel):
+                self.assertIn(f"aproximadamente {nivel} %", texto)
+                self.assertEqual(make_mixed.mix_template_digest(nome), digesto)
+
+    def test_o_digesto_de_uma_identidade_MISTA_nao_move_com_o_slate_de_GERACAO(self):
+        """D6 bis, medido: as duas autoridades sao independentes.
+
+        Derivar os registros do slate de geracao faria o mesmo `promptTemplateId` adquirir
+        outro digesto quando a atribuicao de la mudasse, e uma linha JA persistida guardaria o
+        digesto antigo sob o mesmo id — dano permanente e invisivel, porque o resume nao
+        reescreve linha escrita. A prova reconstroi o slate misto com o de geracao TROCADO e
+        exige digesto identico; as cinco frases duplicadas sao o preco disso.
+        """
+        import generate_ai
+        import make_mixed
+
+        antes = {
+            nome: make_mixed.mix_template_digest(nome)
+            for nome, spec in make_mixed.MIX_TEMPLATES.items()
+            if spec["operation"] is not None
+        }
+        outros_registros = {
+            nome: f"Use registro {nome}: OUTRA FRASE INTEIRAMENTE."
+            for nome in generate_ai.GENERATION_REGISTERS
+        }
+        outras_tarefas = {
+            nome: f"Faca OUTRA COISA com {{words}} palavras ({nome})."
+            for nome in generate_ai.GENERATION_TASKS
+        }
+        with mock.patch.object(
+            generate_ai, "GENERATION_REGISTERS", outros_registros
+        ):
+            with mock.patch.object(generate_ai, "GENERATION_TASKS", outras_tarefas):
+                reconstruido = make_mixed._build_mix_slate()
+                # Nao vacuo, e DENTRO do patch: o slate de GERACAO reconstruido sob ele muda,
+                # entao o patch alcanca de facto quem o le. Fora do `with` ele nao alcancaria
+                # nada, e a prova toda ficaria verde por acidente.
+                de_geracao = generate_ai._build_slate()
+        self.assertNotEqual(
+            de_geracao["pt-ilha-00-a"]["template"],
+            generate_ai.RECIPES["pt-ilha-00-a"]["template"],
+        )
+        import hashlib
+
+        depois = {
+            nome: hashlib.sha256(
+                reconstruido[nome]["template"].encode("utf-8")
+            ).hexdigest()
+            for nome in antes
+        }
+        self.assertEqual(depois, antes)
+
+    def test_a_cobertura_de_sonda_de_ECO_do_prompt_misto_esta_MEDIDA(self):
+        """Quanto do pedido misto o gate antiartefato ja sonda, e o que ele NAO sonda.
+
+        `artifact_gate._echo_probes_from_templates` deriva as sondas de `generate_ai.RECIPES`
+        e de nada mais, entao as sessenta receitas de mistura nao acrescentam sonda nenhuma. O
+        que este corpo mede e onde isso importa:
+
+        * o FECHO e coberto, pela sonda escrita a mao `responda apenas com`;
+        * a clausula de REGISTRO e coberta — e e o dividendo de D6 bis: as frases sao byte a
+          byte as do slate de geracao, entao os chunks delas JA sao sondas derivadas dele. A
+          duplicacao que parecia desperdicio compra independencia de digesto E cobertura;
+        * a GEOMETRIA e a INTENCAO nao tem sonda, e isso e o residuo declarado: uma linha
+          mista que ecoe "substitua uma secao contigua" passa. Crescer `_echo_probes_from_templates`
+          para ler `MIX_TEMPLATES` fecharia o vao e MUDARIA a taxa medida contra o teto
+          PRE-INSCRITO de 2 %, entao e medicao com unidade propria e nao efeito colateral
+          desta. Quando alguem a fizer, este corpo fica vermelho — que e o ponto dele.
+        """
+        import re
+
+        import artifact_gate
+        import generate_ai
+        import make_mixed
+
+        def coberto(frase: str) -> bool:
+            dobrado = artifact_gate.fold(frase)
+            return any(
+                re.search(padrao, dobrado)
+                for padrao in artifact_gate.ECHO_PROBES.values()
+            )
+
+        self.assertTrue(coberto(make_mixed._MIX_CLOSING))
+        # Os CINCO registros, e a razao de estarem cobertos: as frases sao identicas as do
+        # slate de geracao, de onde as sondas saem.
+        for nome, frase in make_mixed.MIX_REGISTERS.items():
+            with self.subTest(registro=nome):
+                self.assertEqual(frase, generate_ai.GENERATION_REGISTERS[nome])
+                self.assertTrue(coberto(frase))
+        # E o residuo, sobre TODAS as geometrias e TODAS as intencoes: uma sonda acrescentada
+        # para uma delas deixa este corpo vermelho, e e o que impede o ESTADO de continuar a
+        # declarar o vao depois de metade dele estar fechada.
+        for nome, geometria in make_mixed.MIX_GEOMETRIES.items():
+            with self.subTest(geometria=nome):
+                self.assertFalse(coberto(geometria.split("{nivel}")[0]))
+        for nome, intencao in make_mixed.MIX_INTENTS.items():
+            with self.subTest(intencao=nome):
+                self.assertFalse(coberto(intencao))
+
+    def test_a_CELULA_por_indice_e_a_mesma_no_plano_e_na_pista(self):
+        """Uma aritmetica so: `_island_component` e o laco do driver leem a MESMA funcao.
+
+        Duas expansoes da mesma conta concordam hoje e podem divergir amanha sem nada
+        reprovar, e o que divergiria e o que a linha ESTAMPA contra o que o preflight VALIDA.
+        A assercao e por indice e nao por total, porque totais iguais sobrevivem a uma
+        permutacao que rachasse a paridade dos clusters.
+        """
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        mistas = ilha["lines"]["mixed"]
+        alocacao = assemble_corpus.mix_cell_allocation(mistas)
+        self.assertEqual(len(alocacao), mistas)
+        do_plano = [
+            group_axes.identity_of(rec["groups"]["promptTemplate"])
+            for rec in assemble_corpus._island_component(ilha)
+            if rec["label"] == "mixed"
+        ]
+        da_alocacao = [
+            ilha["mixingTemplates"][operacao] for operacao, _nivel in alocacao
+        ]
+        self.assertEqual(do_plano, da_alocacao)
+        # A funcao e TOTAL, e a soma fecha em toda cota — inclusive nas que nao dividem.
+        for cota in (0, 1, 7, 19, 20, 21, 100, 133, 940):
+            with self.subTest(cota=cota):
+                self.assertEqual(len(assemble_corpus.mix_cell_allocation(cota)), cota)
+
+    def test_o_RESTO_da_alocacao_vai_para_as_PRIMEIRAS_celulas(self):
+        """A cota de producao divide exacto, entao o ramo do resto so tem adversario aqui.
+
+        ACHADO da bateria: mover o resto para as ULTIMAS celulas deixava a suite do lab
+        INDISTINGUIVEL — 732/718, o mesmo numero —, porque 100 linhas em 20 celulas dao 5 e o
+        resto e zero, e as outras assercoes sobre a alocacao olham a SOMA. A regra declarada e
+        "o resto vai para as primeiras, na ordem de `mix_cells`", e ela nao e cosmetica: e ela
+        que decide os totais por OPERACAO num plano cuja cota de ilha nao divide — 15 ilhas dao
+        133 mistas —, e `_island_component` modela a geometria com esses totais.
+        """
+        celulas = assemble_corpus.mix_cells()
+        # Uma linha a mais que celulas: a PRIMEIRA celula leva duas, todas as outras uma.
+        uma_a_mais = assemble_corpus.mix_cell_allocation(len(celulas) + 1)
+        self.assertEqual(uma_a_mais[:2], (celulas[0], celulas[0]))
+        self.assertEqual(uma_a_mais[-1], celulas[-1])
+        # E o plano de 15 ilhas, onde o resto e grande: 133 = 6 x 20 + 13, entao as treze
+        # PRIMEIRAS celulas levam sete e as sete ultimas levam seis.
+        contagem: dict[tuple[str, int], int] = {}
+        for celula in assemble_corpus.mix_cell_allocation(133):
+            contagem[celula] = contagem.get(celula, 0) + 1
+        self.assertEqual([contagem[c] for c in celulas[:13]], [7] * 13)
+        self.assertEqual([contagem[c] for c in celulas[13:]], [6] * 7)
+
+    def test_a_curva_e_as_operacoes_RATIFICADAS_estao_pinadas_por_valor(self):
+        """Os dois vocabularios que o § 3.3 ratifica, LIDOS por teste e nao so derivados.
+
+        Tudo o resto neste arquivo os deriva, e derivar e certo — mas nenhuma derivacao recusa
+        um oitavo nivel ou uma quarta operacao acrescentados a lista, e sem este corpo
+        acrescentar um deixa a suite do lab indistinguivel. Os niveis DIRIGEM o prompt e o
+        nudge, entao um nivel a mais e uma celula que a cota do plano nao compra e um pedido
+        que autoridade nenhuma ratificou.
+
+        A aritmetica da alocacao esta junta porque e ela que o § 3.3 publica: por nivel, 200
+        linhas em v1 e 300 nas outras seis; a coorte alvo de `aiFraction` >= 0,50 e v4-v7, isto
+        e 1.200 linhas, 60 % da classe mista.
+        """
+        self.assertEqual(assemble_corpus.MIX_LEVELS, (15, 25, 40, 50, 60, 75, 90))
+        self.assertEqual(
+            assemble_corpus.MIX_OPERATIONS,
+            ("substituicao", "insercao", "concatenacao"),
+        )
+        self.assertEqual(assemble_corpus.MIX_CELL_EXCLUDED, (("insercao", 15),))
+        por_nivel: dict[int, int] = {}
+        for ilha in assemble_corpus.ISLAND_PLAN:
+            for _operacao, nivel in assemble_corpus.mix_cell_allocation(
+                ilha["lines"]["mixed"]
+            ):
+                por_nivel[nivel] = por_nivel.get(nivel, 0) + 1
+        self.assertEqual(
+            por_nivel, {15: 200, 25: 300, 40: 300, 50: 300, 60: 300, 75: 300, 90: 300}
+        )
+        alta = sum(quantas for nivel, quantas in por_nivel.items() if nivel >= 50)
+        self.assertEqual(alta, 1200)
+        self.assertEqual(
+            alta / assemble_corpus.ISLAND_PLAN_CLASS_LINES["mixed"], 0.60
+        )
+
+    def test_a_pista_mista_realiza_as_VINTE_celulas_da_ilha(self):
+        """O laco itera as CELULAS, e o que se mede e a linha escrita — nao a intencao.
+
+        Cem pais da ilha, uma resposta em banda para todos, e o multiconjunto de
+        `(mixOperation, mixLevel)` das cem linhas TEM de ser a alocacao do plano. Um laco que
+        conhecesse so os pais escreveria cem vezes a mesma coisa, e um que embaralhasse a
+        ordem quebraria a contiguidade dos clusters que a geometria compra.
+
+        A identidade acompanha: cada linha leva o slot da SUA operacao, com a multiplicidade
+        35/30/35 que `mix_lines_by_operation` deriva.
+        """
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        alocacao = assemble_corpus.mix_cell_allocation(ilha["lines"]["mixed"])
+        linhas, _prompts = self._gerar(ilha=ilha)
+        self.assertEqual(len(linhas), len(alocacao))
+        escritas = [(l["mixOperation"], l["mixLevel"]) for l in linhas]
+        self.assertEqual(escritas, list(alocacao))
+        self.assertEqual(len(set(escritas)), len(assemble_corpus.mix_cells()))
+        por_identidade: dict[str, int] = {}
+        for l in linhas:
+            por_identidade[l["promptTemplateId"]] = (
+                por_identidade.get(l["promptTemplateId"], 0) + 1
+            )
+        self.assertEqual(
+            por_identidade,
+            {
+                ilha["mixingTemplates"][operacao]: quantas
+                for operacao, quantas in assemble_corpus.mix_lines_by_operation(
+                    ilha["lines"]["mixed"]
+                ).items()
+            },
+        )
+
+    def test_a_celula_e_funcao_do_PAI_e_sobrevive_a_retomada_e_ao_excedente(self):
+        """A celula sai da posicao do pai na ilha INTEIRA, e nao da ordem da corrida.
+
+        As duas propriedades entram no mesmo corpo porque o mesmo fixture as separa, e nenhuma
+        das duas tinha adversario: todo outro caso escreve num `--output` novo (logo `done`
+        vazio) e alimenta pais em numero igual a cota (logo o teto nunca morde).
+
+        RETOMADA. `done` conta as linhas de TODAS as ilhas no mesmo `--output`, entao indexar a
+        alocacao pela ordem da corrida daria celula diferente ao mesmo pai a cada retomada: a
+        primeira corrida para na cota seca, a segunda reindexa, as celulas iniciais ficam
+        pedidas duas vezes e as finais — as de nivel 90, a coorte alta da ilha — nunca sao
+        pedidas. A linha gravaria `mixLevel` de um pedido que nao foi feito para ela.
+
+        EXCEDENTE. O arquivo de pais e do corpus inteiro e a ilha tem mais pai elegivel que
+        cota (o pool reservado da ~112 por bloco de semente contra 100 mistas). Sem o teto, o
+        101.o pai recebe a celula 0 de novo e a ilha escreve linha fora do plano.
+
+        A assercao unica que separa os tres casos e a SEQUENCIA de `(mixOperation, mixLevel)`
+        das linhas escritas contra a alocacao: com a indexacao por corrida ela repete o prefixo,
+        com atribuicao ciclica ela e mais longa que a cota, e so a forma correta a reproduz.
+        """
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        cota = ilha["lines"]["mixed"]
+        alocacao = assemble_corpus.mix_cell_allocation(cota)
+        excedente = 5
+        pais = pais_da_ilha(ilha["island"], cota + excedente)
+        linhas, _prompts = self._gerar(ilha=ilha, pais=pais, passos=[40, cota])
+        self.assertEqual(len(linhas), cota)
+        self.assertEqual(
+            [(l["mixOperation"], l["mixLevel"]) for l in linhas], list(alocacao)
+        )
+        # O pai da posicao `i` e o da linha `i`, nas duas corridas: e isto que faz a celula ser
+        # funcao do pai. Sem a igualdade acima isto passaria com as celulas permutadas.
+        self.assertEqual([l["parentId"] for l in linhas], pais[:cota])
+        # E os excedentes nao recebem celula, logo nao sao tentados nem numa retomada.
+        escritos = {l["parentId"] for l in linhas}
+        for extra in pais[cota:]:
+            with self.subTest(pai=extra):
+                self.assertNotIn(extra, escritos)
+
+    def test_o_nivel_vizinho_NAO_existe_nas_DUAS_pontas_da_curva(self):
+        """A ponta e afirmada nas duas direcoes, e o laco so exercita uma.
+
+        O nudge do driver so alcanca a celula 0, entao a ponta ALTA — nivel 90 pedindo o vizinho
+        de cima — nao tem adversario por lá. Ela importa igual: uma resposta de 90 % que volta
+        em 0,62 fica fora de banda por BAIXO, pede o vizinho de cima e nao o tem; grampear ali
+        gastaria uma chamada por linha das quinze de nivel 90 da ilha para comprar outra amostra
+        do mesmo sorteio.
+
+        O interior tambem e afirmado, nas duas direcoes, porque sem ele "devolve None" seria
+        satisfeito por uma funcao que devolve `None` sempre.
+        """
+        import make_mixed
+
+        niveis = assemble_corpus.MIX_LEVELS
+        self.assertIsNone(make_mixed.adjacent_mix_level(niveis[0], para_baixo=True))
+        self.assertIsNone(make_mixed.adjacent_mix_level(niveis[-1], para_baixo=False))
+        for posicao, nivel in enumerate(niveis):
+            with self.subTest(nivel=nivel):
+                if posicao + 1 < len(niveis):
+                    self.assertEqual(
+                        make_mixed.adjacent_mix_level(nivel, para_baixo=False),
+                        niveis[posicao + 1],
+                    )
+                if posicao > 0:
+                    self.assertEqual(
+                        make_mixed.adjacent_mix_level(nivel, para_baixo=True),
+                        niveis[posicao - 1],
+                    )
+
+    def test_o_prompt_ENVIADO_pede_a_geometria_e_o_nivel_da_celula(self):
+        """A linha e o pedido dizem a MESMA celula, e e o pedido que produziu o texto.
+
+        Sem esta metade, um laco podia estampar a celula certa na linha e mandar sempre o
+        mesmo prompt — a alegacao seria falsa e toda contagem continuaria certa. Sao as duas
+        pontas do mesmo par: a geometria da operacao e o numero do nivel.
+        """
+        import make_mixed
+
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        alocacao = assemble_corpus.mix_cell_allocation(ilha["lines"]["mixed"])
+        linhas, prompts = self._gerar(ilha=ilha)
+        self.assertTrue(prompts)
+        self.assertEqual(len(prompts), len(linhas))
+        for indice, (prompt, (operacao, nivel)) in enumerate(
+            zip(prompts, alocacao, strict=True)
+        ):
+            with self.subTest(indice=indice):
+                self.assertIn(f"aproximadamente {nivel} %", prompt)
+                self.assertIn(
+                    make_mixed.MIX_GEOMETRIES[operacao].split("{nivel}")[0], prompt
+                )
+                # E NAO pede a geometria de outra operacao: as tres frases sao distintas, e
+                # sem esta metade um prompt que as concatenasse todas passaria.
+                for outra, geometria in make_mixed.MIX_GEOMETRIES.items():
+                    if outra != operacao:
+                        self.assertNotIn(geometria.split("{nivel}")[0], prompt)
+
+    def test_o_nudge_reexecuta_o_MESMO_template_no_nivel_VIZINHO(self):
+        """D7 no mecanismo: a correcao mora no PARAMETRO e a identidade nao se move.
+
+        A primeira resposta e o pai palavra por palavra — `aiFraction` 0, fora de banda por
+        baixo —, entao o nudge pede o nivel de CIMA. O que se afirma: o segundo prompt e do
+        MESMO template, com o nivel vizinho, e a linha grava o nivel que sobreviveu. Trocar
+        de template aqui subcontaria as sessenta identidades, e gravar o nivel da celula
+        alegaria um pedido que nao produziu este texto.
+        """
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        operacao, alvo = assemble_corpus.mix_cell_allocation(ilha["lines"]["mixed"])[0]
+        vizinho = assemble_corpus.MIX_LEVELS[
+            assemble_corpus.MIX_LEVELS.index(alvo) + 1
+        ]
+        texto = " ".join(f"palavra{i:02d}" for i in range(60))
+        (pai_id,) = pais_da_ilha(ilha["island"])
+        linhas, prompts = self._gerar(
+            ilha=ilha, pais=[pai_id], target=1, respostas=[texto]
+        )
+        self.assertEqual(len(prompts), 2)
+        self.assertIn(f"aproximadamente {alvo} %", prompts[0])
+        self.assertIn(f"aproximadamente {vizinho} %", prompts[1])
+        self.assertEqual(len(linhas), 1)
+        self.assertEqual(linhas[0]["promptTemplateId"], ilha["mixingTemplates"][operacao])
+        self.assertEqual(linhas[0]["mixOperation"], operacao)
+        self.assertEqual(linhas[0]["mixLevel"], vizinho)
+
+    def test_o_nudge_NAO_gasta_chamada_na_ponta_da_curva(self):
+        """Na ponta nao ha vizinho, e a resposta e nao pedir de novo.
+
+        A celula 0 pede o nivel mais baixo; a resposta vem 100 % de IA, isto e, fora de banda
+        por CIMA, e o vizinho de baixo nao existe. Reexecutar o mesmo pedido no mesmo nivel
+        compraria outra amostra do mesmo sorteio ao preco de cota, entao a corrida para: UMA
+        chamada e zero linha. Uma implementacao que grampeasse o nivel na ponta faria duas.
+        """
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        _operacao, alvo = assemble_corpus.mix_cell_allocation(ilha["lines"]["mixed"])[0]
+        self.assertEqual(alvo, assemble_corpus.MIX_LEVELS[0])
+        tudo_novo = " ".join(f"novo{i:02d}" for i in range(60))
+        (pai_id,) = pais_da_ilha(ilha["island"])
+        import make_mixed
+
+        # O fixture se confere nas duas condicoes que o caso precisa: fora de banda, e fora
+        # por CIMA — e a segunda e o que escolhe a direcao do nudge.
+        mistura = make_mixed.compute_mixture(
+            " ".join(f"palavra{i:02d}" for i in range(60)), tudo_novo
+        )
+        self.assertFalse(make_mixed.in_mixed_band(mistura))
+        self.assertGreaterEqual(mistura["aiFraction"], make_mixed.mixed_bands()[-1][2])
+        linhas, prompts = self._gerar(
+            ilha=ilha, pais=[pai_id], target=1, respostas=[tudo_novo, tudo_novo]
+        )
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(linhas, [])
+
+    def test_a_pista_mista_so_toma_pai_do_PROPRIO_bloco_de_semente(self):
+        """Pai de outra ilha FUNDE as duas, e a recusa e por construcao e nao por aviso.
+
+        Uma linha mista nomeia o pai em `humanSeed` e `derivationRoot`, e
+        `connected_components` une POR VALOR: um pai do bloco de outra ilha faz das duas um
+        componente, e a montagem recusa o corpo DEPOIS de a cota estar gasta. O arquivo de
+        pais e do corpus inteiro; a corrida toma a fatia da sua ilha.
+        """
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        (meu,) = pais_da_ilha(ilha["island"])
+        (alheio,) = pais_da_ilha(assemble_corpus.ISLAND_PLAN[1]["island"])
+        linhas, _prompts = self._gerar(ilha=ilha, pais=[alheio, meu], target=10)
+        self.assertEqual([l["parentId"] for l in linhas], [meu])
+
+    def test_emit_RECUSA_a_operacao_que_a_identidade_nao_declara(self):
+        """UMA igualdade fecha as quatro direcoes, e e ela que impede a alegacao falsa.
+
+        Estampar `mix-substituicao-ilha-00` numa linha que fez outra geometria e alegacao
+        falsa GRAVADA no corpus, e o dano nao e reparavel depois: a identidade e o digesto de
+        um prompt que pede uma geometria so. As quatro direcoes sao identidade de ilha sem
+        operacao, identidade de ilha com a operacao de outro slot, receita legada COM
+        operacao, e grafia que o vocabulario nao tem.
+        """
+        import io
+
+        import make_mixed
+
+        pai = " ".join(f"palavra{i:02d}" for i in range(60))
+        editado = " ".join(
+            (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
+        )
+        casos = {
+            "ilha sem operacao": ("mix-substituicao-ilha-00", None, None),
+            "ilha com outra operacao": (
+                "mix-substituicao-ilha-00",
+                "concatenacao",
+                50,
+            ),
+            "legada com operacao": ("mix_edit_v1", "substituicao", 50),
+            "grafia alienigena": ("mix-substituicao-ilha-00", "substituição", 50),
+        }
+        for rotulo, (identidade, operacao, nivel) in casos.items():
+            with self.subTest(caso=rotulo):
+                with self.assertRaises(ValueError) as erro:
+                    make_mixed.emit(
+                        io.StringIO(),
+                        {
+                            "id": "src_pai_000000",
+                            "text": pai,
+                            "family": "ptwiki_lead",
+                            "sourceMaterialBatch": "smb_ptwiki_20220301",
+                        },
+                        editado,
+                        provider="gemini",
+                        model="gemini-3.5-flash-lite",
+                        template_id=identidade,
+                        mix_operation=operacao,
+                        mix_level=nivel,
+                    )
+                self.assertIn("operacao", str(erro.exception))
+                self.assertIn(identidade, str(erro.exception))
+        # Nao vacuo: com a operacao que a identidade declara, o mesmo `emit` escreve.
+        destino = io.StringIO()
+        make_mixed.emit(
+            destino,
+            {
+                "id": "src_pai_000000",
+                "text": pai,
+                "family": "ptwiki_lead",
+                "sourceMaterialBatch": "smb_ptwiki_20220301",
+            },
+            editado,
+            provider="gemini",
+            model="gemini-3.5-flash-lite",
+            template_id="mix-substituicao-ilha-00",
+            mix_operation="substituicao",
+            mix_level=50,
+        )
+        self.assertEqual(json.loads(destino.getvalue())["mixOperation"], "substituicao")
+
+    def test_emit_RECUSA_nivel_incoerente_com_a_operacao(self):
+        """O nivel existe exactamente quando a operacao existe, e vem da curva.
+
+        Tres direcoes: identidade de ilha sem nivel, identidade de ilha com nivel que a curva
+        nao declara, e receita legada COM nivel. O nivel e o alvo da operacao — sem operacao
+        ele nao tem do que ser alvo, e um valor fora de `MIX_LEVELS` nomeia uma celula que o
+        plano nao compra.
+        """
+        import io
+
+        import make_mixed
+
+        pai = " ".join(f"palavra{i:02d}" for i in range(60))
+        editado = " ".join(
+            (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
+        )
+        casos = {
+            "ilha sem nivel": ("mix-substituicao-ilha-00", "substituicao", None),
+            "nivel fora da curva": ("mix-substituicao-ilha-00", "substituicao", 55),
+            "legada com nivel": ("mix_edit_v1", None, 50),
+        }
+        for rotulo, (identidade, operacao, nivel) in casos.items():
+            with self.subTest(caso=rotulo):
+                with self.assertRaises(ValueError) as erro:
+                    make_mixed.emit(
+                        io.StringIO(),
+                        {
+                            "id": "src_pai_000000",
+                            "text": pai,
+                            "family": "ptwiki_lead",
+                            "sourceMaterialBatch": "smb_ptwiki_20220301",
+                        },
+                        editado,
+                        provider="gemini",
+                        model="gemini-3.5-flash-lite",
+                        template_id=identidade,
+                        mix_operation=operacao,
+                        mix_level=nivel,
+                    )
+                self.assertIn("nivel", str(erro.exception))
+
+    def test_o_slate_misto_de_BYTES_IDENTICOS_e_recusado_antes_da_cota(self):
+        """A fraude que crescer o slate abriu: sessenta nomes sobre corpos repetidos.
+
+        Ela passa a conferencia por NOME — a quinta perna — e mente, porque identidade E o
+        digesto dos bytes: a particao de ilha ficaria NOMINAL e o recall voltaria a ser medido
+        sobre prompts ja vistos. A recusa e do `argparse`, entao morde antes de qualquer
+        chamada de provedor, e o fixture serve os nomes todos de proposito para que a quinta
+        perna nao dispare primeiro.
+        """
+        import argparse
+
+        import make_mixed
+
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        alias = dict(make_mixed.MIX_TEMPLATES)
+        alias[ilha["mixingTemplates"]["insercao"]] = dict(
+            alias[ilha["mixingTemplates"]["substituicao"]]
+        )
+        with mock.patch.object(make_mixed, "MIX_TEMPLATES", alias):
+            with self.assertRaises(argparse.ArgumentTypeError) as erro:
+                make_mixed.island_plan(ilha["island"])
+        mensagem = str(erro.exception)
+        self.assertIn("bytes identicos", mensagem)
+        self.assertIn(ilha["mixingTemplates"]["insercao"], mensagem)
+        self.assertIn("NOMINAL", mensagem)
+
+    def test_assume_template_NAO_admite_identidade_de_ilha(self):
+        """A afirmacao do operador vale sobre receita legada, e so sobre ela.
+
+        `--assume-template` afirma qual prompt produziu um arquivo de pares ANTIGO. Oferecer
+        as sessenta identidades daria ao operador uma forma de atribuir pertenca de ilha e uma
+        geometria a linhas que fizeram um edit generico — a mesma alegacao falsa, por outra
+        porta. A recusa e do `argparse`, e o caso VERDE ao lado prova que a flag continua a
+        funcionar para o que ela e.
+        """
+        import contextlib
+        import io
+        import tempfile
+
+        import make_mixed
+
+        self.assertEqual(
+            set(make_mixed.LEGACY_MIX_TEMPLATE_IDS),
+            {
+                nome
+                for nome, spec in make_mixed.MIX_TEMPLATES.items()
+                if spec["operation"] is None
+            },
+        )
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        self.assertNotIn(
+            ilha["mixingTemplates"]["substituicao"],
+            make_mixed.LEGACY_MIX_TEMPLATE_IDS,
+        )
+        with tempfile.TemporaryDirectory() as bruto:
+            temporario = Path(bruto)
+            vazio = temporario / "pares.jsonl"
+            vazio.write_bytes(b"")
+            for rotulo, template in {
+                "identidade de ilha": ilha["mixingTemplates"]["substituicao"],
+                "receita legada": "mix_edit_v1",
+            }.items():
+                with self.subTest(caso=rotulo):
+                    saida = temporario / f"saida-{template}.jsonl"
+                    argv = [
+                        "make_mixed.py",
+                        "--from-pairs",
+                        str(vazio),
+                        "--island",
+                        ilha["island"],
+                        "--output",
+                        str(saida),
+                        "--assume-template",
+                        template,
+                    ]
+                    erro_padrao = io.StringIO()
+                    registrado = io.TextIOWrapper(
+                        io.BytesIO(), encoding="utf-8", newline="\n"
+                    )
+                    with mock.patch.object(sys, "argv", argv):
+                        with contextlib.redirect_stderr(erro_padrao):
+                            with contextlib.redirect_stdout(registrado):
+                                if rotulo == "identidade de ilha":
+                                    with self.assertRaises(SystemExit) as saiu:
+                                        make_mixed.main()
+                                else:
+                                    make_mixed.main()
+                    if rotulo == "identidade de ilha":
+                        self.assertEqual(saiu.exception.code, 2)
+                        self.assertIn("--assume-template", erro_padrao.getvalue())
+                        self.assertFalse(saida.exists())
+                    else:
+                        self.assertTrue(saida.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

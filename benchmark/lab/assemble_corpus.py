@@ -241,8 +241,8 @@ def mix_cells() -> tuple[tuple[str, int], ...]:
     )
 
 
-def mix_lines_by_operation(mistas: int) -> dict[str, int]:
-    """Linhas por operacao numa ilha, DERIVADAS das celulas e nunca digitadas.
+def mix_cell_allocation(mistas: int) -> tuple[tuple[str, int], ...]:
+    """A celula de CADA uma das `mistas` linhas de uma ilha, indexada pela posicao.
 
     A aritmetica e a autoridade e a funcao e TOTAL sobre qualquer cota de ilha: as linhas
     dividem-se igualmente entre as celulas e o resto vai para as primeiras, na ordem de
@@ -250,15 +250,38 @@ def mix_lines_by_operation(mistas: int) -> dict[str, int]:
     alocacao em dois lugares que podem divergir sem nada reprovar — e amarraria a funcao ao
     plano de 20 ilhas, que e uma escolha derivada e nao um dado.
 
+    Os blocos sao CONTIGUOS por indice, e e essa a forma que a geometria compra: blocos
+    contiguos dao as duas paridades de pai a todo cluster de operacao, enquanto
+    `i % len(MIX_OPERATIONS)` daria 34/33/33 — uma alocacao que o plano nao compra.
+
+    Devolve a celula POR LINHA e nao o total por operacao porque os dois leitores precisam
+    de coisas diferentes da mesma aritmetica: `_island_component` precisa da operacao da
+    linha `i` para lhe dar a identidade de template do slot, e o laco de `make_mixed.py`
+    precisa da celula inteira — operacao E nivel — para compor o pedido. Duas expansoes da
+    mesma conta podiam divergir sem nada reprovar, e o que se estampa na linha deixaria de
+    ser o que o plano modela.
+
     No plano de producao (20 ilhas, 100 mistas por ilha) isto realiza 20 celulas de 5
     linhas e 35/30/35 por operacao, e esses numeros estao pinados por teste.
     """
     celulas = mix_cells()
+    saida: list[tuple[str, int]] = []
+    for indice, celula in enumerate(celulas):
+        quantas = mistas // len(celulas) + (1 if indice < mistas % len(celulas) else 0)
+        saida.extend([celula] * quantas)
+    return tuple(saida)
+
+
+def mix_lines_by_operation(mistas: int) -> dict[str, int]:
+    """Linhas por operacao numa ilha, CONTADAS sobre a alocacao por celula.
+
+    Contadas e nao calculadas de novo: a conta vive em `mix_cell_allocation`, e um segundo
+    calculo aqui seria a divergencia que essa funcao existe para impedir. Toda operacao
+    aparece na saida, inclusive com zero, porque quem le itera o vocabulario.
+    """
     por_operacao = dict.fromkeys(MIX_OPERATIONS, 0)
-    for indice, (operacao, _) in enumerate(celulas):
-        por_operacao[operacao] += mistas // len(celulas) + (
-            1 if indice < mistas % len(celulas) else 0
-        )
+    for operacao, _nivel in mix_cell_allocation(mistas):
+        por_operacao[operacao] += 1
     return por_operacao
 
 
@@ -3149,15 +3172,14 @@ def _island_component(ilha: dict) -> list[dict]:
                 },
             }
         )
-    # Os clusters sao CONTIGUOS pelo indice, com as fronteiras derivadas das linhas por
-    # operacao: `i % len(MIX_OPERATIONS)` daria 34/33/33, que nao e a alocacao que o plano
-    # compra. O pai da mista `i` continua sendo `humanas[i % len(humanas)]` — pai da MESMA
-    # ilha, um nivel por pai —, e blocos contiguos de indice dao as duas paridades a todo
+    # A operacao da linha `i` sai da MESMA `mix_cell_allocation` que o laco de
+    # `make_mixed.py` le, e nao de uma segunda expansao: o que a geometria modela por indice
+    # e o que a pista estampa por indice, ou o plano valida um corpo que ninguem escreve. O
+    # pai da mista `i` continua sendo `humanas[i % len(humanas)]` — pai da MESMA ilha, um
+    # nivel por pai —, e os blocos contiguos da alocacao dao as duas paridades a todo
     # cluster, com margem sobre o criterio de "ao menos um".
     mistas = ilha["lines"]["mixed"]
-    operacao_de: list[str] = []
-    for operacao, quantas in mix_lines_by_operation(mistas).items():
-        operacao_de.extend([operacao] * quantas)
+    operacao_de = [operacao for operacao, _nivel in mix_cell_allocation(mistas)]
     for i in range(mistas):
         rid = f"plano_m_{nome}_{i:04d}"
         registros.append(

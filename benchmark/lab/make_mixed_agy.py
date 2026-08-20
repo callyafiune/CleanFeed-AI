@@ -96,7 +96,7 @@ def main() -> None:
     kept = 0
     with args.pairs.open("a", encoding="utf-8", newline="\n") as pairs_out:
         for index, parent in enumerate(parents, start=1):
-            prompt = MIX_TEMPLATES[TEMPLATE_ID]().format(
+            prompt = MIX_TEMPLATES[TEMPLATE_ID]["template"].format(
                 parent=parent["text"][:6000]
             )
             edited = None
