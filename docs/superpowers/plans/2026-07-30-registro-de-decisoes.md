@@ -9219,3 +9219,34 @@ nunca foi aplicado; publicar como passe e exactamente o interruptor que ela fech
 
 vitest 172/3.102 verde em rodada quieta; `gates.ts` esta em `EVALUATOR_FILES`, entao o digest moveu e foi
 republicado.
+
+### D8 — as 60 identidades NAO sao fatiaveis, e por que eu paro antes de as escrever (2026-08-20)
+
+Fechadas as duas unidades pre-Fase-5, segui para as 60 identidades de mistura com D6 (lista congelada de
+quatro intencoes) e D7 (nudge no nivel adjacente) ja decididos. A etapa 1 mediu uma coisa que muda o
+tamanho do trabalho: **`make_mixed.py` nao tem nocao de OPERACAO nem de NIVEL.** `mix_cells`, `mixLevel` e
+`mixOperation` nao aparecem no driver — ele faz um edit genérico ("reescreva de 2 a 4 frases"), e a unica
+mencao a operacao no arquivo e a leitura de `mixingTemplates` dentro da guarda de entrada.
+
+**Consequencia, e e uma armadilha de seguranca.** Se eu acrescentar as 60 a `MIX_TEMPLATES` e mais nada, o
+`island_plan` PARA de recusar — a intersecao deixa de ser vazia — e a porta pre-cota abre enquanto o
+escritor continua incapaz de dizer qual operacao a linha realizou. Ele teria de estampar alguma das tres, e
+estampar `mix-substituicao-ilha-00` numa linha que fez um edit genérico e alegacao falsa gravada no corpus.
+Fatiar aqui nao adianta trabalho: **meio-abre uma guarda**.
+
+**Entao a unidade seguinte e "a pista mista realiza as tres operacoes", e ela contem:** o vocabulario (60
+templates de `operacao x intencao x registro`, com a atribuicao ilha -> (intencao, registro) congelada NO
+SLATE MISTO e nao lida do slate de geracao, que e a razao de D6 existir); o laco do driver iterando as
+CELULAS que `mix_cells()` ja deriva, em vez de so os pais; e a linha gravando `mixLevel` e `mixOperation`.
+As duas primeiras coisas ja existem e sao reaproveitadas: `mix_cells()` e total sobre qualquer cota e
+`MIX_OPERATIONS` e o vocabulario.
+
+**Um detalhe de desenho que eu decido agora para nao o redescobrir depois:** o slate misto declara os
+proprios cinco registros, duplicando as frases do slate de geracao em vez de as importar. Parece
+desperdicio e nao e — importar recria exactamente o acoplamento que o consenso derrubou: o digest de uma
+identidade mista passaria a mover quando o slate de GERACAO mudasse. Cinco frases duplicadas sao o preco de
+duas autoridades independentes, e o preco esta certo.
+
+**Onde eu paro, e a razao e a restricao do operador:** nao comeco um laco de driver novo com o contexto que
+resta. Meio-implementar o laco e pior que nao o comecar, porque a guarda ficaria aberta entre um commit e o
+seguinte — e a guarda e o que impede a cota de ser gasta sob um slate que o plano nao cumpre.
