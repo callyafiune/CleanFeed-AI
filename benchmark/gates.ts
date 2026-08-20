@@ -630,6 +630,8 @@ export function evaluateReleaseGates(input: GateInput): GateReport {
       .map((spec) => decideInterval(spec, context)),
   ];
 
+  assertEveryClaimedHypothesisHasAGate(certifyingIds, gates);
+
   const failedIntegrity = failedIds(gates, "integrity");
   const failedWarning = failedIds(gates, "warning");
   const failedAction = failedIds(gates, "action");
@@ -826,6 +828,43 @@ function pointWarningGates(metrics: EvaluationMetrics): GateResult[] {
       "coverage without abstention",
     ),
   ];
+}
+
+/**
+ * Every spec that CLAIMS a hypothesis has to appear among the emitted gates, and this is the
+ * reciprocal that closes a partition which is not exhaustive.
+ *
+ * `certifyingIds` and `hypotheses` are built off `intervalSpecs` BEFORE the tier filters run,
+ * and those filters name two tiers by equality. So a spec carrying a tier outside that
+ * vocabulary lands in neither branch: it vanishes from `gates` while `multiplicity.gateIds`
+ * keeps naming its hypothesis and `covers` keeps reading `true` — the report would declare a
+ * certifying hypothesis DECIDED and publish no gate for it. Measured in 2026-08-17: of the
+ * three ways to introduce a fourth tier, two already fail (a gate built directly softens into
+ * every pass list, and an EXISTING spec whose tier changes is caught by the inventory pin);
+ * the third — a spec ADDED with a fourth tier — left the whole suite green.
+ *
+ * It throws instead of reporting a failed gate, and the direction is the reason: a missing
+ * gate is not a hypothesis that failed, it is a hypothesis nobody decided. Publishing it as a
+ * failure would let a reader retry against a threshold that was never applied, and publishing
+ * it as a pass is the silent switch this exists to prevent.
+ *
+ * The check is on IDS and not on count: `gates` also carries integrity and point gates, so a
+ * count would be satisfied by any list of the right length.
+ */
+export function assertEveryClaimedHypothesisHasAGate(
+  certifyingIds: readonly string[],
+  gates: readonly { id: string }[],
+): void {
+  const emitted = new Set(gates.map((gate) => gate.id));
+  const silenced = certifyingIds.filter((id) => !emitted.has(id));
+  if (silenced.length > 0) {
+    throw new Error(
+      `CERTIFYING_GATE_NOT_EMITTED: ${silenced.join(", ")} claim a certifying ` +
+        "hypothesis and produced no gate. The tier partition is not exhaustive, so a spec " +
+        "whose tier is outside the emitted vocabulary disappears from the report while the " +
+        "multiplicity inventory keeps naming its hypothesis",
+    );
+  }
 }
 
 function warningIntervalSpecs(

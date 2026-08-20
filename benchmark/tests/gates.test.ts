@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertEveryClaimedHypothesisHasAGate,
   evaluateReleaseGates,
   mixedRecallDiagnostics,
   type GateInput,
@@ -3339,5 +3340,46 @@ describe("the decision reaches the publisher", () => {
       published.profiles.profiles.length,
     );
     expect(published.release.rolloutState).toBe("indicator");
+  });
+});
+
+// A reciproca da particao por tier, e o caso que a mede e o unico que a suite nao tinha: uma
+// spec ACRESCENTADA com um quarto tier. Medido em 2026-08-17, ela deixava a suite inteira
+// verde — o gate desaparecia de `gates` enquanto `multiplicity.gateIds` continuava nomeando a
+// hipotese dele, e o relatorio declarava decidido o que nao publicou.
+describe("toda hipotese reivindicada tem de produzir gate", () => {
+  it("recusa a spec que reivindica hipotese e nao aparece nos gates emitidos", () => {
+    // O nome do gate silenciado entra na mensagem porque quem a le esta a descobrir QUAL
+    // hipotese o relatorio declarou sem decidir: uma recusa que dissesse so "faltou um gate"
+    // deixaria o leitor procurar entre vinte e quatro.
+    expect(() =>
+      assertEveryClaimedHypothesisHasAGate(
+        ["warning.recall.overall"],
+        [{ id: "integrity.assignment" }, { id: "warning.fpr.overall" }],
+      ),
+    ).toThrow(/CERTIFYING_GATE_NOT_EMITTED.*warning\.recall\.overall/u);
+  });
+
+  it("aceita quando cada hipotese reivindicada esta entre os gates", () => {
+    // Nao vacuo: sem esta metade a assercao acima passaria tambem se a funcao levantasse
+    // sempre, e a guarda viraria uma recusa incondicional que ninguem notaria em producao.
+    expect(() =>
+      assertEveryClaimedHypothesisHasAGate(
+        ["warning.recall.overall"],
+        [{ id: "warning.recall.overall" }, { id: "warning.fpr.overall" }],
+      ),
+    ).not.toThrow();
+  });
+
+  it("nao confunde CONTAGEM com pertenca", () => {
+    // `gates` carrega tambem integridade e gates de ponto, entao uma checagem por contagem
+    // ficaria satisfeita por qualquer lista do tamanho certo. Duas ids reivindicadas contra
+    // duas emitidas, e nenhuma delas e a mesma.
+    expect(() =>
+      assertEveryClaimedHypothesisHasAGate(
+        ["warning.recall.overall", "action.fpr.overall"],
+        [{ id: "integrity.assignment" }, { id: "warning.fpr.overall" }],
+      ),
+    ).toThrow(/warning\.recall\.overall, action\.fpr\.overall/u);
   });
 });

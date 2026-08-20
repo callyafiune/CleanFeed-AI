@@ -9186,3 +9186,36 @@ passa a ser recusada por ausencia em vez de se amarrar a um corte errado.
 Bateria diagonal, tres mutacoes: o ramo da identidade derruba uma prova, o do corte a outra, a chamada
 inteira derruba as duas. Restauro com sha256 identico. `consume-holdout.ts` esta em `EVALUATOR_FILES`, entao
 o `evaluatorDigest` moveu e foi republicado.
+
+### A reciproca do quarto tier, e a medicao que a isola (2026-08-20)
+
+Segunda das duas unidades que o ESTADO poe antes da Fase 5, e a ultima da minha D3. O defeito estava
+delimitado desde 17-08: `certifyingIds` e `hypotheses` saem de `intervalSpecs` ANTES dos filtros de tier, e
+os filtros nomeiam dois tiers por igualdade — entao uma spec com tier fora desse vocabulario nao cai em
+ramo algum. Ela desaparece de `gates` enquanto `multiplicity.gateIds` continua nomeando a hipotese dela.
+
+**A forma que escolhi, e por que nao foi a obvia.** A obvia seria tornar a particao exaustiva (um switch
+total com `default` que recusa). Recusei: as duas listas de filtro sao lidas por outros sitios e a mudanca
+mexeria na forma como os gates sao montados, o que e area maior do que o defeito. A reciproca e uma
+comparacao de CONJUNTOS depois de `gates` estar pronto — uma funcao exportada, uma chamada, e nada mais
+muda. Sob a restricao de escopo do operador, a correta-e-menor ganha.
+
+Ela **levanta** em vez de publicar gate reprovado, e a direcao e o argumento: gate ausente nao e hipotese
+que falhou, e hipotese que ninguem decidiu. Publicar como falha convidaria a retentar contra um limiar que
+nunca foi aplicado; publicar como passe e exactamente o interruptor que ela fecha.
+
+**A bateria, e ela tem tres pernas porque a chamada e a funcao tem adversarios diferentes:**
+
+* a FUNCAO tem tres casos proprios, e um deles e sobre a forma da checagem: `gates` carrega tambem
+  integridade e gates de ponto, entao uma checagem por CONTAGEM ficaria satisfeita por qualquer lista do
+  tamanho certo. O caso passa duas ids reivindicadas contra duas emitidas, nenhuma coincidindo;
+* a CHAMADA e **invisivel** sozinha: tira-la deixa 126 verdes, porque nenhuma fixture de hoje faz uma spec
+  certificadora sumir. Declaro isso em vez de o esconder — e o retrato de uma guarda preventiva;
+* o adversario da chamada e o filtro de emissao ESTREITADO, e ai a medicao isola o que a guarda compra:
+  **com** ela, 76 vermelhos e a primeira mensagem e `CERTIFYING_GATE_NOT_EMITTED` nomeando as tres specs
+  que sumiram; **sem** ela, 29 vermelhos e a mensagem e `expected "pass" to be "reject"`. Quarenta e sete
+  casos passariam a APROVAR onde reprovavam. O interruptor silencioso deixou de ser descricao e virou
+  numero.
+
+vitest 172/3.102 verde em rodada quieta; `gates.ts` esta em `EVALUATOR_FILES`, entao o digest moveu e foi
+republicado.
