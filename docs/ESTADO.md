@@ -256,6 +256,7 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | **nunca** rodar `consume-holdout` de verdade |
 | commits exigem `--no-verify` |
 | `git ls-files --eol \| grep w/crlf` sai vazio |
+| **`EVALUATOR_FILES` em JSON não se edita por Python.** Os bytes são a identidade do avaliador, e a autoridade de formato é o Node — `preregistration-v4.test.ts` ("is stored in canonical JSON") compara o arquivo com `JSON.stringify(canonical, null, 2)`, e o arquivo está em `.prettierignore` justamente para não ter dois formatadores. `json.dumps` do Python escreve número em outra representação: medido, um round-trip trocou `learningRate` de `0.00002` para `2e-05` e corrompeu um campo que a edição não tocava. É pior que a armadilha do CRLF, porque o CRLF tem `git ls-files --eol` a vigiar a árvore inteira e este só tem o teste canônico, que dispara **depois** de a corrupção estar escrita |
 | comentário no código: só regra de domínio, restrição técnica não óbvia, ou armadilha de biblioteca |
 | `node --experimental-strip-types` apaga tipos: parameter properties não funcionam na CLI |
 
@@ -896,6 +897,8 @@ preço é elegibilidade — tolerável no núcleo, que não é onde o piso de 20
 |---|---|---|---|
 | `qwen2.5:7b` | `845dbda0ea48` | **baixado**, 4,7 GB | `ollama list`, e o id casa com o `version` das 400 linhas em disco |
 | segunda família da reserva | — | **NÃO baixada** | nada a verificar: sem pull não há digest |
+
+**Por que a reserva TEM de ser esta lane, e não é preferência.** `harnessVersion` capturada, por provedor, contado nos pools: `public-dataset` 0 de 12.000 · `openai` 0 de 2.004 · `gemini` 0 de 1.650 · `codex` 0 de 1.402 · `agy` 0 de 419 · `anthropic` 0 de 122 — e **`ollama` 400 de 400**. Canal não-API sem versão capturada cai em `unknown`, `recordEligibility` conta eixo em `unknown`, e `countsTowardHeldOutFloor` filtra o piso de **200 positivos da reserva** por essa elegibilidade. Logo o material do ollama é o **único em disco** que consegue cumprir o piso hoje; `agy` e `codex` podem ser núcleo, onde elegibilidade não é exigida, mas não reserva. A assimetria é feliz e vale dizer: a lane de proveniência mais forte aterrissa no papel onde a proveniência é imposta.
 
 A versão do runtime (0.32.6) é a mesma que as 400 linhas gravaram em `harnessVersion`, e o id de
 conteúdo do modelo é conferível agora — é a única lane em que a reprodutibilidade não depende de

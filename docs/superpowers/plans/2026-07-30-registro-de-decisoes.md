@@ -9672,3 +9672,37 @@ divisibilidade (`generatorVersion` e reportado, nao unido); ameaca ATRIBUICAO, p
 modelo colineares fazem a fatia de um nao separar do outro — exactamente o confundimento que a
 `proxyReason` declara para operacao e template. Registrado na § 7 como decisao de desenho de
 medicao, com prazo antes de gerar a classe `ai`.
+
+### O padrao pegou a terceira vez, e agora na direcao oposta (2026-08-21)
+
+O operador perguntou o que eu havia registrado sobre duas licoes da volta anterior — a reserva
+como obrigacao medida, e a proibicao de editar `EVALUATOR_FILES` em JSON por Python. Fui conferir:
+**as duas estavam no registro e nenhuma no ESTADO.**
+
+E essa e a terceira ocorrencia do mesmo defeito em dois dias, com as duas direcoes agora
+representadas:
+
+| # | o que aconteceu | direcao |
+|---|---|---|
+| 1 | a § 7 cobrava `RECIPES declara 4` que ja estava pago | entrada VELHA deixada no ESTADO |
+| 2 | a § 7 cobrava a emenda da `proxyReason` que o commit carregava | entrada VELHA deixada no ESTADO |
+| 3 | as duas licoes desta volta | entrada NUNCA acrescentada ao ESTADO |
+
+A costura e uma so, e enuncia-la e mais util que contar os casos: **o registro e onde eu escrevo e
+o ESTADO e onde o proximo le.** Escrever a razao num arquivo append-only e a parte que me sai
+natural, porque e narrativa e eu estou a narrar; emendar o documento que declara o que E exige
+voltar a uma lista que eu nao estou a olhar. Os tres casos sao o mesmo movimento faltando.
+
+**Onde cada uma foi:** a contagem de `harnessVersion` por provedor entrou na § 5.10, junto da
+consequencia que a torna decisiva — `countsTowardHeldOutFloor` filtra o piso de 200 da reserva por
+`recordEligibility`, entao o material do ollama e o unico em disco capaz de o cumprir, e `agy` e
+`codex` podem ser nucleo mas nao reserva. A proibicao do Python entrou na § 3.8, ao lado da do
+CRLF, porque e a mesma familia — procedimento cuja violacao corrompe bytes que sao identidade — e
+com a diferenca que a torna PIOR: o CRLF tem `git ls-files --eol` a vigiar a arvore inteira, e a
+representacao de numero so tem o teste canonico, que dispara DEPOIS de a corrupcao estar escrita.
+
+**O que eu nao vou fazer com isto:** transformar em regra generica ("sempre emendar o ESTADO"). Ja
+existe uma, na § 3.7, e ela nao me impediu tres vezes. O que muda comportamento e mais estreito e
+esta escrito aqui: quando eu escrever uma entrada de registro que contenha um NUMERO medido ou uma
+PROIBICAO de procedimento, esses dois tipos tem endereco no ESTADO — § 5 e § 3.8 — e a entrada nao
+esta fechada antes de eles estarem la.
