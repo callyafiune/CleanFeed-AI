@@ -9,7 +9,15 @@ the provenance.
 
 Two modes:
   --from-pairs pares.jsonl   # {parentId, parentText, editedText} já prontos
-  --generate                 # pede a edição a um provedor (gemini via keys.env)
+  --generate                 # pede a edição a um provedor
+
+`--generate` fala pela lane `gemini-api`, e ela deixou de ser caminho de geração por
+decisão: material vem por HARNESS e não por API. Então este modo — o único que itera as
+CÉLULAS e sabe dizer que operação a linha realizou — não tem hoje lane por onde falar. A
+outra pista agy que existe (`make_mixed_agy.py`) faz edit genérico e pina `mix_edit_v1`,
+sem noção de célula, então não substitui. Portar o laço para uma pista agy é a unidade que
+a classe mista espera, e até lá `--generate` roda sob uma lane que a política não quer:
+quem o executar gasta cota por linha que a decisão já recusou.
 
 Sealed-corpus rule: parents MUST come from the reserved bucket (never trained).
 

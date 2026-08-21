@@ -567,7 +567,6 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 | fato | valor |
 |---|---|
 | componentes independentes na célula, hoje | **4.000**, todos de tamanho 1, sobre o corpo estampado de 2026-08-06 (§ 5.4b) — a unidade é a PÁGINA (`groups.source = ptwiki_page_<page_id>`) e o piso de 300 fica 13,3× folgado. Era 1 enquanto o pool de 24/07 não carregava `groupAxes` |
-| roster do **codex**, e a faixa de effort que a política já admite (2026-08-20) | **seis** modelos para gerar — `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` — mais dois slugs que não são produto de geração (`gpt-reserve`, slot de fallback, e `codex-auto-review`, o modelo de revisão). A escada de effort é **por modelo**: 5.5/5.4/5.4-mini param em `xhigh`, `luna` alcança `max`, `sol` e `terra` alcançam `ultra`. A interseção dos seis é **`low…xhigh`**, que é exactamente o que `codex.effortLevels` declara, logo **6 × 4 = 24 receitas** sem emenda nenhuma. Proveniência, e ela é mais fraca do que um carimbo: `~/.codex/models_cache.json`, lido em **2026-08-20** — a data e não o instante, porque o `fetched_at` se move a cada corrida do codex. É **cache e não sonda contra a API**, e as duas versões **divergem**: o cache declara `client_version` **0.148.0** enquanto o binário instalado é **`codex-cli 0.145.0`**, e é essa divergência que explica o `missing field base_instructions` com que o próprio codex recusa este arquivo para uso próprio — foi escrito por um cliente mais novo que o que o lê. `-m/--model` é string livre sem `[possible values:]`, então o binário não valida id localmente e carimbo de primeira mão custa uma requisição por modelo. **Nada disto tem asserção**: os slugs e os tetos não existem no repositório, então a linha é leitura datada no molde do resto da § 5 e não invariante; a metade que o repositório sustenta é `codex.effortLevels`, e é dela que sai o 4 da multiplicação |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
 | `evaluatorDigest` da árvore | `df417705ee27e095cef53264e1bc3c480b3a92f532a6946025df57db0c1f78a6` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
 | byte de controle cru em caminho rastreado | **zero**, e imposto por dois testes nomeados, com escopos diferentes de propósito. `digests.test.ts` ("carry no raw control byte, so no code-search tool can skip an evaluator file") varre os **52** de `EVALUATOR_FILES` e **não isenta nada**, porque os bytes desses arquivos são a identidade do avaliador. `tests/unit/repo/line-endings.test.ts` ("leaves no raw control byte in a tracked path the repo calls text") varre **todo** caminho de `git ls-files`, isentando só extensão que `.gitattributes` declara `binary` — nenhuma rastreada hoje, então na prática é a árvore inteira. Os dois recusam controle C0 fora de LF, TAB e CR e apontam `arquivo:linha:coluna` mais o offset de byte. A isenção **não** é a classificação `i/-text` do git: ela é causada pelo byte cru, e filtrar por ela pularia justamente o infrator |
@@ -819,6 +818,93 @@ de forma do tokenizer deixavam a suíte em **85 passed / 25 subtests** — verde
 
 ---
 
+### 5.10 As lanes de geração, modelo por modelo — o que cada uma suporta, de onde vem e de onde roda (2026-08-20)
+
+Uma linha por modelo, e a coluna **verificação** é o que separa medido de inferido. Nada aqui é
+congelado no repositório: os rosters são de fora e se movem, então o que a corrida gravar vale
+mais que esta tabela, e a tabela existe para que a corrida não seja escrita de memória.
+
+**`codex` — OpenAI, `codex exec` pelo login do operador, rodado da raiz do worktree**
+
+| modelo | efforts | default | verificação |
+|---|---|---|---|
+| `gpt-5.6-sol` | low, medium, high, xhigh, max, ultra | low | cache |
+| `gpt-5.6-terra` | low, medium, high, xhigh, max, ultra | medium | cache |
+| `gpt-5.6-luna` | low, medium, high, xhigh, max | medium | cache |
+| `gpt-5.5` | low, medium, high, xhigh | medium | cache |
+| `gpt-5.4` | low, medium, high, xhigh | medium | cache |
+| `gpt-5.4-mini` | low, medium, high, xhigh | medium | cache |
+| `gpt-reserve` | low … max | medium | cache — **não é produto de geração**, é slot de fallback |
+| `codex-auto-review` | low … max | medium | cache — **não é produto de geração**, é o modelo de revisão |
+
+Proveniência, e ela é a **mais fraca das quatro lanes**: `~/.codex/models_cache.json`, lido em
+2026-08-20 — a data e não o instante, porque cada corrida do codex reescreve o `fetched_at`. É
+cache e não sonda, e as versões **divergem**: o cache declara `client_version` 0.148.0 enquanto
+o binário é `codex-cli 0.145.0`, o que explica o `missing field base_instructions` com que o
+próprio codex recusa o arquivo. `-m/--model` é string livre sem `[possible values:]`, então o
+binário não valida id localmente e o carimbo de primeira mão custa uma requisição por modelo.
+A faixa `low…xhigh` é a **interseção dos seis** e é exactamente o que `codex.effortLevels`
+declara, logo 6 × 4 = **24 combinações** sem emenda de política.
+
+**`agy` — Google e pesos abertos, `agy -p` pelo login do operador, binário em `~/AppData/Local/agy/bin/agy`**
+
+| modelo base | efforts | verificação |
+|---|---|---|
+| `gemini-3.7-flash` | low, medium, high | `agy models` (ids com tier) + geração real em `-low` |
+| `gemini-3.6-flash` | low, medium, high | `agy models` + geração real em `-low` |
+| `gemini-3.5-flash` | low, medium, high | `agy models` + geração real em `-low` |
+| `gemini-3.1-pro` | **low, high** | sonda: `medium` recusado com "available: low, high" |
+| `gpt-oss-120b` | **medium** | sonda: `low` recusado com "available: medium" |
+| `claude-sonnet-4-6` | **nenhum** | sonda: "--effort is not supported for model" |
+| `claude-opus-4-6-thinking` | **nenhum** | sonda: "--effort is not supported for model" |
+
+Três coisas medidas sobre a MECÂNICA do effort nesta lane, e a terceira corrige a leitura
+anterior. O tier vive no id **ou** na flag; o binário recusa a **contradição** e não a
+co-ocorrência — `gemini-3.5-flash-low --effort high` sai com "conflicts with", e
+`gemini-3.5-flash-low --effort low` **roda**, então as duas fontes não são exclusivas, são
+conferidas por consistência. Um valor fora de `low|medium|high` é recusado pela validação
+global antes de qualquer checagem por modelo, e por isso a ausência de um effort é sondável de
+graça e a presença não é. E **o roster não é estável**: `gemini-3.7-flash` não existia na
+medição anterior desta árvore, e o seu aparecimento move a aritmética — sob o desenho vigente
+(agy serve Gemini e `gpt-oss`, não Claude) são 11 combinações de Gemini mais 1 de `gpt-oss` =
+**12**, e não as 8 de antes. `claude-sonnet-4-6` e `claude-opus-4-6-thinking` continuam no
+roster e **não são usados**: a Anthropic vem do Claude Code. Um id inexistente devolve a MESMA
+mensagem que um modelo sem effort, então esta lane não permite verificar existência por sonda —
+só `agy models` lista.
+
+**`claude-code` — Anthropic, chamadas de subagente de dentro de uma sessão neste worktree, sem binário externo**
+
+| modelo | id | efforts | verificação |
+|---|---|---|---|
+| haiku | `claude-haiku-4-5-20251001` | low, medium, high, xhigh, max | **20 de 20 pares invocados hoje** |
+| sonnet | `claude-sonnet-5` | low, medium, high, xhigh, max | idem |
+| opus | `claude-opus-5` | low, medium, high, xhigh, max | idem |
+| fable | `claude-fable-5` | low, medium, high, xhigh, max | idem |
+
+Os quatro tiers cruzados com os cinco níveis foram **invocados de facto** e os vinte
+responderam, então esta é a **proveniência mais forte das quatro lanes** — medição viva, não
+cache nem roster. O haiku é **4.5** enquanto os outros três são **5**: o núcleo Anthropic
+abrange duas gerações, e nenhum documento pode dizer "quatro tiers da mesma geração". O que
+esta lane **não** tem é artefato externo: não há `--version` obtenível daqui (o `claude` não
+está no PATH desta sessão), não há arquivo como o cache do codex nem comando como `agy models`,
+e o harness é o CLI mais a orquestração da sessão. Logo `harnessVersion` nasce `unknown` e o
+preço é elegibilidade — tolerável no núcleo, que não é onde o piso de 200 conta.
+
+**`ollama` — reserva OOD, runtime local em `~/.ollama`, `ollama` 0.32.6**
+
+| modelo | id de conteúdo | estado | verificação |
+|---|---|---|---|
+| `qwen2.5:7b` | `845dbda0ea48` | **baixado**, 4,7 GB | `ollama list`, e o id casa com o `version` das 400 linhas em disco |
+| segunda família da reserva | — | **NÃO baixada** | nada a verificar: sem pull não há digest |
+
+A versão do runtime (0.32.6) é a mesma que as 400 linhas gravaram em `harnessVersion`, e o id de
+conteúdo do modelo é conferível agora — é a única lane em que a reprodutibilidade não depende de
+acreditar em ninguém. **A segunda família da reserva é uma lacuna aberta**: o tag não está
+decidido, o modelo não está em disco, e o digest não pode existir antes do pull. Ela não é
+opcional — reserva com uma família só não estima dispersão, e reserva vazia recusa a montagem.
+Disco livre: 26 GB, 89 % usado, o que sustenta o plano sequencial (pull → gerar → `rm`) e não
+dois modelos ao mesmo tempo.
+
 ## 6. NÃO APLICAR — aparecem no registro e não valem
 
 **A célula v1 × inserção como "inalcançável em todo comprimento", e os Jaccard de 0,848–0,869** (publicados em 2026-08-12 no ESTADO, no registro e em duas mensagens de commit). A sonda que os produziu passou uma **string** para `shingles_of`, que recebe **lista de tokens**: ela mediu 5-gramas de **caractere**, que é outra quantidade. Medido com a API correta, o par cruza 0,82 só a partir de ~223 tokens de pai — a álgebra que eu havia feito antes e depois declarado refutada estava certa. A exclusão da célula permanece, com a razão trocada para viés de comprimento (§ 3.3), e agora presa por teste nos dois lados da fronteira. Lição registrada: passar o tipo errado a uma função de produção devolve um número que **parece** medido.
@@ -1037,6 +1123,7 @@ de forma do tokenizer deixavam a suíte em **85 passed / 25 subtests** — verde
 
 | dívida | vence |
 |---|---|
+| **nada cruza modelo e effort com template, e a lacuna é de PLANO e não de código.** Medido: uma ilha carrega `templates`, `mixingTemplates`, `seedBlock`, `lines` e `reserved`; uma receita carrega `task`, `register`, `template` e `weight`. **Nenhum dos dois nomeia modelo ou effort** — os dois são argumentos POR CORRIDA (`--model`, `--effort`, `--effort-source`). Consequência: a palavra "receita" carrega duas coisas que só uma está planejada. A identidade de PROMPT é planejada e particionada por ilha (40 templates, e `promptTemplate` está na união do split); a identidade de GERAÇÃO — modelo × effort, 24 no codex, 12 no agy, 20 no Claude Code — é o que a linha de comando do operador fizer. Nada recusa uma ilha gerada inteira num só modelo+effort, e nada garante que um modelo apareça em mais de uma ilha. Não ameaça a divisibilidade, porque `generatorVersion` é REPORTADO e não unido; ameaça a **atribuição**: se a ilha 00 sair toda de um modelo e a 01 de outro, template e modelo ficam colineares e a fatia de um não separa do outro — o mesmo confundimento que a `proxyReason` declara para operação e template. O conserto é um plano de cobertura, não uma guarda | antes de gerar a classe `ai`; é decisão de desenho de medição |
 | a fonte de effort **`flag` do agy é medida e INGRAVÁVEL**, e a tentativa de a declarar foi medida e desfeita: `--effort` é fonte real num id base (`gemini-3.1-pro` recusa `medium` com "available: low, high"), mas a linha da lane carrega **um booleano** para uma propriedade que é **por modelo**, e `schema.ts` recusa `source: "flag"` com `configurable: false` — então acrescentar `"flag"` a `effortSources` cria um arm **inabitável**, e virar o booleano para `true` dá **119 vermelhos** porque todo registro agy já escrito passa a ser inválido. Uma corrida que passe `--effort` tem de ser gravada na forma de id de modelo ou não ser gravada. **E o codex tem o mesmo defeito pela outra ponta, com uma agravante**: a escada real dele é por modelo e chega a `max`/`ultra` (§ 5.6), e a política declara quatro níveis numa lista única. `effortLevels` é definido como **os níveis da escala** e não como subconjunto permitido, então a lista de quatro é **descrição incompleta da escala** — é falsidade, não teto. O efeito operacional é benigno e separado disso: uma linha gerada em `max` é recusada por "effort level outside the lane's own scale", isto é **fail-closed**, então nada corre risco enquanto a geração ficar em `low…xhigh`. Conserto dos dois = linha de lane que distinga effort por modelo, isto é mudança de FORMA | v2, ou a unidade que emendar as lanes; o teto de `xhigh` vence se alguém quiser `max` |
 | **`format:check` está VERMELHO**: `benchmark/tests/consume-holdout.test.ts` tem dois `it(...)` com **terceiro** argumento (`TIMEOUT_MS`), e com três argumentos o prettier não abraça o callback — ele expande a chamada inteira. Medido: `prettier --write` nesse arquivo é **78 inserções / 68 remoções**, formatação e nada mais, e o arquivo **não** está em `EVALUATOR_FILES`, logo o `evaluatorDigest` não se move. `npm run verify` e `verify:release:base` param aqui | commit próprio, antes de qualquer `verify` de release |
 | **as duas lanes que o desenho novo precisa não caberam na pré-inscrição, e a recusa é de FORMA e não de valor** — emenda reprovada pelo codex em 2026-08-20, com quatro dos seis itens derrubados. (i) `ollama` é a primeira lane que é **as duas coisas**: runtime local com versão (`ollama 0.32.6`, capturada em 400 de 400 linhas) **e** canal que aceita temperatura e **seed** real. O modelo selado supõe que isso é exclusivo — `GenerationChannel` tem três valores e o validador proíbe `decodingConfigurable` em canal com harness —, então declarar `api` perde a versão e declarar `cli` perde o seed, que `seed_pair` chama de "o único campo que torna uma geração reproduzível". O remédio nomeado: um canal novo que separe transporte de runtime versionado, mais a emenda da invariante de decoding. (ii) `claude-code` precisa que a definição textual de `not-supported` seja **enfraquecida**: ela diz "a lane não tem noção de effort" e já é falsa do agy, onde o arm dispara **por registro**. Sem isso a lane recusa toda linha que não gravou nível — as 122 `claude-fable-5` em disco entre elas | uma unidade própria, antes de gerar Anthropic ou a reserva |

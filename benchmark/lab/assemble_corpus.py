@@ -1154,14 +1154,16 @@ def effort_config(lane: str, meta: dict) -> dict:
     NOT DERIVED FROM THE MODEL ID SUFFIX, deliberately, even though on `agy` some
     model ids embed the tier (`gpt-oss-120b-medium`, `gemini-3.6-flash-low`) and the
     temptation to read it off the string is obvious. The precedence question is
-    SETTLED by probe for the three cases probed, and that is enough to remove the need
-    to derive anything: `--model gemini-3.5-flash-low --effort high` exits with
-    "conflicts with", `claude-sonnet-4-6 --effort high` with "not supported for
-    model", and `gemini-3.1-pro --effort medium` with "available: low, high". Three
-    refusals are not a proof that EVERY ambiguous pair is refused — the quantifier is
-    not measured and is not claimed. What they do establish is that a run which was
-    accepted knows which source applied, so reading "medium" off a suffix would record
-    a source the run never consulted — the invented identity R6 forbids.
+    SETTLED by probe, and what the probes show is CONSISTENCY CHECKING and not
+    exclusion: `--model gemini-3.5-flash-low --effort high` exits with "conflicts
+    with", while `--model gemini-3.5-flash-low --effort low` RUNS. The id-tier form and
+    the flag may co-occur when they AGREE, and only the contradiction is refused.
+    `claude-sonnet-4-6 --effort high` exits with "not supported for model" and
+    `gemini-3.1-pro --effort medium` with "available: low, high", so the ladder is
+    per-model. No quantifier over every pair is measured here and none is claimed. What
+    the probes establish is that an ACCEPTED run knows which source applied, so reading
+    "medium" off a suffix would record a source the run never consulted — the invented
+    identity R6 forbids.
 
     WHAT IS NOT RECORDABLE, and the residue is a shape and not a value: on a BASE
     model id the flag IS the source, and no row of this lane can say so. The lane row

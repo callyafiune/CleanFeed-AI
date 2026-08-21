@@ -9620,3 +9620,55 @@ lista.
 **Medicoes de fechamento:** lab 737 / 742 verde, `docs:check` OK. A emenda selada nao se moveu nesta
 volta — as quatro correcoes sao prosa de `assemble_corpus.py` e de `docs/ESTADO.md`, e nenhuma toca
 `EVALUATOR_FILES`, entao o `evaluatorDigest` continua no valor que `789d8cf` publicou.
+
+### As quatro lanes medidas modelo por modelo, e duas retratacoes minhas do mesmo dia (2026-08-20)
+
+O operador pediu que nao houvesse lacuna nenhuma antes de qualquer geracao. Fechei as quatro
+lanes na § 5.10 do ESTADO, uma linha por modelo, com uma coluna de VERIFICACAO que separa medido
+de inferido — e a medicao inverteu a ordem de confiabilidade que eu tinha publicado.
+
+**A lane que eu chamei de mais fraca e a mais forte.** Eu havia escrito que o Claude Code tinha a
+pior proveniencia das lanes, porque nao tem `--version` obtenivel nem arquivo de roster. Medi
+invocando: os **quatro tiers cruzados com os cinco niveis, 20 de 20 pares**, responderam. Isso e
+medicao VIVA. Enquanto isso o codex — que eu tratava como o caso resolvido — tem como fonte um
+cache que o proprio binario recusa (`client_version` 0.148.0 contra `codex-cli 0.145.0`). A
+proveniencia do roster e a proveniencia do harness sao coisas diferentes, e eu as havia colapsado
+numa so.
+
+**Retratacao 1: eu disse que a sonda do agy era gratis e nao era.** Quatro dos quatorze ids
+GERARAM — `gemini-3.7-flash-low`, `3.6-flash-low`, `3.5-flash-low` e `3.1-pro-low` responderam
+texto. Gastei quatro requisicoes do operador sob a alegacao de que nao gastaria nenhuma. A causa e
+o proprio fato que a sonda descobriu, e vai na retratacao 2.
+
+**Retratacao 2: as duas fontes de effort do agy NAO sao mutuamente exclusivas.** Eu escrevi isso
+hoje no docstring de `effort_config` e no registro. Medido: o binario recusa a CONTRADICAO
+(`--model gemini-3.5-flash-low --effort high` sai com "conflicts with") e ACEITA a concordancia
+(`--model gemini-3.5-flash-low --effort low` roda). Nao e exclusao, e conferencia de consistencia.
+A frase corrigida esta no docstring; era a terceira frase minha derrubada no mesmo dia, e as tres
+tinham a mesma forma — eu generalizei tres observacoes num quantificador.
+
+**Um caminho de verificacao que nao existe:** um id inexistente devolve a MESMA mensagem que um
+modelo sem effort (`gemini-9.9-flash-high` -> "--effort is not supported for model"), entao no agy
+nao ha sonda que verifique EXISTENCIA. Só `agy models` lista, e o roster **se move**:
+`gemini-3.7-flash` nao existia na medicao anterior desta arvore, e o aparecimento dele muda a
+aritmetica de 8 para 12 combinacoes no desenho vigente.
+
+**A reserva tem uma lacuna que nao se fecha escrevendo:** `ollama` 0.32.6 confere com o
+`harnessVersion` das 400 linhas e o id de conteudo de `qwen2.5:7b` (`845dbda0ea48`) casa com o
+`version` que elas gravaram — essa metade e a mais verificavel do projeto inteiro. A segunda
+familia **nao esta em disco** e o tag nao esta decidido, entao nao ha digest a registrar. Reserva
+de uma familia nao estima dispersao e reserva vazia recusa a montagem, logo isto e precondicao e
+nao preferencia. 26 GB livres sustentam o plano sequencial e nao dois modelos ao mesmo tempo.
+
+**E a lacuna que a pergunta do operador expos, que e a mais consequente de todas.** Ele pediu para
+verificar se as receitas consideram os modelos e os efforts. Medido: **nao consideram, e nada
+planeja esse cruzamento.** Uma ilha carrega `templates`/`mixingTemplates`/`seedBlock`/`lines`/
+`reserved`; uma receita carrega `task`/`register`/`template`/`weight`. Modelo e effort sao
+argumentos por CORRIDA. Entao "receita" nomeia duas coisas e so uma esta planejada: a identidade de
+PROMPT e particionada por ilha e vive na uniao do split, e a identidade de GERACAO — 24 no codex,
+12 no agy, 20 no Claude Code — e o que a linha de comando fizer. Nada recusa uma ilha inteira num
+so modelo+effort, e nada garante que um modelo apareca em mais de uma ilha. Nao ameaca
+divisibilidade (`generatorVersion` e reportado, nao unido); ameaca ATRIBUICAO, porque template e
+modelo colineares fazem a fatia de um nao separar do outro — exactamente o confundimento que a
+`proxyReason` declara para operacao e template. Registrado na § 7 como decisao de desenho de
+medicao, com prazo antes de gerar a classe `ai`.

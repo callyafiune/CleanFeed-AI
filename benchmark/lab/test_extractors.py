@@ -794,9 +794,12 @@ class FrozenLaneEntryTests(unittest.TestCase):
             self.assertFalse(output.exists())
         self.assertEqual(proc.returncode, 2, proc.stderr)
         self.assertIn("outside the frozen slate", proc.stderr)
-        # The reason, not just a rejection: the OpenAI families are the unseen-generator
-        # test, and they reach the corpus through the frozen `codex` lane only.
-        self.assertIn("OOD", proc.stderr)
+        # The reason, not just a rejection — and the reason MOVED when the operator sent
+        # the OpenAI families to the core: what the refusal has to say now is that the
+        # API is not a lane and that `codex` is the way in. Pinning the word "OOD" here
+        # would pin the policy that was reversed.
+        self.assertIn("not a lane of the slate", proc.stderr)
+        self.assertIn("codex", proc.stderr)
         for lane in ("agy", "codex", "gemini", "gemini_cli"):
             self.assertIn(lane, proc.stderr)
 
@@ -862,9 +865,13 @@ class FrozenLaneEntryTests(unittest.TestCase):
             with self.assertRaises(ValueError) as caught:
                 generate_ai.call_provider(provider, "m", "prompt", None, {}, 120)
             self.assertIn("outside the frozen slate", str(caught.exception))
-        self.assertIn("reserved for the unseen-generator test", str(
-            generate_ai.OUT_OF_SLATE_PROVIDERS["openai"]
-        ))
+        # Each reason names the lane that IS the way in, because that is the part a
+        # caller can act on: `codex` for the OpenAI families, and — for Anthropic — the
+        # fact that no lane carries Claude Code yet, so `agy` is no longer the answer.
+        self.assertIn("codex", generate_ai.OUT_OF_SLATE_PROVIDERS["openai"])
+        anthropic = generate_ai.OUT_OF_SLATE_PROVIDERS["anthropic"]
+        self.assertIn("Claude Code", anthropic)
+        self.assertNotIn("generated through the `agy` lane", anthropic)
         source = Path(__file__).with_name("generate_ai.py").read_text(encoding="utf-8")
         self.assertNotIn("api.openai.com", source)
         self.assertNotIn("api.anthropic.com", source)
@@ -3862,10 +3869,10 @@ class LaneIdentityTests(unittest.TestCase):
         from assemble_corpus import ai_record
 
         # `gpt-oss-120b-medium` EMBEDS its effort in the model id and `--effort` is a
-        # flag in parallel, but the two are mutually EXCLUSIVE per model — agy refuses
-        # the pair by name. Reading "medium" off the suffix would still be an identity
-        # we made up, because it would name a source this run never consulted, which R6
-        # forbids.
+        # flag in parallel. Measured: agy refuses the pair only when the two DISAGREE
+        # (`-low --effort high` conflicts; `-low --effort low` runs), and the ladder is
+        # per model. Reading "medium" off the suffix would still be an identity we made
+        # up, because it would name a source this run never consulted, which R6 forbids.
         candidate = self._ai_candidate(
             "agy", "gpt-oss-120b-medium", receita_da_tarefa("original")
         )
