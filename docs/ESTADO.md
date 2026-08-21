@@ -893,10 +893,46 @@ preço é elegibilidade — tolerável no núcleo, que não é onde o piso de 20
 
 **`ollama` — reserva OOD, runtime local em `~/.ollama`, `ollama` 0.32.6**
 
-| modelo | id de conteúdo | estado | verificação |
-|---|---|---|---|
-| `qwen2.5:7b` | `845dbda0ea48` | **baixado**, 4,7 GB | `ollama list`, e o id casa com o `version` das 400 linhas em disco |
-| segunda família da reserva | — | **NÃO baixada** | nada a verificar: sem pull não há digest |
+As duas famílias, com a ficha que a máquina dá (`ollama show`), não a que eu lembro:
+
+| | `qwen2.5:7b` | `llama3:latest` |
+|---|---|---|
+| id de conteúdo | `845dbda0ea48` | `365c0bd3c000` |
+| tamanho | 4,7 GB | 4,7 GB |
+| arquitetura | `qwen2` | `llama` |
+| parâmetros | **7.6B** (o tag diz 7b) | **8.0B** |
+| comprimento de contexto | 32768 | **8192** |
+| embedding | 3584 | 4096 |
+| quantização | **Q4_K_M** | **Q4_0** |
+| capacidades | completion, tools | completion |
+| system prompt do modelo | **sim** — "You are Qwen, created by Alibaba Cloud. You are a helpful assistant." | **não** |
+| licença | **Apache 2.0** | **META LLAMA 3 COMMUNITY LICENSE**, release 2024-04-18 |
+
+Três coisas que essa tabela expõe e que não são cosméticas.
+
+**(i) A licença da Meta tem cláusula que a Apache não tem, e o PAPEL de reserva é o que a
+desarma.** Lido do próprio arquivo: 1.b.v — *"You will not use the Llama Materials or any output
+or results of the Llama Materials to improve any other large language model"* — e 1.b.i, que
+obriga a incluir **"Llama 3" no início do nome** de qualquer modelo de IA distribuído que tenha
+sido treinado com o material. O detector é um encoder BERT-base e não um *large language model*,
+mas essa leitura é jurídica e risco jurídico é **B1, do operador**. O que desarma por MECANISMO é
+outra coisa: a reserva **nunca entra no treino** — o componente reservado assenta inteiro em
+`test` —, então o texto do Llama é material de AVALIAÇÃO e não "usado para treinar um modelo".
+Logo o Llama é seguro exactamente no papel para que foi escolhido, e seria inseguro no núcleo, num
+projeto cujo ponto é publicar pesos. A obrigação de atribuição já tem casa: `attributionRequired`
+é `true` na política. O Apache do qwen tem **zero** ocorrências de cláusula equivalente.
+
+**(ii) As duas famílias diferem na QUANTIZAÇÃO, e isso é confundimento.** Q4_K_M contra Q4_0 — o
+segundo é o esquema mais antigo e mais cru. Se o llama3 escrever pior, não se saberá se foi a
+linhagem ou a quantização, que é a mesma classe de defeito que o projeto vem nomeando. Conserto de
+graça: puxar `llama3:8b-instruct-q4_K_M` em vez do `latest` iguala o esquema e deixa a linhagem
+como única variável.
+
+**(iii) O system prompt é propriedade do MODELO e não da lane.** O qwen injeta um, o llama3 não.
+É a terceira ocorrência de propriedade por modelo que a linha de lane não consegue expressar
+(depois do effort do agy e do `effortLevels` do codex) — e morde na decisão de canal que o codex
+reprovou: "o runtime injeta system prompt" é verdade do qwen e falsa do llama3, então não pode ser
+fato de lane.
 
 **Por que a reserva TEM de ser esta lane, e não é preferência.** `harnessVersion` capturada, por provedor, contado nos pools: `public-dataset` 0 de 12.000 · `openai` 0 de 2.004 · `gemini` 0 de 1.650 · `codex` 0 de 1.402 · `agy` 0 de 419 · `anthropic` 0 de 122 — e **`ollama` 400 de 400**. Canal não-API sem versão capturada cai em `unknown`, `recordEligibility` conta eixo em `unknown`, e `countsTowardHeldOutFloor` filtra o piso de **200 positivos da reserva** por essa elegibilidade. Logo o material do ollama é o **único em disco** que consegue cumprir o piso hoje; `agy` e `codex` podem ser núcleo, onde elegibilidade não é exigida, mas não reserva. A assimetria é feliz e vale dizer: a lane de proveniência mais forte aterrissa no papel onde a proveniência é imposta.
 
@@ -1126,6 +1162,7 @@ dois modelos ao mesmo tempo.
 
 | dívida | vence |
 |---|---|
+| as 400 linhas da reserva em disco são recusadas por **três** motivos e não dois, e o terceiro é de CAMPO: todas as 400 declaram `licenseId: "apache-2.0"`, e `generated_license` recusa com `GeneratedRowDeclaresAnotherLicense` — a licença de uma linha gerada é a **nossa** concessão (`geracao-propria-v1`), e linha que nomeia a licença de outro está a nomear a licença de outro. Os outros dois são `UnmappableLane` (o provedor `ollama` não é lane congelada) e família sem papel no slate. **O terceiro não é consertado pela unidade de forma das lanes**: exige reescrever o campo nas 400 linhas ou regerá-las, e reescrever pool em disco é tocar material | antes de assentar a reserva |
 | **nada cruza modelo e effort com template, e a lacuna é de PLANO e não de código.** Medido: uma ilha carrega `templates`, `mixingTemplates`, `seedBlock`, `lines` e `reserved`; uma receita carrega `task`, `register`, `template` e `weight`. **Nenhum dos dois nomeia modelo ou effort** — os dois são argumentos POR CORRIDA (`--model`, `--effort`, `--effort-source`). Consequência: a palavra "receita" carrega duas coisas que só uma está planejada. A identidade de PROMPT é planejada e particionada por ilha (40 templates, e `promptTemplate` está na união do split); a identidade de GERAÇÃO — modelo × effort, 24 no codex, 12 no agy, 20 no Claude Code — é o que a linha de comando do operador fizer. Nada recusa uma ilha gerada inteira num só modelo+effort, e nada garante que um modelo apareça em mais de uma ilha. Não ameaça a divisibilidade, porque `generatorVersion` é REPORTADO e não unido; ameaça a **atribuição**: se a ilha 00 sair toda de um modelo e a 01 de outro, template e modelo ficam colineares e a fatia de um não separa do outro — o mesmo confundimento que a `proxyReason` declara para operação e template. O conserto é um plano de cobertura, não uma guarda | antes de gerar a classe `ai`; é decisão de desenho de medição |
 | a fonte de effort **`flag` do agy é medida e INGRAVÁVEL**, e a tentativa de a declarar foi medida e desfeita: `--effort` é fonte real num id base (`gemini-3.1-pro` recusa `medium` com "available: low, high"), mas a linha da lane carrega **um booleano** para uma propriedade que é **por modelo**, e `schema.ts` recusa `source: "flag"` com `configurable: false` — então acrescentar `"flag"` a `effortSources` cria um arm **inabitável**, e virar o booleano para `true` dá **119 vermelhos** porque todo registro agy já escrito passa a ser inválido. Uma corrida que passe `--effort` tem de ser gravada na forma de id de modelo ou não ser gravada. **E o codex tem o mesmo defeito pela outra ponta, com uma agravante**: a escada real dele é por modelo e chega a `max`/`ultra` (§ 5.6), e a política declara quatro níveis numa lista única. `effortLevels` é definido como **os níveis da escala** e não como subconjunto permitido, então a lista de quatro é **descrição incompleta da escala** — é falsidade, não teto. O efeito operacional é benigno e separado disso: uma linha gerada em `max` é recusada por "effort level outside the lane's own scale", isto é **fail-closed**, então nada corre risco enquanto a geração ficar em `low…xhigh`. Conserto dos dois = linha de lane que distinga effort por modelo, isto é mudança de FORMA | v2, ou a unidade que emendar as lanes; o teto de `xhigh` vence se alguém quiser `max` |
 | **`format:check` está VERMELHO**: `benchmark/tests/consume-holdout.test.ts` tem dois `it(...)` com **terceiro** argumento (`TIMEOUT_MS`), e com três argumentos o prettier não abraça o callback — ele expande a chamada inteira. Medido: `prettier --write` nesse arquivo é **78 inserções / 68 remoções**, formatação e nada mais, e o arquivo **não** está em `EVALUATOR_FILES`, logo o `evaluatorDigest` não se move. `npm run verify` e `verify:release:base` param aqui | commit próprio, antes de qualquer `verify` de release |

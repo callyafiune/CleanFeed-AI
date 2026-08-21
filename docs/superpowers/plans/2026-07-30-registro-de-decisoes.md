@@ -9706,3 +9706,46 @@ existe uma, na § 3.7, e ela nao me impediu tres vezes. O que muda comportamento
 esta escrito aqui: quando eu escrever uma entrada de registro que contenha um NUMERO medido ou uma
 PROIBICAO de procedimento, esses dois tipos tem endereco no ESTADO — § 5 e § 3.8 — e a entrada nao
 esta fechada antes de eles estarem la.
+
+### As duas familias da reserva, medidas com `ollama show` — e a licenca da Meta e desarmada pelo PAPEL (2026-08-21)
+
+O operador baixou o `llama3`. Rodei `ollama show` e `--license` nos dois e escrevi na § 5.10 a
+ficha que a maquina da, nao a que eu lembrava — o que ja pagou uma divida antiga: a sessao que
+propos a rota local supos "Apache 2.0" e disse que mediria antes de escrever politica. Medido:
+Apache 2.0 no qwen, e no llama3 a **META LLAMA 3 COMMUNITY LICENSE**.
+
+**A clausula, lida do arquivo e nao de memoria.** 1.b.v: *"You will not use the Llama Materials or
+any output or results of the Llama Materials to improve any other large language model"*. E 1.b.i,
+que e a mais direta contra este projeto: usar o material para treinar um modelo de IA
+**distribuido** obriga a incluir **"Llama 3" no inicio do nome** do modelo. O Apache do qwen tem
+zero ocorrencias de clausula equivalente.
+
+**E o que desarma nao e leitura juridica minha, e o MECANISMO do papel.** O detector e um encoder
+BERT-base e nao um *large language model*, mas essa leitura e juridica e risco juridico e B1, do
+operador — eu nao a assino. O que resolve por construcao e que a reserva **nunca entra no treino**:
+o componente reservado assenta inteiro em `test`, entao o texto do Llama e material de AVALIACAO e
+nao "usado para treinar um modelo". Logo o Llama e seguro exactamente no papel para que foi
+escolhido, e seria inseguro no nucleo — num projeto cujo ponto e publicar pesos, a clausula do nome
+morderia. A atribuicao ja tem casa: `attributionRequired` e `true` na politica.
+
+**Um confundimento que a ficha expos e que sai de graca.** As duas familias diferem na
+QUANTIZACAO: Q4_K_M no qwen, **Q4_0** no llama3 — o esquema mais antigo e mais cru. Se o llama3
+escrever pior, ninguem sabera se foi a linhagem ou a quantizacao, que e a mesma classe de defeito
+que esta semana passou nomeando. Puxar `llama3:8b-instruct-q4_K_M` em vez do `latest` iguala o
+esquema e deixa a linhagem como unica variavel. Recomendado e nao feito: trocar o tag muda o id de
+conteudo, e o id e a identidade.
+
+**A terceira ocorrencia da mesma forma de defeito.** O qwen injeta system prompt proprio ("You are
+Qwen, created by Alibaba Cloud"), o llama3 **nao**. Entao "o runtime injeta system prompt" e
+propriedade do MODELO e nao da lane — depois do effort do agy e do `effortLevels` do codex, e a
+terceira propriedade por modelo que a linha de lane nao consegue expressar. E ela morde na decisao
+de canal que o codex reprovou: eu ia argumentar que o ollama nao e `api` porque o runtime injeta
+prompt, e isso e verdade de um dos dois modelos.
+
+**E um achado que corrige o que eu publiquei ontem.** Eu escrevi que o material do ollama e "o
+unico que cumpre o piso de 200" — verdade quanto a elegibilidade, e incompleto quanto a
+escrevibilidade. Medido: **as 400 linhas declaram `licenseId: "apache-2.0"`**, e
+`generated_license` recusa com `GeneratedRowDeclaresAnotherLicense`, porque a licenca de uma linha
+gerada e a NOSSA concessao (`geracao-propria-v1`). E o TERCEIRO motivo de recusa do mesmo pool,
+depois de `UnmappableLane` e da familia sem papel — e o unico que a unidade de forma das lanes
+**nao** conserta: exige reescrever o campo nas 400 linhas ou regerá-las.
