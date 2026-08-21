@@ -156,6 +156,7 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | R4 | todo registro gerado nasce **`automated/unreviewed`**; a auditoria de PII é **amostral** e não produz `passed` por registro | OP |
 | | linhagem: todo gerado **que declara pai** referencia pai presente; `assertDerivedParentsResolve` roda antes do split. A admissão de pai `notApplicable` numa linha `ai` é lacuna aberta (§ 7) | AG |
 | | **o Claude fica no núcleo apesar de marcar a saída** — decisão do operador em 2026-08-12. A lane `agy` é `claude-sonnet-4-6`, e a Anthropic publicou marca d'água em **nível de modelo**, presente em qualquer superfície, com os modelos existentes em transição declarada e sem sinal observável; o detector para terceiros é prometido e não existe. Já o **Gemini pela API não é marcado** e não há plano de marcar — resposta de engenheiro do Google em 5/08/2026 sobre `gemini-3.1-flash-lite` —, então as lanes `gemini` e `gemini_cli` estão limpas. Três razões sustentam manter: a consequência de o detector montar na marca **já é medida** pela reserva OOD por família, que é para isso; excluir por hipótese não medida trocaria um risco não quantificável por uma **monocultura de provedor** no núcleo, que é custo real; e um núcleo **misto** nessa dimensão é mais forte que um puro, porque a marca não pode explicar o desempenho na metade Gemini, que não tem marca nenhuma. **A condição de desenho:** a lane `agy` é gerada dentro de **uma janela só**, registrada, para a marca ficar **constante dentro da família** — presente ou ausente, e não há como saber qual. Variação dentro da família seria eixo oculto com `generatedAt` como proxy; constante dentro da família é indistinguível da impressão digital que `generatorFamily` já nomeia, a sonda de lane já mede e a reserva OOD já guarda | OP |
+| | a reserva OOD é de **DUAS** famílias locais, **450 linhas cada** como alvo de geração: `qwen2.5:7b` (Alibaba, Apache 2.0) e `llama3` em `q4_K_M` (Meta, Community License). Decisão do operador em 2026-08-21. A aritmética que a sustenta são **dois pisos de 200 que competem pelo mesmo bolo**: `test` são 20 % de 10.000 = 2.000 linhas, ~800 humanas e ~1.200 positivos; cada família reservada precisa de ≥ 200 elegíveis para ser reivindicada (`HELD_OUT_MINIMUM`, `HELD_OUT_POSITIVES_FLOOR`) **e** o núcleo precisa de ≥ 200 no mesmo bloco (`powerFloors.criticalRecallPositives`), porque a hipótese de recall sobre família VISTA vive ali também. Com 450 geradas por família, o que chega a `test` é pós-rendimento: a 15 % de perda são 382 por família e 300+ para o núcleo, a 35 % são 292 e 400+ — folgado nos dois lados. A 500 cada o núcleo ficaria em 200 exactos, margem zero. **O mistral fica fora e a razão não é orçamento:** a pergunta que a reserva responde — o resultado OOD depende da linhagem? — é respondível com duas, e cortar as duas para 300 para acomodar uma terceira trocaria robustez contra descarte por um ponto de dispersão. **Custo de reversão, e é assimétrico:** acrescentar a terceira família DEPOIS não é grátis — a reserva vai inteira para `test`, três famílias cheias transbordam o bloco, e `ReserveFillsTheBlindBlock` declara que a montagem **recusa** em vez de escolher quais linhas reservadas descartar ("how much of each role the block holds is a collection quota"). Logo caber três depois exigiria o operador reduzir coleta à mão | OP · ratificado 2026-08-21 |
 | | as famílias **OpenAI vão ao NÚCLEO** — decisão do operador, revertendo a reserva por provedor: ChatGPT e Claude são as famílias que as pessoas de facto usam, e um detector cego para elas é cego para o caso dominante. A geração é pelo **codex CLI** (não API) e a Anthropic pelo **Claude Code** (não pelo agy, que fica com Gemini e `gpt-oss-120b`). O que a reversão FORÇA: `gpt-oss-120b-medium` é linhagem OpenAI e vai ao núcleo com ela — reservá-la seria reservar receita de fornecedor visto —, e com as duas fora a reserva fica **vazia**, que `declared_held_out_families` recusa ("'sem reserva' não é um estado que a governança consiga expressar"). Logo nomear uma quarta linhagem deixou de ser opcional e é **precondição da montagem**. A reserva escolhida é **local por ollama** — `qwen2.5-7b` e `mistral-7b` —, e a alegação encolhe com ela: a fatia OOD passa a medir "linhagem de pesos abertos não vista" e não "provedor de fronteira ausente", com o viés otimista de um 7B quantizado declarado no model card. A reserva continua sendo política nomeada do slate (`OOD_RESERVED_FAMILIES`), não prefixo, e todo papel de família é **declarado** — `core`, `ood-reserved` ou `excluded` —, com censo dos pools conferido por guarda | OP |
 | | `--provider` recusa na **argparse**, com as quatro lanes congeladas como `choices`: nenhuma chamada de provedor fora do slate é gasta | AG |
 | | partições cegas = `test` e `cal-B`, privadas e byte-intocadas até a v2.0 | OP |
@@ -895,15 +896,15 @@ preço é elegibilidade — tolerável no núcleo, que não é onde o piso de 20
 
 As duas famílias, com a ficha que a máquina dá (`ollama show`), não a que eu lembro:
 
-| | `qwen2.5:7b` | `llama3:latest` |
+| | `qwen2.5:7b` | `llama3:8b-instruct-q4_K_M` |
 |---|---|---|
-| id de conteúdo | `845dbda0ea48` | `365c0bd3c000` |
-| tamanho | 4,7 GB | 4,7 GB |
+| id de conteúdo | `845dbda0ea48` | `9b8f3f3385bf` |
+| tamanho | 4,7 GB | 4,9 GB |
 | arquitetura | `qwen2` | `llama` |
 | parâmetros | **7.6B** (o tag diz 7b) | **8.0B** |
 | comprimento de contexto | 32768 | **8192** |
 | embedding | 3584 | 4096 |
-| quantização | **Q4_K_M** | **Q4_0** |
+| quantização | **Q4_K_M** | **Q4_K_M** |
 | capacidades | completion, tools | completion |
 | system prompt do modelo | **sim** — "You are Qwen, created by Alibaba Cloud. You are a helpful assistant." | **não** |
 | licença | **Apache 2.0** | **META LLAMA 3 COMMUNITY LICENSE**, release 2024-04-18 |
@@ -922,11 +923,15 @@ Logo o Llama é seguro exactamente no papel para que foi escolhido, e seria inse
 projeto cujo ponto é publicar pesos. A obrigação de atribuição já tem casa: `attributionRequired`
 é `true` na política. O Apache do qwen tem **zero** ocorrências de cláusula equivalente.
 
-**(ii) As duas famílias diferem na QUANTIZAÇÃO, e isso é confundimento.** Q4_K_M contra Q4_0 — o
-segundo é o esquema mais antigo e mais cru. Se o llama3 escrever pior, não se saberá se foi a
-linhagem ou a quantização, que é a mesma classe de defeito que o projeto vem nomeando. Conserto de
-graça: puxar `llama3:8b-instruct-q4_K_M` em vez do `latest` iguala o esquema e deixa a linhagem
-como única variável.
+**(ii) A quantização é a MESMA nas duas, e é isso que deixa a linhagem como única variável.**
+Q4_K_M nos dois lados. Esquemas diferentes confundiriam as duas fatias: se uma escrevesse pior,
+não se saberia se foi a linhagem ou a quantização — e a reserva existe para responder a primeira.
+**Os dois tags são explícitos, e isso é regra e não gosto:** `latest` é ponteiro móvel, resolve
+para um id hoje e para outro amanhã, então não identifica pesos. O que identifica é o id de
+conteúdo, e uma corrida grava `<tag>@<id>`; um rótulo móvel num documento envelhece em silêncio.
+**Armadilha ao escolher a quantização:** a linha `8b-text` é o modelo BASE, sem ajuste de
+instrução — devolve continuação crua e não segue o prompt de geração, então `8b-instruct-*` é a
+família a tomar.
 
 **(iii) O system prompt é propriedade do MODELO e não da lane.** O qwen injeta um, o llama3 não.
 É a terceira ocorrência de propriedade por modelo que a linha de lane não consegue expressar
@@ -941,8 +946,7 @@ conteúdo do modelo é conferível agora — é a única lane em que a reproduti
 acreditar em ninguém. **A segunda família da reserva é uma lacuna aberta**: o tag não está
 decidido, o modelo não está em disco, e o digest não pode existir antes do pull. Ela não é
 opcional — reserva com uma família só não estima dispersão, e reserva vazia recusa a montagem.
-Disco livre: 26 GB, 89 % usado, o que sustenta o plano sequencial (pull → gerar → `rm`) e não
-dois modelos ao mesmo tempo.
+**Rendimento medido**, do log da corrida que produziu as 400 linhas do qwen: 400 em 249,8 min = **37,5 s por linha** em CPU. Logo 450 linhas custam **≈ 4,7 h por família** e as duas ≈ 9,4 h, sequenciais — 15,7 GB de RAM não sustentam dois modelos carregados. O plano sequencial (pull → gerar → `rm`) mantém o pico num modelo, e apagar a cópia local não custa reprodutibilidade porque o artefato de registro é o id de conteúdo.
 
 ## 6. NÃO APLICAR — aparecem no registro e não valem
 
@@ -1162,7 +1166,7 @@ dois modelos ao mesmo tempo.
 
 | dívida | vence |
 |---|---|
-| as 400 linhas da reserva em disco são recusadas por **três** motivos e não dois, e o terceiro é de CAMPO: todas as 400 declaram `licenseId: "apache-2.0"`, e `generated_license` recusa com `GeneratedRowDeclaresAnotherLicense` — a licença de uma linha gerada é a **nossa** concessão (`geracao-propria-v1`), e linha que nomeia a licença de outro está a nomear a licença de outro. Os outros dois são `UnmappableLane` (o provedor `ollama` não é lane congelada) e família sem papel no slate. **O terceiro não é consertado pela unidade de forma das lanes**: exige reescrever o campo nas 400 linhas ou regerá-las, e reescrever pool em disco é tocar material | antes de assentar a reserva |
+| as 400 linhas da reserva em disco são recusadas por **dois** motivos, e cada um tem unidade nomeada: `UnmappableLane` (o provedor `ollama` não é lane congelada) e família `qwen2.5-7b-q4km` sem papel no slate. **E a pista de geração do ollama não existe no repositório** — medido, nenhum arquivo menciona `ai_reserved_qwen`, `ollama` ou a porta 11434, então as 400 vieram de um script de outra sessão que nunca foi commitado. Consequência: as 50 que faltam até 450, e qualquer regeração, exigem escrever essa pista — a mesma falta que a classe mista tem do lado agy | a lane, na unidade de forma; a pista de geração, unidade própria antes de assentar a reserva |
 | **nada cruza modelo e effort com template, e a lacuna é de PLANO e não de código.** Medido: uma ilha carrega `templates`, `mixingTemplates`, `seedBlock`, `lines` e `reserved`; uma receita carrega `task`, `register`, `template` e `weight`. **Nenhum dos dois nomeia modelo ou effort** — os dois são argumentos POR CORRIDA (`--model`, `--effort`, `--effort-source`). Consequência: a palavra "receita" carrega duas coisas que só uma está planejada. A identidade de PROMPT é planejada e particionada por ilha (40 templates, e `promptTemplate` está na união do split); a identidade de GERAÇÃO — modelo × effort, 24 no codex, 12 no agy, 20 no Claude Code — é o que a linha de comando do operador fizer. Nada recusa uma ilha gerada inteira num só modelo+effort, e nada garante que um modelo apareça em mais de uma ilha. Não ameaça a divisibilidade, porque `generatorVersion` é REPORTADO e não unido; ameaça a **atribuição**: se a ilha 00 sair toda de um modelo e a 01 de outro, template e modelo ficam colineares e a fatia de um não separa do outro — o mesmo confundimento que a `proxyReason` declara para operação e template. O conserto é um plano de cobertura, não uma guarda | antes de gerar a classe `ai`; é decisão de desenho de medição |
 | a fonte de effort **`flag` do agy é medida e INGRAVÁVEL**, e a tentativa de a declarar foi medida e desfeita: `--effort` é fonte real num id base (`gemini-3.1-pro` recusa `medium` com "available: low, high"), mas a linha da lane carrega **um booleano** para uma propriedade que é **por modelo**, e `schema.ts` recusa `source: "flag"` com `configurable: false` — então acrescentar `"flag"` a `effortSources` cria um arm **inabitável**, e virar o booleano para `true` dá **119 vermelhos** porque todo registro agy já escrito passa a ser inválido. Uma corrida que passe `--effort` tem de ser gravada na forma de id de modelo ou não ser gravada. **E o codex tem o mesmo defeito pela outra ponta, com uma agravante**: a escada real dele é por modelo e chega a `max`/`ultra` (§ 5.6), e a política declara quatro níveis numa lista única. `effortLevels` é definido como **os níveis da escala** e não como subconjunto permitido, então a lista de quatro é **descrição incompleta da escala** — é falsidade, não teto. O efeito operacional é benigno e separado disso: uma linha gerada em `max` é recusada por "effort level outside the lane's own scale", isto é **fail-closed**, então nada corre risco enquanto a geração ficar em `low…xhigh`. Conserto dos dois = linha de lane que distinga effort por modelo, isto é mudança de FORMA | v2, ou a unidade que emendar as lanes; o teto de `xhigh` vence se alguém quiser `max` |
 | **`format:check` está VERMELHO**: `benchmark/tests/consume-holdout.test.ts` tem dois `it(...)` com **terceiro** argumento (`TIMEOUT_MS`), e com três argumentos o prettier não abraça o callback — ele expande a chamada inteira. Medido: `prettier --write` nesse arquivo é **78 inserções / 68 remoções**, formatação e nada mais, e o arquivo **não** está em `EVALUATOR_FILES`, logo o `evaluatorDigest` não se move. `npm run verify` e `verify:release:base` param aqui | commit próprio, antes de qualquer `verify` de release |

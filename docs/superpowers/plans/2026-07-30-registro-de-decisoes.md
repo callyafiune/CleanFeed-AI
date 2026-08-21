@@ -9749,3 +9749,52 @@ escrevibilidade. Medido: **as 400 linhas declaram `licenseId: "apache-2.0"`**, e
 gerada e a NOSSA concessao (`geracao-propria-v1`). E o TERCEIRO motivo de recusa do mesmo pool,
 depois de `UnmappableLane` e da familia sem papel — e o unico que a unidade de forma das lanes
 **nao** conserta: exige reescrever o campo nas 400 linhas ou regerá-las.
+
+### A reserva fica em duas familias, o campo das 400 foi reescrito, e o rendimento deixou de ser estimativa (2026-08-21)
+
+O operador ratificou **duas** familias reservadas, 450 linhas cada: `qwen2.5:7b` e o llama em
+`q4_K_M`. E autorizou reescrever o campo de licenca das 400 linhas que ja existiam.
+
+**A troca de tag foi feita e ela e sobre confundimento, nao sobre qualidade.** `llama3:latest` era
+`8b-instruct-q4_0` — medido, os 4,7 GB do `latest`, do `8b` e do `8b-instruct-q4_0` batem — e o
+qwen e Q4_K_M. Esquemas diferentes teriam confundido linhagem com quantizacao: se uma fatia
+escrevesse pior, ninguem saberia qual das duas causas, e a reserva existe para responder a
+primeira. Agora as duas sao Q4_K_M, id `9b8f3f3385bf` no llama, e a linhagem e a unica variavel. O
+`latest` saiu tambem por ser ponteiro movel: identifica pesos hoje e nao amanha.
+
+**O campo das 400 foi reescrito, e a medicao que autorizou isso e que o escritor NAO existe no
+repositorio.** Nenhum arquivo menciona `ai_reserved_qwen`, `ollama` ou a porta 11434 — as 400
+vieram de um script de outra sessao que nunca foi commitado. Logo reescrever e conserto COMPLETO e
+nao metade: nao ha upstream que reintroduza o campo. Snapshot antes, fora do repositorio, com
+digests (`snapshots/qwen-pre-licenca-2026-08-21/`, sha256 `a7fbb42d...` -> `e7574a8f...`), no
+precedente da canonizacao mista. A verificacao foi campo por campo nas 400 linhas: **so
+`licenseId` mudou**, de `apache-2.0` para `geracao-propria-v1`, e `generated_license` passou a
+aceitar. Sobram dois motivos de recusa, cada um com unidade nomeada.
+
+**E a falta que a mesma medicao expos e maior que o campo:** a pista de geracao do ollama nao existe
+no repositorio. As 50 linhas que faltam ate 450, e qualquer regeracao, exigem escreve-la — a mesma
+falta que a classe mista tem do lado agy desde que a API saiu da mesa. Duas pistas a escrever, nao
+uma.
+
+**O rendimento deixou de ser estimativa herdada.** Eu vinha repetindo "5-15 tok/s, 2 a 4,5 h por
+familia", de uma conversa anterior. O log da propria corrida diz: 400 linhas em 249,8 min = **37,5 s
+por linha**. Entao 450 custam **4,7 h por familia** e as duas 9,4 h, sequenciais. Eu estava otimista
+por quase o dobro, e o numero agora e do log e nao meu.
+
+**A aritmetica dos 450, e o custo de reversao assimetrico que a medicao revelou.** `test` sao 2.000
+linhas, ~1.200 positivos, e ha DOIS pisos de 200 competindo: por familia reservada
+(`HELD_OUT_MINIMUM`, `HELD_OUT_POSITIVES_FLOOR`) e do nucleo (`powerFloors.criticalRecallPositives`),
+porque a hipotese de recall sobre familia VISTA vive no mesmo bloco. Com 450 geradas, o que chega e
+pos-rendimento: a 15 % de perda 382 por familia, a 35 % 292 — folgado nos dois lados. O mistral fica
+fora porque a pergunta "o resultado OOD depende da linhagem?" e respondivel com duas, e cortar as
+duas para 300 trocaria robustez por um ponto de dispersao. **Acrescentar a terceira DEPOIS nao e
+gratis:** tres familias cheias transbordam o bloco cego e `ReserveFillsTheBlindBlock` declara que a
+montagem RECUSA em vez de escolher quais linhas reservadas descartar. Caber tres depois exigiria o
+operador reduzir coleta a mao.
+
+**Uma coisa que eu escrevi errado e corrigi no mesmo movimento**, e vale porque e a quarta da mesma
+familia hoje: ao trocar a ficha na § 5.10 eu escrevi *"o `llama3:latest` que estava aqui era..."* e
+*"`latest` resolvia hoje para `365c0bd3c000`"*. Isso e narrativa do que mudou, num documento que diz
+o que E. Um `grep` pelo rotulo antigo pegou as duas ocorrencias dentro do meu proprio texto novo. A
+frase ficou atemporal: os dois tags sao explicitos porque `latest` e ponteiro movel e nao identifica
+pesos — regra, nao historia.
