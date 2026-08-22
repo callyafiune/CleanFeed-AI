@@ -4886,6 +4886,14 @@ class ClusterDistributionReportTests(unittest.TestCase):
         self.assertEqual(report["axes"]["nearDuplicate"]["sizeDistribution"], {"1": 2})
 
 
+class _ReconfigurableStdout(io.StringIO):
+    # Every `main()` in the lab forces utf-8 with `sys.stdout.reconfigure`, which
+    # `io.StringIO` does not have: a bare one under `redirect_stdout` kills the run before
+    # it starts.
+    def reconfigure(self, **kwargs) -> None:
+        return None
+
+
 class GeneratorCaptureTests(unittest.TestCase):
     """What the GENERATORS have to record so a v3 row can be eligible."""
 
@@ -5057,7 +5065,7 @@ class GeneratorCaptureTests(unittest.TestCase):
                     "--humans", "arquivo-que-nao-existe.jsonl",
                     "--output", "saida.jsonl", "--dry-run",
                 ]
-                with contextlib.redirect_stdout(_io.StringIO()):
+                with contextlib.redirect_stdout(_ReconfigurableStdout()):
                     try:
                         generate_ai.main()
                     except BaseException as error:  # noqa: BLE001 — the verdict IS the error
@@ -5114,7 +5122,7 @@ class GeneratorCaptureTests(unittest.TestCase):
                 with mock.patch.object(
                     generate_ai, "harness_version", lambda provider: None
                 ):
-                    with contextlib.redirect_stdout(_io.StringIO()):
+                    with contextlib.redirect_stdout(_ReconfigurableStdout()):
                         with self.assertRaises(SystemExit) as caught:
                             generate_ai.main()
             finally:
@@ -5141,6 +5149,467 @@ class GeneratorCaptureTests(unittest.TestCase):
         import inspect
 
         self.assertIn("reserve_family", inspect.getsource(generate_ai.main))
+
+    def test_the_agy_mixing_lane_asks_by_CELL_and_names_the_island_slot(self) -> None:
+        import make_mixed
+        import make_mixed_agy
+
+        # The cell of each parent comes from the island's WHOLE interleaved order, so the
+        # same parent gets the same cell on a resumed run. Twenty cells over a quota of
+        # 100, which is what the production island buys.
+        island = make_mixed.island_plan("ilha_03")
+        parents = [
+            {"id": f"pai_{index:03d}", "text": PROSE_60, "family": "ptwiki_lead"}
+            for index in range(island["lines"]["mixed"])
+        ]
+        cells = make_mixed_agy.cell_of_each_parent(parents, island)
+        self.assertEqual(len(cells), island["lines"]["mixed"])
+        self.assertEqual(
+            sorted(set(cells.values())), sorted(make_mixed.assembler().mix_cells())
+        )
+        # And it is the SAME allocation the generating lane uses, not a second expansion
+        # of the same arithmetic.
+        self.assertEqual(
+            sorted(cells.values()),
+            sorted(make_mixed.assembler().mix_cell_allocation(island["lines"]["mixed"])),
+        )
+        # A parent beyond the quota gets NO cell: a line outside the plan is not a line
+        # with a default cell.
+        beyond = parents + [
+            {"id": "pai_extra", "text": PROSE_60, "family": "ptwiki_lead"}
+        ]
+        self.assertEqual(
+            len(make_mixed_agy.cell_of_each_parent(beyond, island)),
+            island["lines"]["mixed"],
+        )
+        # WHICH parent gets WHICH cell, composed independently here from the two
+        # production functions. Comparing against the module's own composition is what
+        # catches an allocation indexed by another order: a check that only compared the
+        # MULTISET of cells would pass under any permutation, and the permutation is
+        # exactly what a resume changes.
+        expected = dict(
+            zip(
+                [
+                    parent["id"]
+                    for parent in make_mixed.interleave_by_family(parents)
+                ],
+                make_mixed.assembler().mix_cell_allocation(island["lines"]["mixed"]),
+                strict=True,
+            )
+        )
+        self.assertEqual(cells, expected)
+        # And the same parent keeps its cell when the run has only the SUFFIX left to do,
+        # which is the state every resume is in — so the allocation is taken over the
+        # island's whole parent list and never over the pending one.
+        remaining = parents[len(parents) // 2 :]
+        moved = make_mixed_agy.cell_of_each_parent(remaining, island)
+        self.assertNotEqual(
+            moved[remaining[0]["id"]],
+            cells[remaining[0]["id"]],
+            "a alocacao sobre o resto tem de DIVERGIR da alocacao sobre a ilha inteira, "
+            "senao este caso nao distingue as duas indexacoes",
+        )
+        # The identity the row will carry is the island's slot for that operation, and
+        # every operation of every cell has one.
+        for operation, _level in set(cells.values()):
+            self.assertEqual(
+                make_mixed.MIX_TEMPLATES[island["mixingTemplates"][operation]][
+                    "operation"
+                ],
+                operation,
+            )
+        # The generic legacy identity is NOT what this lane sends any more, and the module
+        # must not name it at all: a fixed `mix_edit_v1` here is a row belonging to no
+        # island.
+        source = (
+            Path(make_mixed_agy.__file__).read_text(encoding="utf-8")
+        )
+        self.assertNotIn("mix_edit_v1", source)
+
+    def test_the_agy_mixing_lane_writes_only_its_own_islands_parents(self) -> None:
+        import contextlib
+        import io as _io
+        from unittest import mock
+
+        import make_mixed
+        import make_mixed_agy
+
+        # Driven through `main()` with the binary stubbed, because the filter is what keeps
+        # two islands from fusing through the human seed and a test that re-implements it
+        # would measure the plan and nothing about this lane.
+        lab = make_mixed.assembler()
+        island = make_mixed.island_plan("ilha_03")
+        mine = next(
+            f"pai_{i:04d}"
+            for i in range(4000)
+            if lab.island_of_seed(lab.ISLAND_PLAN, f"pai_{i:04d}")["island"]
+            == island["island"]
+        )
+        foreign = next(
+            f"pai_{i:04d}"
+            for i in range(4000)
+            if lab.island_of_seed(lab.ISLAND_PLAN, f"pai_{i:04d}")["island"]
+            != island["island"]
+        )
+        parent_text = " ".join(f"palavra{index}" for index in range(40))
+        # Ten of the forty words replaced, which lands inside a band — a pair outside the
+        # band is discarded, so an edit that misses one would test the discard instead.
+        edited = " ".join(
+            (f"nova{index}" if index < 10 else f"palavra{index}") for index in range(40)
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            parents = tmp / "pais.jsonl"
+            parents.write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "id": pid,
+                            "text": parent_text,
+                            "family": "ptwiki_lead",
+                            "sourceMaterialBatch": "smb_ptwiki-20220301",
+                        },
+                        ensure_ascii=False,
+                    )
+                    + chr(10)
+                    for pid in (mine, foreign)
+                ),
+                encoding="utf-8",
+            )
+            pairs = tmp / "pares.jsonl"
+            saved = sys.argv
+            try:
+                sys.argv = [
+                    "make_mixed_agy.py", "--island", island["island"],
+                    "--parents", str(parents), "--pairs", str(pairs),
+                    "--model", "gemini-3.6-flash-low", "--pace", "0",
+                ]
+                with mock.patch.object(
+                    make_mixed_agy, "run_agy", lambda *a, **k: edited
+                ), mock.patch.object(
+                    make_mixed_agy, "harness_version", lambda provider: "1.2.3"
+                ):
+                    with contextlib.redirect_stdout(_ReconfigurableStdout()):
+                        make_mixed_agy.main()
+            finally:
+                sys.argv = saved
+            written = [
+                json.loads(line)
+                for line in pairs.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+        # ONE pair, and it is the parent of this island. The foreign one never reached the
+        # binary, which is the point: a pair of another island fuses the two components.
+        self.assertEqual([row["parentId"] for row in written], [mine])
+        row = written[0]
+        operation, level = make_mixed_agy.cell_of_each_parent(
+            [{"id": mine, "text": parent_text, "family": "ptwiki_lead"}], island
+        )[mine]
+        self.assertEqual(row["mixOperation"], operation)
+        self.assertEqual(row["mixLevel"], level)
+        self.assertEqual(
+            row["promptTemplateId"], island["mixingTemplates"][operation]
+        )
+        self.assertEqual(row["harnessVersion"], "1.2.3")
+        self.assertEqual(row["provider"], "antigravity")
+        # The pair is IMPORTABLE: `emit` refuses a declared operation that disagrees with
+        # the identity, so a pair this lane writes has to survive the import that reads it.
+        buffer = _io.StringIO()
+        make_mixed.emit(
+            buffer,
+            {
+                "id": row["parentId"],
+                "text": row["parentText"],
+                "family": row["family"],
+                "sourceMaterialBatch": row["sourceMaterialBatch"],
+            },
+            row["editedText"],
+            provider=row["provider"],
+            model=row["model"],
+            template_id=row["promptTemplateId"],
+            mix_operation=row["mixOperation"],
+            mix_level=row["mixLevel"],
+            harness_version=row["harnessVersion"],
+        )
+        imported = json.loads(buffer.getvalue())
+        self.assertEqual(imported["mixOperation"], operation)
+        self.assertEqual(imported["promptTemplateId"], row["promptTemplateId"])
+
+    def _run_agy_lane(
+        self,
+        tmp: Path,
+        island: dict,
+        parents: list[dict],
+        answer,
+        *,
+        seeded_pairs: list[dict] = (),
+        extra_argv: list[str] = (),
+    ) -> list[dict]:
+        """Drives `make_mixed_agy.main()` with the binary stubbed; returns the pairs file."""
+        import contextlib
+        from unittest import mock
+
+        import make_mixed_agy
+
+        parents_file = tmp / "pais.jsonl"
+        parents_file.write_text(
+            "".join(
+                json.dumps(parent, ensure_ascii=False) + chr(10) for parent in parents
+            ),
+            encoding="utf-8",
+        )
+        pairs = tmp / "pares.jsonl"
+        pairs.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + chr(10) for row in seeded_pairs),
+            encoding="utf-8",
+        )
+        saved = sys.argv
+        try:
+            sys.argv = [
+                "make_mixed_agy.py", "--island", island["island"],
+                "--parents", str(parents_file), "--pairs", str(pairs),
+                "--model", "gemini-3.6-flash-low", "--pace", "0",
+                *extra_argv,
+            ]
+            with mock.patch.object(
+                make_mixed_agy, "run_agy", answer
+            ), mock.patch.object(
+                make_mixed_agy, "harness_version", lambda provider: "1.2.3"
+            ):
+                with contextlib.redirect_stdout(_ReconfigurableStdout()):
+                    make_mixed_agy.main()
+        finally:
+            sys.argv = saved
+        return [
+            json.loads(line)
+            for line in pairs.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def _island_parents(self, island: dict, text: str) -> list[dict]:
+        import make_mixed
+
+        lab = make_mixed.assembler()
+        return [
+            {
+                "id": f"pai_{index:04d}",
+                "text": text,
+                "family": "ptwiki_lead",
+                "sourceMaterialBatch": "smb_ptwiki-20220301",
+            }
+            for index in range(4000)
+            if lab.island_of_seed(lab.ISLAND_PLAN, f"pai_{index:04d}")["island"]
+            == island["island"]
+        ][: island["lines"]["mixed"]]
+
+    def test_a_resumed_agy_run_keeps_each_parents_own_cell(self) -> None:
+        import make_mixed
+        import make_mixed_agy
+
+        # The state every resume is in: a whole cell's worth of pairs is already in the
+        # file, so the pending list is a SUFFIX that starts at a cell BOUNDARY. Crossing
+        # the boundary is what makes the two indexings distinguishable — the allocation
+        # gives five consecutive lines to each cell, so a suffix of one would land on the
+        # same cell either way and the case would prove nothing.
+        island = make_mixed.island_plan("ilha_03")
+        text = " ".join(f"palavra{word}" for word in range(40))
+        parents = self._island_parents(island, text)
+        cells = make_mixed_agy.cell_of_each_parent(parents, island)
+        ordered = make_mixed.interleave_by_family(parents)
+        edited = " ".join(
+            (f"nova{index}" if index < 10 else f"palavra{index}") for index in range(40)
+        )
+        # The size of one cell's block, taken from the allocation itself.
+        allocation = make_mixed.assembler().mix_cell_allocation(
+            island["lines"]["mixed"]
+        )
+        block = allocation.count(allocation[0])
+        with tempfile.TemporaryDirectory() as raw:
+            written = self._run_agy_lane(
+                Path(raw),
+                island,
+                parents,
+                lambda *a, **k: edited,
+                seeded_pairs=[
+                    {"parentId": parent["id"]} for parent in ordered[:block]
+                ],
+                extra_argv=["--target", "1"],
+            )
+        # The seeded rows plus exactly one new pair, and it carries the cell of ITS OWN
+        # position — the first cell of the next block, not the first cell of the plan.
+        self.assertEqual(len(written), block + 1)
+        fresh = written[-1]
+        self.assertEqual(fresh["parentId"], ordered[block]["id"])
+        self.assertEqual(
+            (fresh["mixOperation"], fresh["mixLevel"]), cells[ordered[block]["id"]]
+        )
+        self.assertNotEqual(
+            cells[ordered[block]["id"]], cells[ordered[0]["id"]],
+            "o sufixo tem de comecar numa fronteira de celula, senao as duas indexacoes "
+            "dao a mesma resposta e o caso nao prova nada",
+        )
+
+    def test_the_agy_lane_writes_no_pair_outside_the_mixed_band(self) -> None:
+        import make_mixed
+
+        # A pair whose fraction is in no band is a line the curve does not model, and the
+        # screen is here and not only at import: `--from-pairs` would discard it later,
+        # after the quota was spent, and the count of what a run produced would be wrong.
+        island = make_mixed.island_plan("ilha_03")
+        text = " ".join(f"palavra{word}" for word in range(40))
+        out_of_band = " ".join(
+            (f"nova{index}" if index < 20 else f"palavra{index}") for index in range(40)
+        )
+        self.assertFalse(
+            make_mixed.in_mixed_band(
+                make_mixed.compute_mixture(text, out_of_band)
+            )
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            written = self._run_agy_lane(
+                Path(raw),
+                island,
+                self._island_parents(island, text)[:2],
+                lambda *a, **k: out_of_band,
+                extra_argv=["--nudge-retries", "0"],
+            )
+        self.assertEqual(written, [])
+
+    def test_the_agy_lane_sends_and_writes_the_canonical_parent(self) -> None:
+        import make_mixed
+
+        # The prompt is built from the CANONICAL chain, because the 6.000-character cut
+        # depends on spacing: with a raw parent the material SENT and the material
+        # COMPARED could differ in the truncation, and the fraction would index a text
+        # nobody wrote.
+        island = make_mixed.island_plan("ilha_03")
+        raw_text = "  ".join(f"palavra{word}" for word in range(40)) + "   "
+        canonical = make_mixed.canonical_text(raw_text)
+        self.assertNotEqual(raw_text, canonical)
+        edited = " ".join(
+            (f"nova{index}" if index < 10 else f"palavra{index}") for index in range(40)
+        )
+        sent: list[str] = []
+
+        def capture(prompt, *a, **k):
+            sent.append(prompt)
+            return edited
+
+        with tempfile.TemporaryDirectory() as raw:
+            written = self._run_agy_lane(
+                Path(raw),
+                island,
+                self._island_parents(island, raw_text)[:1],
+                capture,
+                extra_argv=["--target", "1"],
+            )
+        self.assertEqual(len(written), 1)
+        self.assertEqual(written[0]["parentText"], canonical)
+        self.assertIn(canonical, sent[0])
+        self.assertNotIn("  ", sent[0].replace(chr(10), " ").split("=== TEXTO ===")[-1])
+
+    def test_the_agy_nudge_records_the_level_that_survived_and_not_the_cells(self) -> None:
+        import contextlib
+        from unittest import mock
+
+        import make_mixed
+        import make_mixed_agy
+
+        # The nudge re-runs the SAME template at the NEIGHBOURING level, so the row must
+        # record the level of the request that produced the text on hand. Recording the
+        # cell's target would claim a request that produced something else, and the loss
+        # against the plan would stop being visible as an under-filled cell.
+        lab = make_mixed.assembler()
+        island = make_mixed.island_plan("ilha_03")
+        parents = [
+            {"id": f"pai_{index:04d}", "text": " ".join(
+                f"palavra{word}" for word in range(40)
+            ), "family": "ptwiki_lead"}
+            for index in range(4000)
+            if lab.island_of_seed(lab.ISLAND_PLAN, f"pai_{index:04d}")["island"]
+            == island["island"]
+        ][: island["lines"]["mixed"]]
+        first = make_mixed.interleave_by_family(parents)[0]
+        operation, cell_level = make_mixed_agy.cell_of_each_parent(parents, island)[
+            first["id"]
+        ]
+        neighbour = make_mixed.adjacent_mix_level(cell_level, para_baixo=False)
+        self.assertIsNotNone(neighbour)
+
+        # Two answers: the first misses every band (0,39), the second lands in one. The
+        # nudge is the only path from one to the other.
+        answers = [
+            " ".join(
+                (f"nova{index}" if index < 20 else f"palavra{index}")
+                for index in range(40)
+            ),
+            " ".join(
+                (f"nova{index}" if index < 10 else f"palavra{index}")
+                for index in range(40)
+            ),
+        ]
+        self.assertFalse(
+            make_mixed.in_mixed_band(
+                make_mixed.compute_mixture(first["text"], answers[0])
+            )
+        )
+        calls: list[int] = []
+
+        def staged(*args, **kwargs) -> str:
+            calls.append(1)
+            return answers[min(len(calls) - 1, len(answers) - 1)]
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            parents_file = tmp / "pais.jsonl"
+            parents_file.write_text(
+                json.dumps(
+                    {
+                        "id": first["id"],
+                        "text": first["text"],
+                        "family": "ptwiki_lead",
+                        "sourceMaterialBatch": "smb_ptwiki-20220301",
+                    },
+                    ensure_ascii=False,
+                )
+                + chr(10),
+                encoding="utf-8",
+            )
+            pairs = tmp / "pares.jsonl"
+            saved = sys.argv
+            try:
+                sys.argv = [
+                    "make_mixed_agy.py", "--island", island["island"],
+                    "--parents", str(parents_file), "--pairs", str(pairs),
+                    "--model", "gemini-3.6-flash-low", "--pace", "0",
+                ]
+                with mock.patch.object(
+                    make_mixed_agy, "run_agy", staged
+                ), mock.patch.object(
+                    make_mixed_agy, "harness_version", lambda provider: "1.2.3"
+                ):
+                    with contextlib.redirect_stdout(_ReconfigurableStdout()):
+                        make_mixed_agy.main()
+            finally:
+                sys.argv = saved
+            written = [
+                json.loads(line)
+                for line in pairs.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+        self.assertEqual(len(calls), 2, "o nudge tem de ter corrido exactamente uma vez")
+        self.assertEqual(len(written), 1)
+        # The level that SURVIVED, and the identity unchanged: the correction lives in the
+        # parameter, because the island reserves one slot per operation.
+        self.assertEqual(written[0]["mixLevel"], neighbour)
+        self.assertNotEqual(written[0]["mixLevel"], cell_level)
+        self.assertEqual(written[0]["mixOperation"], operation)
+        self.assertEqual(
+            written[0]["promptTemplateId"], island["mixingTemplates"][operation]
+        )
 
     def test_the_mixing_lanes_record_which_template_produced_the_row(self) -> None:
         import io

@@ -10122,3 +10122,40 @@ teste — e ganhou um caso que dirige `main()` com `harness_version` devolvendo 
 nada foi escrito.
 
 **Fechamento:** lab 747 / 745 verde. Nada aqui esta em `EVALUATOR_FILES`.
+
+### A pista mista do agy passa a pedir por CELULA, e quatro mutantes meus sobreviveram verdes (2026-08-21)
+
+`make_mixed.py --generate` iterava as vinte celulas da ilha e `make_mixed_agy.py` fazia edit
+generico pinando `mix_edit_v1` — linhas que nao pertencem a ilha alguma e que a montagem recusa.
+A pista do agy passou a fazer o mesmo laco.
+
+**O que ela ganhou, e cada item e um mutante vermelho.** `--island` obrigatoria; pais tomados so do
+bloco de semente DAQUELA ilha (uma linha mista nomeia o pai em `derivationRoot` e `humanSeed`, e
+`connected_components` une por VALOR, entao pai de outra ilha funde as duas e a particao de template
+fica decorativa); identidade tirada de `mixingTemplates[operacao]`, o slot que a ilha reserva;
+nudge que reexecuta o MESMO template no nivel vizinho, gravando o nivel que SOBREVIVEU e nao o da
+celula; `mixOperation` e `mixLevel` no par, que e o que `--from-pairs` ja sabia ler e nenhuma pista
+escrevia; texto canonico na entrada, porque o corte em 6.000 caracteres depende do espacamento.
+
+**A alocacao de celula e indexada pela ordem da ILHA INTEIRA e nao pela da corrida**, e essa e a
+propriedade que o resume exige: `already_done` conta os pares de todas as corridas no mesmo arquivo,
+entao indexar pela corrida daria a mesma celula ao primeiro pendente sempre, e a linha declararia um
+nivel que o pedido nao carregou.
+
+**QUATRO dos meus mutantes sobreviveram verdes na primeira bateria, e os quatro por fixture
+complacente:**
+
+| mutante | por que sobreviveu | o caso que faltava |
+|---|---|---|
+| alocacao pela ordem da corrida | eu comparava o MULTISET de celulas, que qualquer permutacao satisfaz | compor `interleave_by_family` + `mix_cell_allocation` no teste e comparar mapa a mapa |
+| alocacao sobre os PENDENTES em `main` | o sufixo de um pai cai na mesma celula (a alocacao da cinco linhas seguidas a cada celula) | semear um BLOCO inteiro de pares e cruzar a fronteira de celula |
+| nudge que ignora o vizinho | o meu stub acertava a banda na primeira resposta | duas respostas em sequencia, a primeira fora de banda |
+| pai cru em vez de canonico | o meu fixture ja era canonico | pai com espaco duplo, e afirmar o que foi ENVIADO e o que foi escrito |
+
+Nenhum dos quatro era guarda inexistente: os quatro existiam e nenhum tinha adversario. E a mesma
+licao que esta sessao registrou tres vezes, agora em quatro lugares de uma vez — e a bateria e o que
+a expos, nao a leitura.
+
+**Fechamento:** lab 753 / 745 verde, `docs:check` OK, `format:check` no unico vermelho herdado. A
+§ 7 do residuo (ii) da pista mista passou a dizer o que e: o agy pede por celula, o codex continua
+generico. Nada aqui esta em `EVALUATOR_FILES`.
