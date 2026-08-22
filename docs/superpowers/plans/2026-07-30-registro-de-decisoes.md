@@ -10582,3 +10582,30 @@ sobre contar coisas, o que e o genero de erro que esta sessao nao devia mais est
 dois mutantes novos a bateria e de **nove**, e a soma esta conferida parcela a parcela.
 
 **Fechamento:** lab 761 / 750 verde.
+
+### A prova por substituicao cobria dois leitores de quatro, e o campo novo era vacuo (2026-08-22)
+
+`.codex-reviews/codex-ordem-r3-veredito.txt`, tres comandos de tres, `EXIT=0`. **REPROVA**, tres
+achados. Nao existe quarta definicao de ordem canonica — essa metade fechou.
+
+**A prova por substituicao cobria DOIS leitores de quatro.** Eu troquei a autoridade e exigi que o
+renderizador e o guardiao do baseline a seguissem, e escrevi "a autoridade unica e afirmada por
+substituicao" — mas a sonda que DECIDE e a de estilometria tambem a leem, e nenhuma das duas era
+exercitada sob a troca. Um `sorted` privado em qualquer delas manteria a resposta enquanto as outras
+se moviam. Agora as quatro sao comparadas contra si mesmas sob a autoridade trocada, e D11 e D12 —
+sort privado semanticamente igual na sonda que decide e na de estilometria — ficam vermelhos.
+
+**E o campo que eu acrescentei em resposta ao seu achado anterior era VACUO.** Pus `sharedText` na
+comparacao da sonda que decide e deixei o fixture sem `shared_text`: o campo vem `[]` nas oito ordens,
+e comparar `[]` com `[]` oito vezes nao testa nada. O fixture passou a plantar o texto compartilhado e
+o teste passou a afirmar que o campo esta POPULADO — porque um campo comparado enquanto vazio em todas
+as ordens e um campo que a bateria nao ve.
+
+**Setima fixture complacente da sessao, e a primeira que eu escrevi JA em resposta a um achado.** O
+padrao mudou de forma: nas anteriores eu nao tinha pensado no adversario; nesta eu acrescentei o campo
+que o revisor pediu e nao verifiquei se ele carregava valor. Acrescentar o campo e fazer o campo
+morder sao dois atos, e eu fiz o primeiro.
+
+**Bateria da unidade: onze mutantes, todos vermelhos.**
+
+**Fechamento:** lab 761 / 750 verde.

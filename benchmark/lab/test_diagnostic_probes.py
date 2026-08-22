@@ -130,7 +130,10 @@ class PartitionProbeTests(unittest.TestCase):
         # reasons, macro AUC and the per-partition table.
         import random
 
-        rows = _five_partition_corpus()
+        # WITH a shared text, because `sharedText` is in the comparison below and the
+        # bare fixture leaves it EMPTY — a field compared across eight orders while it is
+        # `[]` in all eight is a field the battery does not test.
+        rows = _five_partition_corpus(shared_text=_text(999, 90))
         rng = random.Random(20260822)
         orders: list[list[int]] = [list(range(len(rows)))]
         while len(orders) < 8:
@@ -161,12 +164,15 @@ class PartitionProbeTests(unittest.TestCase):
                     # that names the exact-overlap leak, so a version that read the input
                     # order there would move a published list while the AUC stood still.
                     tuple(
-                        tuple(sorted(entry.items())) if isinstance(entry, dict) else entry
+                        (tuple(entry["partitions"]), entry["texts"])
                         for entry in report["sharedText"]
                     ),
                 )
             )
         self.assertEqual(len(readings), 1, readings)
+        # And the field is really populated, or the tuple above compares nothing on that
+        # half in every order at once.
+        self.assertTrue(probes.probe_partitions(rows)["sharedText"])
 
     def test_a_signature_only_dev_carries_refuses_naming_the_partition_and_the_metric(
         self,
@@ -403,6 +409,21 @@ class LengthProbeTests(unittest.TestCase):
                 ),
                 baseline.BASELINE_FOLDS,
             )
+        # EVERY reader, and not the two that were easy to reach: the deciding probe and
+        # the stylometry probe read the authority too, and a private sort in either would
+        # keep its answer while the others moved. Each is compared against ITSELF under the
+        # replaced authority.
+        antes_decide = probes.probe_partitions(
+            _five_partition_corpus(shared_text=_text(999, 90))
+        )["macroAuc"]
+        antes_estilo = probes.probe_stylometry(rows)["auc"]
+        with mock.patch.object(common, "canonical_fold_order", reversed_order):
+            depois_decide = probes.probe_partitions(
+                _five_partition_corpus(shared_text=_text(999, 90))
+            )["macroAuc"]
+            depois_estilo = probes.probe_stylometry(rows)["auc"]
+        self.assertNotEqual(antes_decide, depois_decide)
+        self.assertNotEqual(antes_estilo, depois_estilo)
 
     def test_the_permutation_fixture_moves_the_folds(self) -> None:
         # What keeps the batteries below from being vacuous: the fold PARTITION itself has
