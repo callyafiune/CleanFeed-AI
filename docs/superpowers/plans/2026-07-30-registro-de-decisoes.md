@@ -10060,3 +10060,10 @@ isso que correm antes. So a guarda de grafia pega estado que nenhuma outra regra
 mais le aquela lista. A frase ficou nessa versao, no codigo e na § 7.
 
 **Fechamento:** lab 742 / 742, `docs:check` OK.
+
+### Terceira rodada dos papeis: APROVA sem achado (2026-08-21)
+
+`.codex-reviews/codex-papeis-r3-veredito.txt`, quatro comandos de quatro, `EXIT=0`. **APROVA**: a
+frase sobre o que a lista pendente compra e a mais fraca que se afere, a guarda de grafia esta
+exercitada e com a mensagem afirmada, nenhuma frase residual, nenhum achado nao nomeado. A unidade
+dos PAPEIS esta fechada.
