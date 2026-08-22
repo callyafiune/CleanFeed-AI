@@ -10484,3 +10484,9 @@ chaves, uma vez cada": tres predicados soltos, uma igualdade sobre chaves colaps
 lado errado do `dict` sao tres aproximacoes dela.
 
 **Fechamento:** lab 756 / 750 verde.
+
+### Quinta rodada das ilhas curtas: APROVA, a forma esta afirmada por inteiro (2026-08-22)
+
+`.codex-reviews/codex-ilhas-r5-veredito.txt`, dois comandos de dois, `EXIT=0`. **APROVA**: nao existe
+quinta leitura, nenhuma frase sem assercao. Cinco rodadas numa unidade de duas funcoes e um print —
+quatro delas gastas a fechar leituras erradas do mesmo relatorio, e a quinta a confirmar que acabaram.
