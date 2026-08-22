@@ -10700,3 +10700,131 @@ antes de qualquer remocao, num caminho que nenhum teste desta suite executa).
 
 **Fechamento:** vitest 172 / 3.116 e lab 761 / 750 verdes, tsc limpo, prettier verde, `docs:check` OK,
 CRLF vazio, `evaluatorDigest` republicado (o conserto do R1 esta em `EVALUATOR_FILES`).
+
+## A janela do pai da classe mista, e as duas medições minhas que o fixture fabricou (2026-08-22)
+
+**A decisão.** A janela de pais da pista mista passa a ser a do extrator — `common.MINIMUM_WORDS`
+a `MAXIMUM_WORDS`, lidas por nome —, no lugar do literal `50 <= palavras <= 450` que vivia inline em
+`main()`. O filtro virou `make_mixed.admissible_parents`, que é onde a janela pode ser aferida.
+Consequência medida: 2.247 → **2.578** pais sobre `reserved.jsonl`, e as quatro ilhas que não
+fechavam a cota mista (92, 94, 95, 99 contra 100) vão a **zero**.
+
+**Alternativa recusada:** derivar mais pais em vez de alargar a janela. O material não a sustenta —
+`reserved.jsonl` tem 2.578 linhas com `label == 0` e é tudo —, e o déficit era de 20 linhas em quatro
+ilhas, que nenhuma coleta nova alcança sem gastar cota.
+
+**Por que o 450 não se defendia.** Ele não tinha derivação em lugar nenhum — literal nu, sem
+comentário no sítio, sem razão no ESTADO nem aqui. A hipótese que o justificava a posteriori era
+poda de quase-duplicata: pai mais longo com a mesma edição proporcional é mais parecido com a mista
+que dele sai, então o teto protegeria o par de cruzar 0,82. **Medido, e a hipótese é falsa.** Sobre
+os 2.578 pais reais e as 20 células que sobrevivem, o máximo é 0,8016 (`substituicao/15`) e nada
+cruza; partindo a população em 450, o pior caso é de pai **curto** (0,8016 contra 0,7743). O teto
+cortava material, não risco. A margem de 0,0184 é estreita e fica na § 5.4d como número a vigiar.
+
+**Fidelidade ao caminho selado, e ela é conservadora na direção certa.** O índice invertido de
+`near_dupes` propõe um SUPERCONJUNTO dos candidatos do LSH de `benchmark/near-duplicates.ts`, e o
+portão de Jaccard exacto é o mesmo nos dois — está escrito no cabeçalho do módulo. Logo uma medição
+que não derruba nada no lab não pode derrubar mais no selado. Também conferido: nenhum arquivo desta
+unidade está em `EVALUATOR_FILES` (a lista não tem `.py`), e o `SEALED_POLICY_SHA256` foi recomputado
+contra os bytes de `preregistration-v4.json` e casa — nenhum digesto se move.
+
+### Retratação: eu publiquei duas medições erradas desta mesma quantidade, e as duas por fixture
+
+Não foram intuições descartadas — foram tabelas completas, com número por célula, prontas para
+entrar no ESTADO.
+
+1. **O pool sintético compartilhava vocabulário.** Todos os pais eram `p0…pN`, então o pai de 450 era
+   quase-duplicata do de 5.000 por construção. A poda de produção colapsou 58 de 120 documentos e eu
+   quase li isso como achado sobre o corpus. É a mesma armadilha do `revert 5005d5e`.
+2. **O enxerto de texto real era um documento REPETIDO.** Repetir infla token sem acrescentar shingle
+   distinto, a união do par para de crescer, e `insercao/90` mediu 0,92 — onde o valor esperado é
+   ~0,10, porque no nível 90 o enxerto é quase todo o texto final. Publiquei uma tabela em que sete
+   células de `insercao` cruzavam o limite.
+3. **Depois de corrigir (2), o enxerto ainda podia sair do PRÓPRIO pai**, porque o fluxo doador era
+   feito dos próprios pais. `substituicao/90` mediu 0,974. Foi o codex que nomeou o mecanismo antes
+   de eu o ver na minha própria tabela.
+
+**O que apanhou cada uma:** a aritmética esperada do nível mais alto. No nível 90 a razão tem de ser
+~0,10, e qualquer valor alto ali é fixture, não corpus. Isso virou guarda de produção —
+`assert_the_top_level_is_dominated_by_the_graft`, com `TOP_LEVEL_CEILING`, que roda antes de a
+medição imprimir a primeira linha — e virou teste, com as duas formas de fabricar similaridade
+recusadas por mutante nomeado.
+
+**E a lição de forma:** `graft_for` exige a lista de donos e não a infere da forma do token. A versão
+que adivinhava por prefixo funcionava no fixture que a inventou e falharia calada no material,
+devolvendo uma janela que contém o pai — o modo de falhar em que o número publicado diz que a poda
+morde onde ela não morde.
+
+### O ciclo de codex, e ele devolveu REPROVA
+
+Prompt com o diff inline por stdin, `xhigh`, orçamento de dez comandos. Veredito **REPROVA**, cinco
+achados. Três valem e estão consertados no mesmo dia:
+
+- **a transferência modelo → material não estava demonstrada** (o achado central, e é o mesmo que a
+  minha terceira medição encontrou por outro caminho): conjuntos de 5-shingles apagam multiplicidade.
+  A docstring do pino passou a dizer o que ele mede e o que ele **não** diz, e a autorização da
+  janela mudou de lugar — vive na § 5.4d, sobre material, recomputável por script commitado;
+- **frase sem asserção**: o pino declarava que o teto antigo nunca protegeu contra poda, com
+  asserções que só cobriam o fixture sintético. A frase saiu do pino e virou medição de material;
+- **perna que não provava o sítio consumidor**: chamar o ajudante não prova que `main()` o chama. A
+  perna saiu, e o sítio é asserção de `test_a_parent_longer_than_the_old_ceiling_reaches_the_RUN`,
+  que dirige `main()`.
+
+E o achado que ele levantou sem eu ter nomeado: a janela conta palavra por `str.split()` enquanto
+`near_dupes` mede token de regex em 5-grama. A contagem passou a ser `common.word_count`, autoridade
+única — as duas concordam sobre as 2.578 linhas e são equivalentes por construção, e é por
+concordarem que a escolha é livre.
+
+**Um achado dele que não morde, conferido:** `import_public_corpus.py:129` tem `--max-words` com
+padrão 450. É outra quantidade — `source_id` é `src_ai_public_madras`, a classe é `ai`, e a razão
+está escrita no sítio (manter a classe no registro de implantação). Não limita `--parents`.
+
+**Bateria:** 14 mutantes, 17 asserções, zero sobreviventes. Dois sobreviveram na primeira passagem e
+os dois eram asserção minha que passava pelo motivo errado — o teto da aferição disparava por falta
+de janela em vez de por similaridade, e a exclusão do pai só passava porque o deslocamento escolhido
+calhou. É a terceira vez que a bateria apanha "verde pelo motivo errado" e não "guarda ausente".
+
+### A rodada 2 do codex, e ela também devolveu REPROVA
+
+Os três achados da rodada 1 vieram **TODOS FECHADOS**. Quatro novos, e três valem:
+
+- **o teto de aferição era literal nu** — a mesma crítica que eu tinha feito ao 450, no meu próprio
+  código, cinco horas depois. `TOP_LEVEL_CEILING = 0.30` passou a `top_level_ceiling()`, derivado de
+  `MIX_LEVELS` como `TOP_LEVEL_HEADROOM` vezes `1 − nível/100`, e os dois lados da folga são medidos:
+  máximo honesto em material 0,1360, valores fabricados 0,92 e 0,974;
+- **a amostra era de UM enxerto por par**, e por isso não era adversarial. Passou a doze
+  (`GRAFTS_PER_PAIR`), e isso mudou a conclusão — ver a retratação abaixo;
+- **eu atribuí o eco do pai ao `artifact_gate`, e ele recusa esse caso por escrito.** As sondas de
+  eco derivam só a parte da receita antes de `{reference}`, porque "uma linha que a repete é uma
+  quase-duplicata de linha humana, que `near_dupes` decide e este gate não deve contar duas vezes sob
+  outro nome". Logo não era separação de autoridade: é lacuna, e a autoridade é a própria poda que eu
+  meço. A frase foi corrigida no sítio e na § 5.4d.
+
+E o que ele apontou e eu confirmei medindo, em vez de argumentar: `graft_for` exclui o pai por **id**,
+não por conteúdo, então uma quase-duplicata do pai sob outro id passaria. Neste material não passa —
+`prune` sobre os 2.578 pais propõe 1.477 candidatos e aceita **zero**.
+
+**Um achado dele que não morde:** ele leu `substituicao/15` como frágil por o gerador validar
+`aiFraction` e não a geometria. A leitura está certa e o alvo está errado: a fragilidade não é da
+margem daquela célula, é de **geometria não conferida**, e virou linha própria na § 7 — uma
+`substituicao/15` que só insere degenera na célula excluída e cruza a partir de 218 palavras, dentro
+do teto anterior.
+
+### Retratação: a moldura "margem" estava errada, e não só o número
+
+Eu publiquei "margem 0,0184" como se a grandeza fosse um máximo limitado. Não é: com um enxerto por
+par nada cruza; com doze, **onze** pares cruzam; com vinte e quatro, quatorze. O máximo cresce com o
+número de sorteios e a "margem" com ele, então **dobrar K mudava a conclusão publicada sem nada ficar
+vermelho**. A grandeza que não depende de K é a taxa por sorteio, e é ela que a § 5.4d publica:
+**1,78 × 10⁻⁵** global, **3,56 × 10⁻⁴** em `insercao/25`, **0,036** linhas esperadas por corrida.
+
+Isso é a quarta vez nesta unidade que uma tabela minha completa estava errada, e as quatro tinham a
+mesma forma: o número era resposta a uma pergunta mais estreita do que a frase que eu escrevia ao
+lado dele. As três primeiras foram fixture; esta foi a **estatística**.
+
+**A decisão não muda com a correção**, e é isso que a torna publicável: a janela continua justificada
+pela cota — 2.247 → 2.578 pais, quatro ilhas curtas a zero —, e a poda passou de "não morde" a "morde
+0,036 linhas por corrida, e quatro dos onze casos já mordiam com o teto antigo". O que mudou foi a
+honestidade da alegação, não a direção dela.
+
+**Bateria final:** 14 mutantes, 17 asserções, zero sobreviventes.

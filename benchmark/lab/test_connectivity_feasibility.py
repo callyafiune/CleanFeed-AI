@@ -3470,6 +3470,317 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         self.assertGreater(par(fracao, 100, no_fim=True), limite)
         self.assertGreater(par(fracao, 1200, no_fim=True), limite)
 
+    def test_a_janela_do_PAI_alargada_nao_admite_poda_de_near_dupe_nova(self):
+        """A janela de pais da pista mista e a do extrator, e o que a autoriza e esta medicao.
+
+        Um pai mais longo com a mesma edicao proporcional e MAIS parecido com a mista que
+        dele sai, entao alargar o teto do pai poderia por pares novos acima do limite de
+        poda — e a poda derruba o pai humano (prioridade `ai` > `mixed` > `human`) e com ele
+        a ponte da ilha. A pergunta e se algum cruzamento aparece SO acima do teto antigo.
+
+        Neste MODELO: nenhum cruzamento novo. Todo cruzamento que existe esta na celula de
+        nivel mais baixo da `insercao`, que ja sai por `MIX_CELL_EXCLUDED`, e cai em 218
+        palavras — abaixo do teto antigo.
+
+        Tres geometrias e nao uma: `insercao` preserva o pai inteiro e por isso maximiza o
+        compartilhado, e e a medicao dela que limita as outras duas — mas o limite e
+        MEDIDO aqui e nao suposto, porque `substituicao` remove parte do pai e
+        `concatenacao` descarta o resto dele, e as duas mudam a UNIAO tambem.
+
+        O QUE ESTE PINO NAO DIZ, e a fronteira e a razao de ele existir separado da medicao
+        de material. O modelo tem tokens todos distintos, e `shingles_of` devolve CONJUNTO:
+        a multiplicidade desaparece. Texto real repete, entao um enxerto real contribui
+        menos shingles distintos do que tokens, a uniao cresce menos e a razao sobe acima
+        do que este modelo preve — medido, e nao suposto. No limite em que o enxerto reusa
+        as sequencias DO PROPRIO PAI a razao vai a ~1 em qualquer nivel, inclusive nos que
+        aqui medem 0,1; isso e ECO, tem teto proprio pre-inscrito e e medido pelo
+        `artifact_gate`, e nao e propriedade da janela.
+
+        Logo este pino sozinho NAO autoriza a janela. Ele fixa a geometria e a monotonia em
+        comprimento; a autorizacao vem da medicao sobre `reserved.jsonl` registada no
+        ESTADO § 5, feita com estas mesmas funcoes de producao sobre as 2.578 linhas reais.
+        Palavra e token coincidem neste modelo por construcao, o que NAO vale para texto
+        real — e mais uma razao para a autorizacao nao morar aqui.
+        """
+        import assemble_corpus
+        import common
+        import near_dupes
+
+        limite = near_dupes.JACCARD_THRESHOLD
+
+        def filho(op: str, n: int, nivel: int) -> list[str]:
+            pai = [f"p{i}" for i in range(n)]
+            frac = nivel / 100.0
+            if op == "insercao":
+                enxerto = [f"z{i}" for i in range(round(n * frac / (1.0 - frac)))]
+                meio = n // 2
+                return pai[:meio] + enxerto + pai[meio:]
+            if op == "substituicao":
+                g = round(n * frac)
+                meio = (n - g) // 2
+                return pai[:meio] + [f"z{i}" for i in range(g)] + pai[meio + g:]
+            p = n // 2
+            return pai[:p] + [f"z{i}" for i in range(round(p * frac / (1.0 - frac)))]
+
+        def par(op: str, n: int, nivel: int) -> float:
+            return near_dupes.jaccard(
+                near_dupes.shingles_of([f"p{i}" for i in range(n)]),
+                near_dupes.shingles_of(filho(op, n, nivel)),
+            )
+
+        # O teto antigo era 450 palavras; a janela do extrator vai a `MAXIMUM_WORDS`.
+        TETO_ANTIGO = 450
+        self.assertLess(TETO_ANTIGO, common.MAXIMUM_WORDS)
+        antigos = (common.MINIMUM_WORDS, 100, 218, 232, TETO_ANTIGO)
+        novos = (TETO_ANTIGO + 1, 1000, 2500, common.MAXIMUM_WORDS)
+
+        # 1. Nenhuma celula que SOBREVIVE alcanca o limite, em nenhuma das tres geometrias,
+        #    em nenhum comprimento que a janela admite.
+        for op, nivel in assemble_corpus.mix_cells():
+            for n in antigos + novos:
+                with self.subTest(celula=(op, nivel), palavras=n):
+                    self.assertLess(par(op, n, nivel), limite)
+
+        # 2. E o comprimento aproxima o limite POR BAIXO: o supremo da faixa NOVA e maior
+        #    que o da antiga e continua abaixo. Sem esta desigualdade a perna 1 seria
+        #    compativel com "o comprimento nao muda nada", e ai medir a faixa nova nao
+        #    provaria coisa alguma sobre 5.000 palavras.
+        apertada = max(
+            assemble_corpus.mix_cells(),
+            key=lambda celula: par(celula[0], common.MAXIMUM_WORDS, celula[1]),
+        )
+        sup_antigo = max(par(*(apertada[0], n, apertada[1])) for n in antigos)
+        sup_novo = max(par(*(apertada[0], n, apertada[1])) for n in novos)
+        self.assertGreater(sup_novo, sup_antigo)
+        self.assertLess(sup_novo, limite)
+        self.assertEqual(apertada, ("insercao", sorted(assemble_corpus.MIX_LEVELS)[1]))
+
+        # 3. O caso que a alegacao PROIBE, sem o qual a perna 1 e vacua: a celula excluida
+        #    cruza, e cruza DENTRO da janela antiga. E o que torna "nada novo" um fato sobre
+        #    a janela e nao sobre um limite frouxo.
+        (excluida,) = assemble_corpus.MIX_CELL_EXCLUDED
+        cruzam = [
+            n
+            for n in range(common.MINIMUM_WORDS, TETO_ANTIGO + 1)
+            if par(excluida[0], n, excluida[1]) >= limite
+        ]
+        self.assertEqual(min(cruzam), 218)
+        self.assertGreaterEqual(par(*(excluida[0], common.MAXIMUM_WORDS, excluida[1])), limite)
+
+        # 4. A PODA de producao, ponta a ponta, e nao `jaccard` sozinho: a aceitacao usa o
+        #    conjunto completo mas o par so chega la se o indice amostrado o encontrar, e
+        #    essa deteccao e ela mesma sensivel ao comprimento (1/16 dos shingles acima de
+        #    `SAMPLE_MIN_SHINGLES`). Vocabulario PROPRIO por documento: sem ele dois pais de
+        #    comprimentos diferentes partilham prefixo e sao near-dupes entre si, e o pool
+        #    inteiro colapsa por artefato do fixture.
+        AI, MIXED, HUMAN = 0, 1, 2
+        del AI
+
+        def pool(op: str, nivel: int) -> list[tuple[str, str, int]]:
+            docs = []
+            for k, n in enumerate(range(TETO_ANTIGO, common.MAXIMUM_WORDS + 1, 455)):
+                pai = [f"d{k}x{i}" for i in range(n)]
+                frac = nivel / 100.0
+                enxerto = [f"d{k}z{i}" for i in range(round(n * frac / (1.0 - frac)))]
+                meio = n // 2
+                docs.append((f"human-{k}", " ".join(pai), HUMAN))
+                docs.append(
+                    (f"mixed-{k}", " ".join(pai[:meio] + enxerto + pai[meio:]), MIXED)
+                )
+            return docs
+
+        # O CONTROLE: os pais sozinhos nao se podam. Qualquer queda aqui e do fixture.
+        so_pais = [doc for doc in pool(*apertada) if doc[0].startswith("human")]
+        self.assertGreater(len(so_pais), 1)
+        derrubados, _ = near_dupes.prune(so_pais)
+        self.assertEqual(derrubados, set())
+
+        # A celula apertada, no pool da janela alargada: nada cai.
+        derrubados, estatisticas = near_dupes.prune(pool(*apertada))
+        self.assertEqual(derrubados, set())
+        # E houve par CANDIDATO: zero candidatos tornaria "nada cai" um fato sobre a
+        # deteccao ter falhado, que e outra coisa.
+        self.assertGreater(estatisticas["candidate_pairs"], 0)
+
+        # A celula excluida, no MESMO pool: cai o pai humano de todos os comprimentos.
+        derrubados, _ = near_dupes.prune(pool(*excluida))
+        self.assertEqual(
+            sorted(derrubados),
+            sorted(doc[0] for doc in pool(*excluida) if doc[0].startswith("human")),
+        )
+
+        # O sitio CONSUMIDOR nao e conferido aqui: chamar o ajudante nao prova que `main()`
+        # o chama, e essa e a assercao de
+        # `test_a_parent_longer_than_the_old_ceiling_reaches_the_RUN`, que dirige `main()`.
+
+    def test_a_medicao_de_material_recusa_os_dois_artefatos_de_fixture(self):
+        """As duas armadilhas que fabricam similaridade, e a medicao tem de recusar as duas.
+
+        Elas nao sao hipoteticas: as duas produziram numero publicavel e errado antes de
+        serem vistas. (i) Enxerto que e um documento REPETIDO infla tokens sem acrescentar
+        shingle distinto, a uniao para de crescer e um nivel 90 mede 0,92 onde o valor
+        esperado e ~0,10. (ii) Enxerto tirado do PROPRIO pai leva a razao a ~1 em qualquer
+        nivel — que e eco, nao comprimento.
+
+        A guarda contra as duas e a mesma: o fluxo doador e de documentos DISTINTOS e exclui
+        o pai sob edicao, e a medicao afere o nivel mais alto contra um teto antes de
+        publicar qualquer linha. E o teto e aferido nos DOIS sentidos: um teto que nada
+        recusa nao e guarda.
+        """
+        import measure_mixed_parent_window as medida
+
+        # O fluxo tem de ser grande o bastante para o NIVEL MAIS ALTO: ali o enxerto pede
+        # `nivel/(100-nivel)` vezes o pai — nove vezes, em 90 —, e num fluxo curto toda
+        # janela desse tamanho contem o pai, e a afericao recusa por falta de material em
+        # vez de por similaridade fabricada. Quarenta documentos e o que separa os dois.
+        pais = [
+            {
+                "id": f"pai_{k:03d}",
+                "text": " ".join(f"d{k}t{i}" for i in range(300)),
+                "label": 0,
+                "family": "ptwiki_lead",
+            }
+            for k in range(40)
+        ]
+
+        fluxo = medida.donor_stream(pais)
+        donos = medida.donor_owners(pais)
+
+        # (ii) o pai sob edicao nao entra no proprio enxerto — para TODOS os pais e nao um
+        # so. Um pai unico com um deslocamento unico passa por acidente de alinhamento:
+        # medido, com a exclusao ARRANCADA a janela de `pai_000` no deslocamento 0 continua
+        # sem token dele, porque a primeira fatia do fluxo e de outro documento.
+        for k in range(len(pais)):
+            enxerto = medida.graft_for(fluxo, donos, f"pai_{k:03d}", 60, k * 13)
+            self.assertEqual(len(enxerto), 60)
+            self.assertFalse(
+                [token for token in enxerto if token.startswith(f"d{k}t")],
+                f"o enxerto de pai_{k:03d} contem token dele",
+            )
+
+        # E a correspondencia posicional dono<->token e conferida, nao suposta: sem ela a
+        # exclusao le o dono errado e devolve uma janela COM o pai.
+        with self.assertRaises(medida.FixtureFabricatesSimilarity):
+            medida.graft_for(fluxo, donos[:-1], "pai_000", 60, 0)
+
+        # (i) o fluxo e de documentos distintos, e por isso quase nao repete shingle.
+        import near_dupes
+
+        distintos = len(near_dupes.shingles_of(fluxo)) / len(fluxo)
+        self.assertGreater(distintos, 0.9)
+
+        # A AFERICAO do nivel mais alto, nos dois sentidos. Com o fluxo limpo ela passa...
+        medida.assert_the_top_level_is_dominated_by_the_graft(pais, fluxo, donos)
+
+        # ...e com um fluxo que e UM documento repetido ela RECUSA. O documento repetido e
+        # o ULTIMO pai e nao o primeiro, e a escolha e o que faz esta perna medir o TETO:
+        # se o repetido fosse o proprio pai sob afericao, `graft_for` nao acharia janela
+        # nenhuma e a recusa viria da falta de material — a mesma excecao pelo motivo
+        # errado, e o teto poderia ser posto em 1,01 sem nada ficar vermelho (medido).
+        # Repetindo OUTRO documento, a janela existe sempre e o que sobra a recusar e a
+        # similaridade que a repeticao fabrica.
+        sujo = near_dupes.tokens_of(pais[-1]["text"]) * 40
+        donos_sujos = [pais[-1]["id"]] * len(sujo)
+        medida.graft_for(sujo, donos_sujos, pais[0]["id"], 2700, 0)
+        with self.assertRaises(medida.FixtureFabricatesSimilarity):
+            medida.assert_the_top_level_is_dominated_by_the_graft(pais[:1], sujo, donos_sujos)
+
+    def test_a_medicao_publica_TAXA_POR_SORTEIO_e_nao_uma_margem(self):
+        """A grandeza e uma cauda, e uma margem sobre o maximo diz o numero errado.
+
+        Medido em `insercao/25` sobre os 2.578 pais: o numero de pares com ao menos um
+        enxerto que cruza o limite cresce com o numero de sorteios — 0, 0, 0, 8, 11, 14 para
+        K = 1, 2, 4, 8, 12, 24 —, entao o MAXIMO nao converge e "margem = limite − maximo"
+        e uma quantidade do K escolhido e nao do corpus. O que nao depende de K e a
+        probabilidade POR SORTEIO, e e ela que a medicao publica.
+
+        Por isso cada linha carrega `sorteios` e `sorteios_que_cruzam`, e nao so um maximo:
+        com o maximo sozinho, dobrar K muda a conclusao publicada sem nada ficar vermelho.
+        """
+        import measure_mixed_parent_window as medida
+
+        pais = [
+            {
+                "id": f"pai_{k:03d}",
+                "text": " ".join(f"d{k}t{i}" for i in range(300)),
+                "label": 0,
+                "family": "ptwiki_lead",
+            }
+            for k in range(40)
+        ]
+        tabela = medida.measure(pais, 450)
+        self.assertTrue(tabela)
+
+        # O NUMERADOR precisa de um fixture em que algo cruze, e nenhum fixture sintetico
+        # que passe a guarda produz cruzamento no limiar de producao — a guarda existe para
+        # recusar exactamente o material que o produziria. Entao o limiar entra por
+        # parametro, e com ele baixo o mesmo fixture limpo exercita o contador. Sem esta
+        # perna, apagar `sorteios_que_cruzam += 1` deixa tudo verde (medido).
+        baixa = medida.measure(pais, 450, threshold=0.30)
+        self.assertGreater(sum(l["sorteios_que_cruzam"] for l in baixa), 0)
+        for linha in baixa:
+            with self.subTest(celula=linha["celula"], limiar=0.30):
+                # Um par so entra em `cruzam` se ao menos um sorteio dele cruzou.
+                if linha["cruzam"]:
+                    self.assertGreater(linha["sorteios_que_cruzam"], 0)
+                else:
+                    self.assertEqual(linha["sorteios_que_cruzam"], 0)
+        # E o limiar de producao continua o padrao: baixar o limiar tem de achar MAIS.
+        self.assertGreaterEqual(
+            sum(l["sorteios_que_cruzam"] for l in baixa),
+            sum(l["sorteios_que_cruzam"] for l in tabela),
+        )
+        for linha in tabela:
+            with self.subTest(celula=linha["celula"]):
+                # O denominador e explicito: sem ele a contagem de cruzamentos nao e taxa.
+                self.assertEqual(linha["sorteios"], len(pais) * medida.GRAFTS_PER_PAIR)
+                self.assertLessEqual(linha["sorteios_que_cruzam"], linha["sorteios"])
+                # E os dois numeros sao coerentes entre si: um par que cruza precisa de ao
+                # menos um sorteio que cruze, e cada par contribui no maximo K sorteios.
+                self.assertLessEqual(
+                    len(linha["cruzam"]), linha["sorteios_que_cruzam"]
+                )
+                self.assertLessEqual(
+                    linha["sorteios_que_cruzam"],
+                    max(1, len(linha["cruzam"])) * medida.GRAFTS_PER_PAIR,
+                )
+
+    def test_o_teto_da_afericao_e_derivado_e_a_amostra_nao_e_de_um_enxerto_so(self):
+        """As duas propriedades que separam esta medicao de um literal nu com uma amostra.
+
+        O TETO: `TOP_LEVEL_CEILING` nao pode ser digitado. No nivel mais alto o enxerto ocupa
+        `nivel` % do texto final, entao o supremo do modelo e `1 - nivel/100`, e o teto e um
+        multiplo declarado dele — logo ele se move quando `MIX_LEVELS` se mover. Um numero
+        digitado sobrevive a uma mudanca de nivel e passa a aferir contra a geometria errada,
+        que e exactamente o defeito do teto de 450 palavras que esta unidade removeu.
+
+        A AMOSTRA: um enxerto por par mede o maximo de UM sorteio e nao o pior caso. Medido
+        sobre os 2.578 pais reais em `substituicao/15`, passar de 1 para 12 enxertos por par
+        move o maximo de 0,8016 para 0,8080 — a margem cai de 0,0184 para 0,0120 —, entao um
+        sorteio unico PUBLICA margem larga demais.
+        """
+        import assemble_corpus
+        import measure_mixed_parent_window as medida
+
+        nivel = max(assemble_corpus.MIX_LEVELS)
+        supremo = 1.0 - nivel / 100.0
+        self.assertEqual(
+            medida.top_level_ceiling(), medida.TOP_LEVEL_HEADROOM * supremo
+        )
+        # E ele SEGUE os niveis: com um nivel mais alto o supremo encolhe e o teto com ele.
+        with mock.patch.object(assemble_corpus, "MIX_LEVELS", (15, 25, 95)):
+            self.assertAlmostEqual(
+                medida.top_level_ceiling(), medida.TOP_LEVEL_HEADROOM * 0.05
+            )
+
+        # O teto fica ACIMA do maximo honesto medido em material e ABAIXO dos dois valores
+        # que os fixtures fabricaram, e sem os dois lados ele nao afere nada.
+        self.assertGreater(medida.top_level_ceiling(), 0.1360)
+        self.assertLess(medida.top_level_ceiling(), 0.92)
+
+        # A amostra e de mais de um enxerto por par, e o numero e nomeado.
+        self.assertGreater(medida.GRAFTS_PER_PAIR, 1)
+
     def test_o_slate_com_receitas_de_BYTES_IDENTICOS_e_recusado_antes_da_cota(self):
         """A particao de ilha e sobre identidade, e a identidade prefixa o NOME da receita.
 

@@ -5376,6 +5376,115 @@ class GeneratorCaptureTests(unittest.TestCase):
         esperado["ilha_04"] = f"1/{lab.island_named(lab.ISLAND_PLAN, 'ilha_04')['lines']['mixed']}"
         self.assertEqual(relatado, esperado)
 
+    def test_a_parent_longer_than_the_old_ceiling_reaches_the_RUN(self) -> None:
+        import contextlib
+        import json
+        import os
+        import sys
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        import make_mixed
+
+        # A cota conferida no caminho de PRODUCAO e nao na funcao sozinha: a admissao pode
+        # estar certa e a corrida continuar a ler o filtro antigo, e nessa forma a ilha
+        # inteira aparece como curta com zero pais. `--target 0` alcanca o relatorio sem
+        # gastar uma unica chamada de provedor.
+        lab = make_mixed.assembler()
+        island = make_mixed.island_plan("ilha_03")
+        cota = island["lines"]["mixed"]
+        meus = [
+            f"pai_{index:04d}"
+            for index in range(6000)
+            if lab.island_of_seed(lab.ISLAND_PLAN, f"pai_{index:04d}")["island"]
+            == island["island"]
+        ][:cota]
+        self.assertEqual(len(meus), cota)
+
+        longo = " ".join(f"palavra{i}" for i in range(1000))
+        self.assertGreater(len(longo.split()), 450)
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            pais = tmp / "pais.jsonl"
+            pais.write_text(
+                "".join(
+                    json.dumps(
+                        {"id": pid, "text": longo, "label": 0, "family": "ptwiki_lead"},
+                        ensure_ascii=False,
+                    )
+                    + chr(10)
+                    for pid in meus
+                ),
+                encoding="utf-8",
+            )
+            buffer = _ReconfigurableStdout()
+            saved = sys.argv
+            try:
+                sys.argv = [
+                    "make_mixed.py", "--generate", "--island", island["island"],
+                    "--parents", str(pais), "--output", str(tmp / "saida.jsonl"),
+                    "--target", "0",
+                ]
+                with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "x"}):
+                    with contextlib.redirect_stdout(buffer):
+                        make_mixed.main()
+            finally:
+                sys.argv = saved
+
+        linha = buffer.getvalue().split("ilhas curtas no plano inteiro: ")[-1].splitlines()[0]
+        relatado = {nome: contagem for nome, contagem in
+                    (entrada.split(" ") for entrada in linha.split(", "))}
+        # A ilha sob teste fecha a cota SO se o pai longo passou o filtro. Com um teto de
+        # 450 ela aparece aqui com zero, e e essa a forma que este teste recusa.
+        self.assertNotIn(island["island"], relatado, linha)
+        # E as outras dezenove continuam curtas com zero: o arquivo so tem pais desta ilha.
+        self.assertEqual(len(relatado), len(lab.ISLAND_PLAN) - 1)
+        self.assertEqual(set(relatado.values()), {f"0/{cota}"})
+
+    def test_the_mixed_lane_takes_its_parents_from_the_SHARED_word_window(self) -> None:
+        import common
+        import make_mixed
+
+        # A janela e a do extrator, nomeada, e nao um literal desta pista. Um teto proprio
+        # aqui recusa pai que a classe `ai` aceita, e o comprimento sozinho passa a separar
+        # as duas classes geradas -- e a mesma razao que `generate_ai` escreve ao recusar
+        # semente fora da janela em vez de a aparar.
+        def linha(palavras: int, label: int = 0) -> dict:
+            return {
+                "id": f"pai_{palavras}",
+                "text": " ".join(f"w{i}" for i in range(palavras)),
+                "label": label,
+                "family": "ptwiki_lead",
+            }
+
+        def admitidos(*linhas: dict) -> list[str]:
+            return [pai["id"] for pai in make_mixed.admissible_parents(linhas)]
+
+        # As DUAS bordas, pelos nomes: quem repuser um teto literal fica vermelho aqui.
+        self.assertEqual(
+            admitidos(
+                linha(common.MINIMUM_WORDS - 1),
+                linha(common.MINIMUM_WORDS),
+                linha(common.MAXIMUM_WORDS),
+                linha(common.MAXIMUM_WORDS + 1),
+            ),
+            [f"pai_{common.MINIMUM_WORDS}", f"pai_{common.MAXIMUM_WORDS}"],
+        )
+
+        # O intervalo que o teto antigo de 450 recusava e a janela partilhada admite: e
+        # ele que fecha as quatro ilhas curtas da cota mista.
+        self.assertEqual(admitidos(linha(451), linha(3000)), ["pai_451", "pai_3000"])
+
+        # `label` continua a regra selada -- pai vem da reserva, e so a classe humana.
+        self.assertEqual(admitidos(linha(1000, label=1)), [])
+
+        # E a projecao e a de producao, e nao o registo cru: um pai que chegue inteiro
+        # carrega campos que `emit` nao sabe ler.
+        (pai,) = make_mixed.admissible_parents([linha(1000)])
+        self.assertEqual(pai, make_mixed.parent_projection(linha(1000)))
+
     def test_the_agy_mixing_lane_asks_by_CELL_and_names_the_island_slot(self) -> None:
         import make_mixed
         import make_mixed_agy

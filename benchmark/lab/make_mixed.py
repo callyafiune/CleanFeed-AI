@@ -630,6 +630,40 @@ def parent_projection(
     }
 
 
+def admissible_parents(rows) -> list[dict]:
+    """Os pais que a pista mista aceita, projetados: classe humana, na janela do EXTRATOR.
+
+    A janela vem NOMEADA de `common` e nao repetida aqui. Um teto proprio desta pista
+    recusaria pai que a classe `ai` aceita pela mesma janela, e ai o comprimento sozinho
+    passaria a separar as duas classes geradas -- e a recusa que
+    `generate_ai.SeedLengthOutOfWindow` levanta pelo mesmo motivo.
+
+    `label == 0` e a regra selada do pai: ele sai da reserva, que e classe humana.
+
+    A contagem e `common.word_count` e nao `str.split()`: a janela e uma quantidade do
+    extrator, e quem a le tem de a contar com o contador dele. As duas concordam hoje --
+    ambas partem em corrida de espaco e descartam o vazio, e sobre as 2.578 linhas de
+    `reserved.jsonl` nao ha uma divergencia --, e e exactamente por concordarem que a
+    escolha e livre e cabe a autoridade unica. NAO e a quantidade que `near_dupes` mede:
+    aquela e token de regex de palavra em 5-grama (`near_dupes.TOKEN_RE`), e as duas
+    separam-se em pontuacao e hifenacao.
+
+    Importado TARDE, no molde de `assembler()`: este arquivo roda como script, e um import
+    de topo amarraria a cwd.
+    """
+    lab = str(Path(__file__).resolve().parent)
+    if lab not in sys.path:
+        sys.path.insert(0, lab)
+    from common import MAXIMUM_WORDS, MINIMUM_WORDS, word_count
+
+    return [
+        parent_projection(row)
+        for row in rows
+        if row.get("label") == 0
+        and MINIMUM_WORDS <= word_count(row["text"]) <= MAXIMUM_WORDS
+    ]
+
+
 def emit(
     output,
     parent_row,
@@ -911,12 +945,7 @@ def main() -> None:
         if not keys["gemini"]:
             raise SystemExit("defina GEMINI_API_KEY (keys.env)")
 
-        # Sealed rule: parents come from the RESERVED split (label 0 only).
-        parents = [
-            parent_projection(r)
-            for r in read_jsonl(args.parents)
-            if r.get("label") == 0 and 50 <= len(r["text"].split()) <= 450
-        ]
+        parents = admissible_parents(read_jsonl(args.parents))
         # E do BLOCO DE SEMENTES DESTA ILHA, imposto e nao prometido, no molde de
         # `generate_ai.select_humans`. Uma linha mista nomeia o pai em `derivationRoot` e
         # `humanSeed`, e `connected_components` une POR VALOR: um pai de outra ilha funde as

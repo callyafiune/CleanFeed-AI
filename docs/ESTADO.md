@@ -14,7 +14,7 @@
 > `código` = imposto por código medido. Um valor que a pré-inscrição vigente congela e algum módulo lê
 > é `código`, qualquer que tenha sido a política que o escreveu primeiro.
 
-**Última reescrita:** 2026-08-20
+**Última reescrita:** 2026-08-22
 
 ---
 
@@ -23,7 +23,7 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 172 arquivos / 3.116 testes (vitest) + 761 testes e 750 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| suíte | 172 arquivos / 3.116 testes (vitest) + 767 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
 | dos quais, o avaliador | 2.500 — 1.739 em 46 arquivos de `benchmark/tests`, 761 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
@@ -266,30 +266,27 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 ## 3.9 O PRÓXIMO PASSO
 
 Escrito aqui e não deduzido da § 7, porque quem retoma lê esta seção primeiro. Estado de 2026-08-22,
-depois das rodadas de codex sobre R1, R2 e sobre a lista de decisões.
+depois da janela do pai e da medição de poda em material.
 
-**O que barra a geração agora não é decisão nenhuma: é aritmética.** A classe mista não alcança
-`mixed: 2_000` e `sealDataset` compara a composição por igualdade exata, então gerar hoje gasta a cota
-e entrega um corpus que nunca sela como `release` (§ 7, primeira linha). O remédio está medido — a
-janela de pais em `make_mixed.py:918` alargada à partilhada zera as quatro ilhas curtas — e falta UMA
-medição antes de a mexer: a interação comprimento × poda de near-dupes.
+**A aritmética que barrava a geração está resolvida.** A janela de pais é a do extrator e as quatro
+ilhas curtas foram a zero (§ 7, § 5.4d). O que sobra antes de gastar cota é decisão e prosa, não
+medição.
 
-**Ordem, e as três primeiras são minhas:**
+**Ordem, e as duas primeiras são minhas:**
 
-1. **medir near-dupe contra comprimento de pai** e, se passar, alargar a janela de pais. Sem isto a
-   classe mista não fecha a cota e o selo `release` é inalcançável;
-2. **o nível de gerador da classe mista** (§ 4 retirou-o de lá: é meu), que move o `evaluatorDigest` e
+1. **o nível de gerador da classe mista** (§ 4 retirou-o de lá: é meu), que move o `evaluatorDigest` e
    obriga a repinar `SEALED_POLICY_SHA256` no mesmo commit;
-3. **a razão da cota `mixed = 2000`** escrita no registro, com a coluna "alternativa recusada"
+2. **a razão da cota `mixed = 2000`** escrita no registro, com a coluna "alternativa recusada"
    preenchida — o valor já foi ratificado em 2026-08-04, falta a prosa;
-4. **o recibo humano do selo `release`** — e ele vence AGORA e não na Fase 6, porque uma política de
+3. **o recibo humano do selo `release`** — e ele vence AGORA e não na Fase 6, porque uma política de
    corpus explícita só é aceita para `scientificUse: infrastructure-only`: 4.000 `ai` + 2.000 mistas é
    o preço de um SELO e não o de um detector. Se R4 e o selo forem exclusivos por construção, gerar
    antes de saber qual dos dois cai é o desperdício máximo. As três saídas mecânicas estão nomeadas;
    o que é dele é a jusante — as horas e a ratificação;
-5. **o plano de cobertura de modelo × effort**, com a fatia da reserva como consumidora conhecida
+4. **o plano de cobertura de modelo × effort**, com a fatia da reserva como consumidora conhecida
    (`generatorExposure` é derivada de `generatorFamily`, e a reserva vive nas três ilhas reservadas);
-6. só então **gastar a cota de geração**, que é botão dele.
+5. só então **gastar a cota de geração**, que é botão dele — e a primeira corrida tem de **medir o
+   rendimento de banda**, porque `ilha_08` fecha a cota só com 92,6 % e nenhuma corrida mediu isso.
 
 **O que NÃO é preparação e por isso não está nesta ordem:** a assinatura de B1, `consume-holdout` e o
 botão de publicação externa — os três dele, os três de fase posterior.
@@ -460,31 +457,104 @@ abre depois da emenda da moldura é só `wikipedia_fresh.jsonl` (5.000 linhas) m
 A linha "documentos de origem conhecidos na célula" acima descreve o pool de 24/07, que § 5.4b substitui:
 a extração de 2026-08-06 escreve `groupAxes` e o piso passa.
 
-### 5.4c Os pais mistos por ILHA, e as quatro ilhas que não fecham a cota (2026-08-22)
+### 5.4c Os pais mistos por ILHA, e o rendimento que cada uma exige (2026-08-22)
 
-Medido sobre `benchmark/data/dataset/reserved.jsonl` pelas duas telas que a pista aplica antes de
-gastar chamada — `label == 0` e a janela de 50–450 palavras — e chaveado pelo bloco de semente que
-`island_of_seed` deriva. **2.578** linhas passam a primeira tela, **2.247** passam as duas, contra
-uma cota mista total de **2.000**: excedente global de 247, ou 12,4 %.
+Medido sobre `benchmark/data/dataset/reserved.jsonl` por `make_mixed.admissible_parents` — as duas
+telas que a pista aplica antes de gastar chamada, `label == 0` e a janela do extrator — e chaveado
+pelo bloco de semente que `island_of_seed` deriva. **2.578** linhas passam as duas, contra uma cota
+mista total de **2.000**: excedente global de 578.
 
 **E o excedente global esconde o que decide.** Excedente numa ilha não preenche a cota de outra,
-porque cada ilha toma só o próprio bloco de semente. Por ilha, contra a cota de 100:
+porque cada ilha toma só o próprio bloco de semente. Nenhuma ilha fica abaixo da cota de 100, e o que
+cada uma exige é **rendimento de banda**, que é o que a folga compra:
 
-| ilha | pais admissíveis | rendimento de banda exigido |
-|---|---|---|
-| `ilha_08` | **92** | 1,087 |
-| `ilha_12` | **94** | 1,064 |
-| `ilha_13` | **95** | 1,053 |
-| `ilha_14` | **99** | 1,010 |
+| ilha | pais | folga | rendimento de banda mínimo |
+|---|---:|---:|---:|
+| `ilha_08` | 108 | 8 | **92,6 %** |
+| `ilha_14` | 115 | 15 | 87,0 % |
+| `ilha_12` | 117 | 17 | 85,5 % |
+| `ilha_19` | 118 | 18 | 84,7 % |
+| as outras dezesseis | 119 a 153 | 19 a 53 | 84,0 % ou menos |
 
-As quatro exigem rendimento de banda **acima de 1**, que é impossível: elas não fecham a cota nem
-com 100 % das edições dentro da banda, e a perda de banda vem depois. Déficit somado: **20 linhas**.
-As outras dezesseis têm 267 de folga que não transfere.
+`ilha_08` é o vínculo, e a perda de banda vem **depois** desta contagem: nenhuma corrida mediu o
+rendimento real, então a cota é alcançável e não garantida. `make_mixed.py --generate` imprime o
+déficit da ilha da corrida e a lista das curtas do plano inteiro antes da primeira chamada — hoje
+essa lista é vazia. É **aviso e não recusa**: o remédio é escolha de quem coleta, e recusar pararia
+uma corrida que ainda produz as linhas que a ilha consegue.
 
-`make_mixed.py --generate` passou a imprimir isso antes da primeira chamada — o déficit da ilha da
-corrida e a lista das curtas do plano inteiro. É **aviso e não recusa**: o remédio (mais pais, outra
-janela, ou célula sub-preenchida aceita) é escolha de quem coleta, e recusar pararia uma corrida que
-ainda produz as linhas que a ilha consegue.
+### 5.4d A poda de quase-duplicata da classe mista, medida em MATERIAL (2026-08-22)
+
+Recomputável: `py -3.13 measure_mixed_parent_window.py --parents ../data/dataset/reserved.jsonl`,
+com as funções de produção de `near_dupes` sobre os **2.578** pais que `admissible_parents` admite,
+**12 enxertos por par** (`GRAFTS_PER_PAIR`), num total de **618.720 sorteios**.
+
+**A grandeza publicada é a taxa por sorteio, e não um máximo com margem.** O máximo não converge no
+número de sorteios: em `insercao/25`, os pares com ao menos um enxerto acima do limite vão de **0**
+(K de 1 a 4) para **8**, **11** e **14** (K de 8, 12, 24). Logo "limite − máximo" é propriedade do K
+escolhido e dobrar K muda a conclusão; a razão `sorteios_que_cruzam / sorteios` não.
+
+| medida | valor |
+|---|---:|
+| taxa global | **1,78 × 10⁻⁵** (11 de 618.720) |
+| células com taxa não nula | **1** de 20 — `insercao/25`, a **3,56 × 10⁻⁴** |
+| pares com ao menos um cruzamento | 11, dos quais **4** de pai ≤ 450 palavras e **7** acima |
+| linhas que `insercao/25` compra | 5 por ilha, **100** de 2.000 |
+| cruzamentos esperados numa corrida | **0,036** linhas, ou uma linha a cada ~28 corridas |
+
+**Sensibilidade ao limiar, com `--threshold`:** a taxa cai cerca de três ordens e meia de grandeza
+entre 0,70 e 0,85, um fator de sete a oito por 0,02 de limiar. Logo 0,82 está numa **encosta íngreme
+e não num vale** — a cauda é fina, mas a taxa é muito sensível ao limiar.
+
+| limiar | sorteios que cruzam | taxa | linhas esperadas por corrida |
+| ---: | ---: | ---: | ---: |
+| 0,70 | 24.241 | 3,92 × 10⁻² | 78 |
+| 0,75 | 790 | 1,28 × 10⁻³ | 2,6 |
+| 0,78 | 197 | 3,18 × 10⁻⁴ | 0,64 |
+| 0,80 | 88 | 1,42 × 10⁻⁴ | 0,28 |
+| **0,82** (vigente) | **11** | **1,78 × 10⁻⁵** | **0,036** |
+| 0,85 | 2 | 3,23 × 10⁻⁶ | 0,0065 |
+
+A coluna de linhas é `2.000 × taxa` — a corrida tira **um** enxerto por linha e são 2.000 linhas —, e
+não a taxa da célula vezes as 100 linhas dela: as duas coincidem em 0,82 só porque ali todos os
+cruzamentos estão numa célula, e confundi-las torna a coluna não monótona.
+
+A conclusão — perda abaixo de uma linha por corrida — sobrevive até 0,78; em 0,75 são 2,6 linhas e
+em 0,70 são 78, e é aí que ela deixa de valer.
+
+**Comprimento não é o eixo do risco.** Quatro dos onze cruzamentos vêm de pai que o teto de 450 já
+admitia, então a poda mordia antes desta unidade e continua a morder depois; o que alargar a janela
+faz é acrescentar sete casos num universo 15 % maior. Nenhuma das outras 19 células cruza em 618 mil
+sorteios.
+
+**Duas medições anteriores desta quantidade estavam erradas, e as duas por fixture.** (i) Enxerto
+feito de um documento REPETIDO acrescenta token sem acrescentar shingle distinto, a união do par para
+de crescer, e `insercao/90` mediu 0,92 onde o esperado é ~0,10. (ii) Enxerto tirado do PRÓPRIO pai
+leva a razão a ~1 em qualquer nível, e mediu 0,974 num nível 90. As duas produziram tabela publicável
+antes de serem vistas. A guarda é `assert_the_top_level_is_dominated_by_the_graft`, que roda antes da
+primeira linha e cujo teto **deriva** de `MIX_LEVELS` (`top_level_ceiling`, `TOP_LEVEL_HEADROOM`) em
+vez de ser digitado.
+
+**A lacuna declarada, e ela NÃO tem outro gate.** O fluxo doador exclui o pai sob edição, então esta
+medição não cobre gerador que **ECOA** o pai — e nesse regime a razão vai a ~1 em qualquer nível e
+comprimento. Quem decide eco do pai é `near_dupes`, isto é, a própria poda medida aqui:
+`artifact_gate` recusa-se explicitamente a julgá-lo, porque as sondas de eco derivam só a parte da
+receita antes de `{reference}` e "uma linha que a repete é uma quase-duplicata de linha humana, que
+`near_dupes` decide e este gate não deve contar duas vezes sob outro nome". Medir esse regime exige
+saída de gerador real, que não existe.
+
+Que excluir o pai **por id** baste neste material é medido: `near_dupes.prune` sobre os 2.578 pais
+propõe 1.477 pares candidatos e aceita **zero**, então não há quase-duplicata entre pais que a
+exclusão por id deixaria passar sob outro id.
+
+**O que o pino do modelo diz e o que ele não diz.**
+`test_a_janela_do_PAI_alargada_nao_admite_poda_de_near_dupe_nova` mede tokens todos distintos, e
+nesse modelo a razão é monótona no comprimento com supremo `1 − nível/100`: só `insercao/15` cruza,
+em 218 palavras. `shingles_of` devolve CONJUNTO, então a multiplicidade do texto real desaparece do
+modelo e ele **não** é cota superior do material — quem autoriza a janela é a tabela acima.
+
+**A fidelidade ao caminho selado é conservadora, e está escrita em `near_dupes`:** o índice invertido
+do lab propõe um SUPERCONJUNTO dos candidatos do LSH da `near-duplicates.ts`, e o portão de Jaccard
+exacto é o mesmo nos dois. Uma taxa medida aqui não pode ser excedida lá.
 
 ### 5.4b A célula extraída, a poda global medida e o corpo estampado (2026-08-06)
 
@@ -1266,7 +1336,9 @@ vazia recusa a montagem.
 
 | dívida | vence |
 |---|---|
-| **a classe mista não alcança a cota que o selo exige, e isto barra o selo `release`.** `RELEASE_CORPUS_POLICY.counts` fixa `mixed: 2_000` e o comentário do sítio declara que `sealDataset` compara a composição por **igualdade exata** (`benchmark/dataset-manifest.ts:106-114`). Medido em 2026-08-22 sobre `reserved.jsonl`: quatro ilhas têm menos pais admissíveis que a cota de 100 — 92, 94, 95 e 99 — e cada pai rende no máximo uma linha mista, então o teto das quatro é **380 contra 400**, antes de qualquer perda de banda. A folga de 267 nas outras dezesseis **não transfere**. Logo a corrida gasta a cota e entrega ≤ 1.980, e o corpus nunca sela como `release`. **O remédio está medido e é a janela:** o filtro de pais é `50 <= palavras <= 450` em `make_mixed.py:918`, e alargá-lo à janela partilhada (50–5.000, que `common` já impõe a todo candidato) dá **2.578** pais e **zero** ilhas curtas. **O 450 não tem derivação em lugar nenhum** — literal nu, sem comentário no sítio, sem razão no ESTADO nem no registro (procurado). O que falta antes de o alargar é UMA medição: a interação comprimento × poda de near-dupes que `MIX_CELL_EXCLUDED` já documenta (limite 0,82 sobre shingles de 5 tokens, primeiro cruzamento em 218 tokens) — pai mais longo com edição pequena é mais parecido, e é isso que um teto de 450 plausivelmente protege | **antes de gerar a classe mista**, e antes dela a medição do near-dupe |
+| a **cota mista é alcançável, e o vínculo que sobrou é rendimento de banda e não número de pais.** A janela de pais é a do extrator — `common.MINIMUM_WORDS`–`MAXIMUM_WORDS`, lida por nome em `make_mixed.admissible_parents` —, e sobre `reserved.jsonl` ela admite **2.578** pais contra os 2.247 do teto anterior, o que leva as quatro ilhas curtas (92, 94, 95, 99) a **zero**. O que fica: a folga mínima é de **8** pais em `ilha_08`, então essa ilha exige **92,6 %** das edições dentro da banda, e a perda de banda vem depois da contagem. As outras dezenove exigem 87,0 % ou menos. Logo a cota deixa de ser impossível — exigia rendimento acima de 1 — e passa a ser condicional ao rendimento medido, que **nenhuma corrida mediu ainda** | medir o rendimento de banda real na primeira corrida, antes de confiar na cota |
+| a **geometria da operação não é conferida no que o gerador devolve, e uma célula excluída volta pela porta de trás.** `mixed_record` recomputa `aiFraction` dos vãos e a corrida descarta fora de banda, mas **nada afere que uma `substituicao` removeu de facto uma seção**. Uma `substituicao/15` que só INSERE satisfaz a banda — o trecho novo continua 15 % do texto final — e degenera em `insercao/15`, que é a célula que `MIX_CELL_EXCLUDED` exclui: medido no modelo, esse par cruza o limite de poda a partir de **218 palavras**, e o que cai é o pai humano com a ponte da ilha. Não é dívida desta unidade — 218 está dentro do teto anterior de 450 — e não é coberta pela taxa da § 5.4d, que mede a geometria PEDIDA e não a devolvida | antes de gerar a classe mista, com o nível de gerador |
+| a **poda morde em `insercao/25`, e a taxa é medida mas o regime de ECO não.** § 5.4d: 11 cruzamentos em 618.720 sorteios, todos nessa célula, **0,036** linhas esperadas por corrida. Quatro dos onze são de pai que o teto anterior já admitia. O que **não** está medido é gerador que ecoa o pai — ali a razão vai a ~1 em qualquer comprimento —, e não há outro gate: `artifact_gate` delega esse caso a `near_dupes` por escrito. Medir exige saída de gerador real | na primeira corrida, junto com o rendimento de banda |
 | a **pista de geração da reserva existe** — `generate_ai.py --provider ollama`, que reusa ilha, semente, pareamento de comprimento, janela de palavras, PII, resume e lote —, e o que fica aberto é a decisão do operador sobre as 400 linhas que já estão em disco. **Quatro medições, e cada uma é razão para regerar em vez de completar:** (i) o template daquelas 400 **não foi recuperado** — `promptSha256` `f823530d215fffe8…`, bytes ausentes do repositório e do snapshot, quinze reconstruções testadas contra o digesto sem casar (um acerto seria prova, uma falha não é) —, então **com o template que o repositório carrega** as 50 que faltam até 450 carregam outro digesto de prompt; o que não está aferido é necessidade — os bytes podem reaparecer; (ii) **67 das 400 estão abaixo do mínimo de 50 palavras** e uma não está na forma canônica, porque o script não commitado não passou pelo `CandidateWriter`; (iii) **328 das 400 têm pai fora das ilhas reservadas**, e a reserva assenta por COMPONENTE — uma linha reservada semeada em ilha de núcleo arrasta as linhas de núcleo que o pai humano une para o bloco cego; (iv) o runtime local está em **0.32.15** e as 400 gravaram **0.32.6**, então a reprodutibilidade delas contra o binário instalado deixou de valer. A pista nova fecha (ii), (iii) e (iv) por construção e não pode consertar (i). **Regerar é apagar material, que é nunca delegado** | a decisão das 400 é **do operador**; a pista está feita |
 | **nada cruza modelo e effort com template, e a lacuna é de PLANO.** Medido: uma ilha carrega `templates`, `mixingTemplates`, `seedBlock`, `lines` e `reserved`; uma receita carrega `task`, `register`, `template` e `weight`. **Nenhum dos dois nomeia modelo ou effort** — os dois são argumentos POR CORRIDA, e nada garante que um modelo apareça em mais de uma ilha. Duas leituras da consequência foram procuradas em 2026-08-22 e o que sobrou é mais estreito do que as duas. **(i) A fatia que sofre atribuição existe, e é a da RESERVA.** Nenhuma fatia é chaveada por modelo ou effort — `SliceAxis` tem dez membros —, mas `generatorExposure` é **derivada de `generatorFamily`** (`heldOut.has(family) ? "unseen" : "seen"`), então um confundimento de nível de família alcança-a. E alcança de facto: a reserva é gerada nas três ilhas reservadas, logo o recall da fatia `unseen` fica confundido com os templates dessas ilhas, e nenhuma reamostragem os separa. Isso é o mesmo confundimento que a `proxyReason` da classe mista declara, num eixo que **tem** gate. **(ii) A ameaça ao INTERVALO não foi demonstrada.** Supus que uma família num só cluster de template estreitaria o intervalo de `ai-recall` (que aninha `promptTemplate` dentro de `generatorFamily`). Medido pela função de produção em dois regimes de lote, a largura **não mostrou tendência monótona** com a cardinalidade do template (0,2167 e 0,2167 com um e dois templates num regime; 0,2250 e 0,2000 no outro). O fixture **não isola** a cardinalidade da partição posicional dos acertos entre templates, nem do alinhamento das fronteiras de lote, então nem o efeito nem a ausência dele estão estabelecidos — e uma guarda escrita sobre isso foi retirada por falta de consequência medida. O que fica é **plano de cobertura**, com a fatia da reserva como o consumidor conhecido, e congelar a lista de modelos está fora de questão porque o roster é de fora e se move (§ 5.10) | antes de gerar a classe `ai` |
 | a fonte de effort **`flag` do agy é gravável** e a escala do codex está completa, e as duas eram a mesma dívida de forma. O que restava era um booleano por lane para uma propriedade por modelo; ele saiu, e `configurable` deriva da fonte do registro. `codex.effortLevels` declara os seis níveis reais, então uma linha em `max` deixa de ser recusada por "effort level outside the lane's own scale" — o teto de `low…xhigh` continua valendo como **plano de cobertura** e não como guarda, e o que o schema recusa é o nível fora da escala | **feita** em 2026-08-21 |
