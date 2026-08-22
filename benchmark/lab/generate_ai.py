@@ -451,15 +451,23 @@ def assert_runtime_is_local(host: str = "") -> str:
 
 
 def ollama_runtime_version(host: str = "") -> str | None:
-    """The version of the runtime that WILL answer, asked of the server itself.
+    """The version the runtime reports WHEN THIS RUN STARTS, asked of the server itself.
 
     Of the SERVER and not of the binary on PATH, and the difference is real: a server
     started by an older install keeps answering after the binary is upgraded, so the
     version on PATH is not necessarily the version that produced the text. `harnessVersion`
     is a dependence axis, and the axis has to name what answered.
 
+    ASKED ONCE, and the residue is stated rather than closed: a server restarted or
+    replaced mid-run would keep the version this call read, so the axis names the runtime
+    at the start of the run and not per row. Asking per row would be one request per line
+    for a value that changes only when someone restarts the server, and the other lanes
+    capture once for the same reason.
+
     None on any failure, which on this lane stops the run rather than costing a row its
-    eligibility — see the refusal in `main`.
+    eligibility — see the refusal in `main`. A NON-LOCAL host is not one of those
+    failures: it propagates, because "the version was not captured" and "you pointed this
+    at another machine" call for different answers.
     """
     try:
         with urllib.request.urlopen(
@@ -490,7 +498,13 @@ def ollama_model_identity(tag: str, binary: str = OLLAMA_BIN) -> tuple[str, str]
     `ollama list` prints the content id per tag and `ollama show` the quantization; a tag
     the list does not carry has not been pulled, and generating against it would ask the
     runtime to fetch weights nobody chose.
+
+    The locality check is HERE and not only on the generation path: the CLI is a client of
+    the server at `OLLAMA_HOST`, so against a remote one this would report that machine's
+    store — and a content id read from one runtime while another produced the text is a
+    false identity for the weights, which is the exact defect the id exists to prevent.
     """
+    assert_runtime_is_local()
     try:
         listing = subprocess.run(
             [binary, "list"], capture_output=True, timeout=120,

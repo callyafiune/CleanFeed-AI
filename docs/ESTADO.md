@@ -919,7 +919,7 @@ está no PATH desta sessão), não há arquivo como o cache do codex nem comando
 e o harness é o CLI mais a orquestração da sessão. Logo `harnessVersion` nasce `unknown` e o
 preço é elegibilidade — tolerável no núcleo, que não é onde o piso de 200 conta.
 
-**`ollama` — reserva OOD, runtime local em `~/.ollama`, `ollama` 0.32.6**
+**`ollama` — reserva OOD, runtime local em `~/.ollama`, `ollama` 0.32.15** (o host é conferido como **loopback** nos três caminhos que falam com o runtime: geração, versão e identidade dos pesos — contra servidor remoto o canal `local-runtime` seria falso e a versão seria de outra máquina)
 
 As duas famílias, com a ficha que a máquina dá (`ollama show`), não a que eu lembro:
 

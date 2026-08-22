@@ -5067,6 +5067,13 @@ class GeneratorCaptureTests(unittest.TestCase):
         # server.
         with self.assertRaises(generate_ai.RuntimeNotLocal):
             generate_ai.ollama_runtime_version("http://10.0.0.5:11434")
+        # And so does the IDENTITY read, which is the third path that talks to the runtime.
+        # The CLI is a client of the server at `OLLAMA_HOST`, so against a remote one it
+        # would report that machine's store — a content id read from one runtime while
+        # another produced the text is a false identity for the weights.
+        with mock.patch.object(generate_ai, "OLLAMA_HOST", "http://10.0.0.5:11434"):
+            with self.assertRaises(generate_ai.RuntimeNotLocal):
+                generate_ai.ollama_model_identity("qwen2.5:7b")
 
     def test_the_runtime_version_is_asked_of_the_server_that_will_answer(self) -> None:
         from unittest import mock

@@ -10202,3 +10202,25 @@ versao contra host remoto. As duas ganharam caso e ficaram vermelhas.
 
 **Fechamento:** lab 755 / 750 verde, vitest 172 / 3.115, `docs:check` OK, tsc limpo, lint nos 12
 pre-existentes, `evaluatorDigest` inalterado (nada aqui esta em `EVALUATOR_FILES`).
+
+### Segunda rodada das pistas: o terceiro caminho ao runtime escapava (2026-08-21)
+
+`.codex-reviews/codex-pistas-r2-veredito.txt`, cinco comandos de cinco, `EXIT=0`. **REPROVA**, dois
+achados. As duas perguntas de desenho voltaram resolvidas — "versao do servidor: MELHOR" e
+"provedor no mesmo script: CERTO com a § 3.3 corrigida", o que confirma que o primeiro veredito dele
+decorria da minha linha velha e nao do desenho.
+
+**O achado: eu guardei dois dos TRES caminhos que falam com o runtime.** Geracao e consulta de
+versao passavam por `assert_runtime_is_local`; `ollama_model_identity` nao. E ela e a que mais dói:
+o CLI do ollama e CLIENTE do servidor em `OLLAMA_HOST`, entao contra um remoto ela reportaria o
+store daquela maquina — e um id de conteudo lido de um runtime enquanto outro produziu o texto e
+identidade FALSA dos pesos, que e exactamente o defeito que o id existe para impedir. A guarda entrou
+lá, com mutante vermelho (O14).
+
+**Achado 2: "o runtime que VAI responder" afirmava demais.** Uma consulta unica nao impede reinicio
+ou troca do servidor no meio da corrida. A frase passou a "a versao que o runtime reporta QUANDO
+ESTA CORRIDA COMECA", com o residuo escrito: por linha seria uma requisicao por linha para um valor
+que so muda quando alguem reinicia o servidor, e as outras lanes capturam uma vez pela mesma razao.
+
+**Fechamento:** lab 755 / 750 verde. O cabeçalho da lane na § 5.10 passou a dizer 0.32.15 e a nomear
+os tres caminhos guardados.
