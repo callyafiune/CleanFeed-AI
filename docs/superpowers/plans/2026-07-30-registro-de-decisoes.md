@@ -9891,3 +9891,50 @@ pre-existentes, `format:check` no unico vermelho herdado (`consume-holdout.test.
 **O que esta unidade NAO faz, e fica dito para nao ser lido como feito:** nao da papel a familia
 nenhuma (`OOD_RESERVED_FAMILIES` continua nas duas OpenAI, e a reserva do slate ainda contradiz a
 reserva ratificada), e nao escreve pista de geracao nenhuma. As duas sao as unidades seguintes.
+
+### O codex pegou a invalidacao retroativa que eu tinha acabado de introduzir (2026-08-21)
+
+Rodada de revisao sobre `88f7227`, contrato em `.codex-reviews/contrato-forma-lanes.md`, veredito em
+`codex-forma-lanes-veredito.txt`, oito comandos de oito, `EXIT=0`. **REPROVA**, dois achados, os
+dois procedem. Ele aprovou quatro dos seis itens que eu pedi para conferir — remocao completa,
+separacao de canal REAL, `effortLevels` como troca legitima, `not-supported` na medida — e derrubou
+a regra central.
+
+**O achado que vale, e e o que eu declarei como pergunta mais importante do contrato.** Eu troquei
+`configurable == row.effortConfigurable` por `configurable == (source == "flag")` e escrevi que
+nenhum registro existente mudava. Verifiquei o agy e **nao** verifiquei o codex. Enumerado:
+`codex` com `source: "provider-default"` e `configurable: true` **era valido e passou a ser
+recusado** — das seis formas antigas uma saiu e duas entraram, exactamente a contagem que ele
+devolveu. E invalidacao retroativa de politica congelada, que e a regra 4 do meu proprio metodo.
+
+**A causa e uma leitura que eu troquei sem notar.** A politica congelada usava `configurable` como
+CAPACIDADE — "este effort era ajustavel" —, e foi por isso que ela podia declarar
+`codex.effortConfigurable: true` enquanto admitia registro `provider-default`: o provedor escolheu
+o tier num caminho onde nos poderiamos ter escolhido. Eu passei a ler como ATO — "nos passamos a
+flag" — e sob essa leitura `provider-default` implica false. Duas leituras defensaveis, e a que
+estava selada nao era a minha.
+
+**O conserto:** `configurable` e afirmacao do REGISTRO, e o que fica recusado sao as duas
+CONTRADICOES que ja existiam — veio de flag logo era ajustavel; nao tinha nocao de effort logo nao
+era. Nada mais. Espaco de registros **enumerado por teste**: doze formas admitidas, e as seis
+anteriores a emenda estao todas dentro. A alegacao "nao invalida nada" deixou de ser argumento e
+passou a ser medicao, que e o que faltava — o contrato pedia "conte, nao argumente" e eu tinha
+argumentado.
+
+**Uma guarda minha sobreviveu verde no mesmo lance, e a resposta foi apaga-la.** Ao consertar eu
+escrevi um terceiro limite: `configurable: true` exige que a lane ofereca `flag`. A bateria mostrou
+que remove-lo deixa a suite verde — porque **toda** lane congelada cuja lista de fontes passa de
+`not-supported` oferece `flag`, e lane sem escala oferece `not-supported` e nada mais. O limite nao
+tem estado alcancavel: e decoracao. Saiu, e no lugar ficou a razao pela qual nao ha terceira
+checagem — que e afirmacao mais fraca e verdadeira. O teste que eu havia escrito para ele media
+outra coisa (a contradicao do `not-supported`), que e a maquiagem de expectativa que o codex me
+pegou numa rodada anterior; foi renomeado para o que mede.
+
+**O segundo achado, menor e da mesma familia de sempre:** a § 7 dizia "bateria de sete mutacoes"
+depois de eu ter corrido nove. Cardinalidade velha numa divida que eu acabara de escrever. Corrigida
+para nove, com a que sobreviveu verde declarada.
+
+**Fechamento:** vitest 172 / 3.115 e lab 740 / 742 verdes. Bateria da rodada: M7 (derivar da fonte
+outra vez) e M8 (parar de recusar a contradicao do `not-supported`), as duas vermelhas no teste
+nomeado, as duas restauradas com sha256 identico. `evaluatorDigest` republicado — `schema.ts` esta
+em `EVALUATOR_FILES`, entao o conserto move o digesto.

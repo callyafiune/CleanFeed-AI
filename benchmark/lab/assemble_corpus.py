@@ -1168,12 +1168,15 @@ def effort_config(lane: str, meta: dict) -> dict:
     "medium" off a suffix would record a source the run never consulted — the invented
     identity R6 forbids.
 
-    CONFIGURABILITY IS READ OFF THE SOURCE and never off the lane. "Configurable"
-    means the value was passed as an independent flag, which is exactly what
-    `source: "flag"` says, and one lane writes both forms — the flag on a base id,
-    the model id where the tier is embedded. A per-lane boolean for a per-model
-    property has only false answers, so the lane row carries none and this derives
-    it; `schema.ts` refuses any record where the two disagree.
+    CONFIGURABILITY IS THE CONSERVATIVE VALUE and never the lane's. `configurable`
+    states whether the effort was SETTABLE in this run, and the sealed schema bounds
+    it by the lane (settable requires the lane to offer a `flag` source) without
+    deciding it — `provider-default` with `configurable: true` is a legitimate codex
+    record, because the provider chose a tier where we could have. What this writer
+    can support from a pool row is narrower: the row records a source and a level and
+    says nothing about settability, so `flag` is written as settable and everything
+    else as not. A pool that records the settability is what would widen this; until
+    one does, the wider value is not ours to write.
 
     The `not-supported` arm is only available on a lane whose frozen row offers it.
     `codex` does not: its `effortSources` are `flag` and `provider-default`, and both

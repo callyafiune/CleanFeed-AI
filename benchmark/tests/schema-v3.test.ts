@@ -27,6 +27,7 @@ import {
   validateBenchmarkRecordV4,
   type BenchmarkRecordV3,
 } from "../schema.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   known,
   notApplicable,
@@ -693,24 +694,111 @@ describe("v3 generation records the lane, the harness and the effort", () => {
     });
   });
 
-  it("derives effort configurability from the record's own source, not from its lane", () => {
-    // The same lane writes both forms, which is why no per-lane boolean can decide
-    // it: `model-id` on agy is not configurable and `flag` on agy is, and the
-    // mismatch is refused in BOTH directions.
+  // The record space, ENUMERATED. An amendment to a frozen policy may widen what a
+  // record can say and may never narrow it: a shape that was written down under the
+  // old rule and is refused under the new one is a corpus invalidated retroactively.
+  // So the pairs are listed rather than argued about, and the four that were valid
+  // before this amendment are marked.
+  it("admits every effort shape the frozen policy admitted before, and three more", () => {
+    const SOURCES = [
+      "model-id",
+      "flag",
+      "not-supported",
+      "provider-default",
+    ] as const;
+    // One base record per lane, so the EFFORT is the only field the enumeration
+    // varies. Sharing the agy base would fail `gemini-api` on its harness axis and
+    // `ollama` on its decoding block, and the refusals would be counted as effort
+    // refusals — the confounding this map removes.
+    const base: Record<string, () => Record<string, unknown>> = {
+      agy: v3Ai,
+      "claude-code": () =>
+        withAxis(v3Ai(), "generationLane", known("claude-code")),
+      codex: () => withAxis(v3Ai(), "generationLane", known("codex")),
+      "gemini-api": () => v3ApiAi(0.7),
+      "gemini-cli": () =>
+        withAxis(v3Ai(), "generationLane", known("gemini-cli")),
+      ollama: v3LocalRuntimeAi,
+    };
+    const admitted: string[] = [];
+    for (const lane of Object.keys(PREREGISTRATION_V4.generationLanes)) {
+      const row =
+        PREREGISTRATION_V4.generationLanes[
+          lane as keyof typeof PREREGISTRATION_V4.generationLanes
+        ];
+      for (const source of SOURCES) {
+        for (const configurable of [true, false]) {
+          const effort =
+            source === "not-supported"
+              ? { source, configurable }
+              : {
+                  source,
+                  configurable,
+                  scale: row.effortScale ?? "none",
+                  level: row.effortLevels[0] ?? "none",
+                };
+          const record = withGeneration(base[lane](), { effort });
+          try {
+            validateBenchmarkRecordV3(record);
+            admitted.push(`${lane} ${source} ${String(configurable)}`);
+          } catch {
+            // refused, which is the majority and is what the enumeration measures
+          }
+        }
+      }
+    }
+    expect(admitted.sort()).toEqual([
+      "agy flag true",
+      "agy model-id false", // valid before this amendment
+      "agy model-id true",
+      "agy not-supported false", // valid before this amendment
+      "claude-code flag true",
+      "claude-code not-supported false",
+      "codex flag true", // valid before this amendment
+      "codex provider-default false",
+      "codex provider-default true", // valid before this amendment
+      "gemini-api not-supported false", // valid before this amendment
+      "gemini-cli not-supported false", // valid before this amendment
+      "ollama not-supported false",
+    ]);
+  });
+
+  it("keeps a provider-chosen tier settable, and refuses the two contradictions", () => {
+    // `configurable` is the record's own statement and neither the lane's nor the
+    // source's. What is refused is the pair that contradicts itself; what is admitted
+    // includes `provider-default` with `configurable: true`, the shape the frozen
+    // policy already carried on `codex` and which deriving from the source would have
+    // invalidated retroactively.
     expect(() =>
       validateBenchmarkRecordV3(
-        withGeneration(v3Ai(), {
+        withGeneration(v3ApiAi(0.7), {
           effort: {
-            source: "model-id",
+            source: "not-supported",
             configurable: true,
-            scale: "agy-model-id-tier",
-            level: "high",
           },
         }),
       ),
     ).toThrow(
-      /generation\.effort\.configurable must be false for the source "model-id"/u,
+      /generation\.effort source "not-supported" cannot be configurable/u,
     );
+    const codex = withGeneration(
+      withAxis(v3Ai(), "generationLane", known("codex")),
+      {
+        provider: "codex",
+        effort: {
+          source: "provider-default",
+          configurable: true,
+          scale: "codex-reasoning-effort",
+          level: "medium",
+        },
+      },
+    );
+    expect(validateBenchmarkRecordV3(codex).generation?.effort).toEqual({
+      source: "provider-default",
+      configurable: true,
+      scale: "codex-reasoning-effort",
+      level: "medium",
+    });
   });
 
   it("admits a claude-code record whose run exposed no effort control", () => {

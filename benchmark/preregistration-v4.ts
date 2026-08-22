@@ -289,7 +289,8 @@ export type EffortSource =
  * schema.ts refuses `source: "flag"` with `configurable: false`), and `true`
  * invalidates every record already written under the other source. So the lane
  * declares the union of sources it can produce and the SCALE those levels live on,
- * and configurability is derived per record from its own `source`.
+ * and the RECORD states whether its own effort was settable — bounded by this row,
+ * because settable means a flag existed, and never derived from it.
  */
 export interface GenerationLaneRow {
   readonly channel: GenerationChannel;

@@ -3309,17 +3309,24 @@ function assertLaneAgreement(
     );
   }
   if (effort.source !== "not-supported") {
-    // Configurability is a fact about THIS record's own source and never about the
-    // lane: "configurable" means the value was passed as an independent flag, which
-    // is exactly what `source: "flag"` says. The lane cannot decide it, because the
-    // same lane produces both forms — on `agy` the tier is in the model id for
-    // `gemini-3.7-flash-low` and in the flag for `gemini-3.1-pro`.
-    if (effort.configurable !== (effort.source === "flag")) {
-      throw new BenchmarkRecordError(
-        `generation.effort.configurable must be ${String(effort.source === "flag")} for the source "${effort.source}": a configurable effort is one passed as a flag`,
-        id,
-      );
-    }
+    // `configurable` says whether THIS effort was settable, and the lane does not
+    // decide it. Which of a lane's models take the flag is per-model — on `agy`,
+    // `gemini-3.1-pro` accepts `--effort` while `gemini-3.5-flash-medium` carries the
+    // tier in its id and refuses a contradicting flag — so a per-lane answer would
+    // have to be wrong about one of them.
+    //
+    // It is NOT derived from the source either, and that direction was measured:
+    // deriving would refuse `provider-default` with `configurable: true` — the
+    // provider chose a tier on a lane where we could have — and the frozen policy
+    // admitted exactly that shape on `codex`, so the derivation would invalidate a
+    // written record retroactively.
+    //
+    // What constrains it are the two CONTRADICTIONS checked above: a value that came
+    // from a flag was settable, and one with no notion of effort was not. There is no
+    // third check, and its absence is measured rather than an oversight — "settable
+    // with no flag anywhere" has no lane to occur on, because every frozen lane whose
+    // sources go past `not-supported` offers `flag`, and a scale-less lane offers
+    // `not-supported` and nothing else. A guard for it would have no reachable state.
     if (effort.scale !== row.effortScale) {
       throw new BenchmarkRecordError(
         `generation.effort.scale must be "${String(row.effortScale)}" on the lane "${lane}", received "${effort.scale}"`,
