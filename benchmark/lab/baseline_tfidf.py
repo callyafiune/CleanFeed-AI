@@ -419,9 +419,16 @@ def assert_the_folds_read_the_canonical_population(
     permutation batteries of `test_theme_dependence.py` are what assert that.
     """
     keys = _population_keys(texts, labels)
-    if keys != sorted(keys):
+    # The order this compares against comes from the SAME authority the renderer uses, and
+    # not from a `sorted(keys)` of its own: a guard that redefines "canonical" is a third
+    # definition, and the day it disagreed with the renderer the two would each be
+    # internally consistent while the arrays reaching the splitter were neither.
+    canonical = common.canonical_fold_order(list(labels), list(texts))
+    if canonical != list(range(len(keys))):
         first = next(
-            index for index in range(1, len(keys)) if keys[index] < keys[index - 1]
+            index
+            for index in range(len(canonical))
+            if canonical[index] != index
         )
         raise FoldsReadANonCanonicalPopulation(
             f"the {len(keys)} row(s) handed to the fold splitter are not in `(label, text)` "

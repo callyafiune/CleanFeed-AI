@@ -10550,7 +10550,35 @@ superficie inteira, e o mutante D6 fica vermelho.
 enquanto as tres linhas seguintes observavam `auc`. Terceira vez nesta sessao que a prosa do teste
 promete mais do que a assercao cobra.
 
-**A bateria desta unidade e agora de oito:** tres renderizacoes canonicas, dois espalhamentos de
-volta, a importancia por permutacao, e a autoridade unica. Todas vermelhas.
+**A bateria desta unidade e agora de SETE:** tres renderizacoes canonicas, dois espalhamentos de
+volta, a importancia por permutacao, e a autoridade unica — 3 + 2 + 1 + 1. Todas vermelhas. (Eu tinha
+escrito oito nesta linha, e a soma das minhas proprias parcelas da sete.)
 
 **Fechamento:** lab 760 / 750 verde.
+
+### A terceira ordem canonica estava no guardiao, e a minha soma dava sete (2026-08-22)
+
+`.codex-reviews/codex-ordem-r2-veredito.txt`, quatro comandos de quatro, `EXIT=0`. **REPROVA**, quatro
+achados, os quatro meus.
+
+**A terceira definicao de "canonico" estava no GUARDIAO.** Eu fiz o renderizador de
+`baseline_tfidf.py` delegar e deixei `assert_the_folds_read_the_canonical_population` com o seu
+proprio `sorted(keys)`. Duas definicoes outra vez, e a pior das duas posicoes: um guardiao que
+redefine o que confere aprova a sua propria leitura. Delega agora.
+
+**E o mutante que eu corri nao provava a delegacao.** D8 era "baseline volta a ter ordem propria" com
+um `sorted` local SEMANTICAMENTE IGUAL ao compartilhado — e ele passa por qualquer bateria de
+invariancia, porque a ordem resultante e a mesma. A prova de autoridade unica nao pode ser mutacao de
+valor: e **substituicao**. Trocar `common.canonical_fold_order` por uma que INVERTE e exigir que os
+dois leitores a sigam — o renderizador pela igualdade com o reverso, e o guardiao por nao recusar a
+saida do renderizador sob a autoridade trocada, o que so se alcanca dirigindo o caminho que renderiza
+E confere. D9 e D10 vermelhos.
+
+**A bateria da sonda que decide deixava passar `sharedText`**, que e o campo que nomeia o vazamento de
+sobreposicao exacta. Entrou na comparacao.
+
+**E a minha soma dava sete onde eu escrevi oito** — 3 + 2 + 1 + 1. Numero errado numa frase minha
+sobre contar coisas, o que e o genero de erro que esta sessao nao devia mais estar a produzir. Com os
+dois mutantes novos a bateria e de **nove**, e a soma esta conferida parcela a parcela.
+
+**Fechamento:** lab 761 / 750 verde.

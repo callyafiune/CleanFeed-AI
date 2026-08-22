@@ -157,6 +157,13 @@ class PartitionProbeTests(unittest.TestCase):
                             report["partitions"], key=lambda item: item["partition"]
                         )
                     ),
+                    # `sharedText` too: it is a field of the same report and it is the one
+                    # that names the exact-overlap leak, so a version that read the input
+                    # order there would move a published list while the AUC stood still.
+                    tuple(
+                        tuple(sorted(entry.items())) if isinstance(entry, dict) else entry
+                        for entry in report["sharedText"]
+                    ),
                 )
             )
         self.assertEqual(len(readings), 1, readings)
@@ -352,6 +359,50 @@ class LengthProbeTests(unittest.TestCase):
             if order not in orders:
                 orders.append(order)
         return orders
+
+    def test_one_authority_decides_the_canonical_order_for_both_readers(self) -> None:
+        # A mutation that restores a LOCAL sort semantically equal to the shared one passes
+        # every invariance battery, so those batteries prove the order matters and not that
+        # the authority is used. This does: the authority is replaced by one that reverses
+        # the canonical order, and BOTH readers have to follow it. A reader with a private
+        # sort keeps its own answer and fails here.
+        from unittest import mock
+
+        import baseline_tfidf as baseline
+        import common
+        import numpy as np
+
+        genuino = common.canonical_fold_order
+
+        def reversed_order(labels: list, texts: list) -> list[int]:
+            return list(reversed(genuino(labels, texts)))
+
+        rows = self._distinguishable_corpus()
+        texts = np.array([str(row["text"]) for row in rows], dtype=object)
+        labels = np.array([str(row["label"]) for row in rows], dtype=object)
+
+        antes = probes.probe_length(rows)["coefficientPerFold"]
+        rendered_before, _ = baseline._the_canonical_population(texts, labels)
+        with mock.patch.object(common, "canonical_fold_order", reversed_order):
+            depois = probes.probe_length(rows)["coefficientPerFold"]
+            rendered_after, _ = baseline._the_canonical_population(texts, labels)
+        # The probe followed the authority: its per-fold coefficients moved.
+        self.assertNotEqual(list(antes), list(depois))
+        # And so did the baseline renderer: its rendering is the reverse of the other.
+        self.assertEqual(list(rendered_after), list(reversed(list(rendered_before))))
+        # The GUARD follows it too, and this is the half a value mutation cannot reach: it
+        # raises when the arrays are not the authority's order, so under a replaced
+        # authority a guard that kept its own `sorted` would refuse the renderer's own
+        # output. Driven through the one path that renders and guards.
+        with mock.patch.object(common, "canonical_fold_order", reversed_order):
+            self.assertEqual(
+                len(
+                    baseline.cross_validated_aucs(
+                        texts, labels, baseline.word_pipeline
+                    )
+                ),
+                baseline.BASELINE_FOLDS,
+            )
 
     def test_the_permutation_fixture_moves_the_folds(self) -> None:
         # What keeps the batteries below from being vacuous: the fold PARTITION itself has
