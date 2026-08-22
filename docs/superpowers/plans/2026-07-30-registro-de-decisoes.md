@@ -9997,3 +9997,44 @@ carregar OUTRO digest de template, entao a familia reservada fica com duas ident
 menos que o operador mande regerar as 450 — e regerar e apagar material, que e nunca delegado.
 
 **Fechamento:** lab 741 / 742 verde, `docs:check` OK. Nada aqui toca `EVALUATOR_FILES`.
+
+### O codex ofereceu uma forma melhor para a reserva pendente, e as minhas duas guardas novas nasceram inalcancaveis (2026-08-21)
+
+Rodada sobre `fc25e27`, contrato em `.codex-reviews/codex-papeis-prompt.txt`, veredito em
+`codex-papeis-veredito.txt`, sete comandos de sete, `EXIT=0`. **REPROVA**, tres achados, os tres
+procedem. Ele aprovou o que mais me preocupava — "reserva de uma familia: DEFENSAVEL E DECLARADA" e
+"teste da posicao: MEDE A POSICAO" — e apontou uma forma melhor onde eu tinha escolhido entre duas.
+
+**A forma melhor, e ela e melhor pela razao certa.** Eu tratei a segunda linhagem ratificada como
+escolha binaria: declarar (e enfraquecer a guarda de cobertura) ou nao declarar (e viver com a
+ausencia). Ele nomeou a terceira: **separar familias ratificadas-e-pendentes das materializadas**, e
+guardar que as pendentes NAO aparecem no censo. E melhor porque uma ausencia e indistinguivel de uma
+decisao que ninguem tomou, e o nome no codigo remove essa ambiguidade sem alegar cobertura nenhuma.
+`RATIFIED_PENDING_RESERVE` e o que ficou.
+
+**O nome e DERIVADO e nao digitado**, porque dois escritores precisam da mesma resposta: a
+declaracao e a pista de geracao que vai escrever as linhas. `reserve_family(tag, quantizacao)` faz
+a derivacao, e a ancora que a torna confiavel e reproduzir a familia que as 400 linhas do qwen JA
+carregam. A quantizacao entra so quando o tag ainda nao a nomeia — `llama3:8b-instruct-q4_K_M`
+carrega, `qwen2.5:7b` nao —, e apendar sem condicao nomearia o mesmo esquema duas vezes (mutante
+vermelho).
+
+**E as minhas duas guardas novas nasceram INALCANCAVEIS, achado da minha propria bateria.** Escrevi
+os dois sentidos e os dois mutantes sobreviveram verdes: as regras antigas de cobertura
+(`unroled`/`unpooled`) respondiam primeiro, e o meu teste media a vizinha em vez da nova. Duas
+correcoes: as guardas pendentes passaram a correr **antes** das de cobertura — a mensagem especifica
+("declare-a `ood-reserved`, foi o que ela foi ratificada como") e o valor inteiro, e a generica
+("familia sem papel") e um enigma —, e o teste passou a construir os estados que cada uma alcanca de
+facto. Com a ordem invertida de volta, o mutante R7b fica vermelho: a ordem tambem e afirmada.
+
+**Achado 2, e e a terceira vez que eu faco isto:** escrevi "o template daquelas 400 e
+irrecuperavel" tendo medido quinze reconstrucoes que nao casam. Quinze falhas nao provam
+irrecuperabilidade — um acerto seria prova, uma falha nao e. A frase virou "nao foi recuperado", com
+o que a busca de facto estabelece.
+
+**Achado 3, que eu nao nomeei:** a § 5.4 do ESTADO continuava a declarar 23 familias e 6.183 linhas
+enquanto o censo em codigo passou a 24 e 6.583. Numero medido que envelheceu no documento onde o
+proximo le, no mesmo commit que o moveu.
+
+**Fechamento:** lab 742 / 742 verde. Bateria da rodada: cinco mutacoes (R6, R7, R7b, R8, R9), todas
+vermelhas no teste nomeado, todas restauradas com sha256 identico.

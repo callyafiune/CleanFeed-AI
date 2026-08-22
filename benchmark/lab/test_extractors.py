@@ -6268,6 +6268,59 @@ class SlateRoleTests(unittest.TestCase):
         self.assertIn("POOL_GENERATOR_FAMILIES", message)
         self.assertIn(assemble_corpus.EXCLUDED_ROLE, message)
 
+    def test_the_pending_half_of_the_reserve_is_named_and_guarded_both_ways(self) -> None:
+        import assemble_corpus
+
+        # The operator ratified a TWO-family reserve and one of them has no line on disk.
+        # It is named rather than absent, because an absence cannot be told apart from a
+        # decision nobody took — and the name is DERIVED by the same function the
+        # generation track will use, so the two cannot disagree about the spelling.
+        pending = assemble_corpus.reserve_family(
+            "llama3:8b-instruct-q4_K_M", "Q4_K_M"
+        )
+        self.assertEqual(sorted(assemble_corpus.RATIFIED_PENDING_RESERVE), [pending])
+        # The anchor that makes the derivation trustworthy: the same function reproduces
+        # the family the 400 rows on disk already carry.
+        self.assertEqual(
+            assemble_corpus.reserve_family("qwen2.5:7b", "Q4_K_M"),
+            sorted(assemble_corpus.OOD_RESERVED_FAMILIES)[0],
+        )
+        # The quantization is appended only when the tag does not already name it.
+        self.assertTrue(assemble_corpus.reserve_family("qwen2.5:7b", "Q4_K_M").endswith("-q4km"))
+        self.assertEqual(pending.lower().count("q4"), 1)
+
+        # DIRECTION 1 — the pools deliver it and nothing places it. THIS is the state
+        # the guard exists for, and the census entry is what makes it reachable: without
+        # it the older "coverage of nothing" rule fires first and the specific message
+        # never runs. Asserting the message and not just the exception type is what
+        # separates the two.
+        saved_census = dict(assemble_corpus.POOL_GENERATOR_FAMILIES)
+        try:
+            assemble_corpus.POOL_GENERATOR_FAMILIES[pending] = 450
+            with self.assertRaises(assemble_corpus.SlateContradiction) as caught:
+                assemble_corpus.assert_slate_roles_are_consistent()
+        finally:
+            assemble_corpus.POOL_GENERATOR_FAMILIES.clear()
+            assemble_corpus.POOL_GENERATOR_FAMILIES.update(saved_census)
+        message = str(caught.exception)
+        self.assertIn(pending, message)
+        self.assertIn(assemble_corpus.OOD_RESERVED_ROLE, message)
+        self.assertIn("still", message)
+
+        # DIRECTION 2 — a role declared while the entry is still pending and no material
+        # exists. It reports the contradiction between the two lists rather than the
+        # generic "coverage of nothing", and the ORDER is what makes that possible: this
+        # check runs ahead of the coverage rules, which would otherwise answer first.
+        saved_reserve = dict(assemble_corpus.OOD_RESERVED_FAMILIES)
+        try:
+            assemble_corpus.OOD_RESERVED_FAMILIES[pending] = "promovida e esquecida"
+            with self.assertRaises(assemble_corpus.SlateContradiction) as caught:
+                assemble_corpus.assert_slate_roles_are_consistent()
+        finally:
+            assemble_corpus.OOD_RESERVED_FAMILIES.clear()
+            assemble_corpus.OOD_RESERVED_FAMILIES.update(saved_reserve)
+        self.assertIn("both pending and roled", str(caught.exception))
+
     def test_a_role_over_a_family_the_pools_never_deliver_is_refused(self) -> None:
         import assemble_corpus
 
