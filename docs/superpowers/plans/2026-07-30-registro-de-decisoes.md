@@ -10224,3 +10224,23 @@ que so muda quando alguem reinicia o servidor, e as outras lanes capturam uma ve
 
 **Fechamento:** lab 755 / 750 verde. O cabeçalho da lane na § 5.10 passou a dizer 0.32.15 e a nomear
 os tres caminhos guardados.
+
+### Terceira rodada das pistas: a guarda passava e o filho ia para outro lugar (2026-08-21)
+
+`.codex-reviews/codex-pistas-r3-veredito.txt`, quatro comandos de quatro, `EXIT=0`. **REPROVA**, dois
+achados. Ele confirmou os tres caminhos guardados e sem quarto, e a frase do residuo como a mais
+fraca que se afere.
+
+**O achado, e e uma classe que eu nao tinha nomeado: guarda sobre CONSTANTE contra filho que le
+AMBIENTE.** `OLLAMA_HOST` e capturado no import, entao `assert_runtime_is_local()` confere a
+constante — mas `ollama list/show` sao subprocessos que leem `OLLAMA_HOST` do proprio ambiente a cada
+invocacao. Mudar a variavel depois do import fazia a guarda passar sobre um valor e o filho falar com
+outro. O conserto e por CONSTRUCAO e nao por mais checagem: o host CONFERIDO e passado ao filho
+(`env={**os.environ, "OLLAMA_HOST": assert_runtime_is_local()}`), entao nao ha duas respostas para
+"qual host". Mutante O15 vermelho, e o teste afirma o ambiente que o filho recebe e nao so a recusa.
+
+**Achado 2, e e a segunda vez na mesma volta:** eu corrigi "o runtime que VAI responder" no docstring
+da funcao e deixei a MESMA frase no docstring do MODULO. Uma frase corrigida num sitio e uma frase
+corrigida num sitio.
+
+**Fechamento:** lab 755 / 750 verde.

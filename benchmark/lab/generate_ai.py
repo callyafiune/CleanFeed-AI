@@ -26,9 +26,9 @@ it would make every one of them `UnmappableLane`; what it does not have is new m
 `ollama` is the exception the rule was never against: it is a runtime on THIS machine —
 imposed, not assumed, because `OLLAMA_HOST` takes any URL and a non-loopback one is refused
 (`assert_runtime_is_local`) — and what the rule forbids is a provider endpoint that hides
-both the harness and its version. Here the version is asked of the SERVER that will answer
-and not of the binary on PATH, the weights are identified by content id, and the sampling
-seed is ours — which is why it is the one provider in `SEEDED_PROVIDERS`, and why the
+both the harness and its version. Here the version is asked of the SERVER, at the start of
+the run, and not of the binary on PATH; the weights are identified by content id; and the
+sampling seed is ours — which is why it is the one provider in `SEEDED_PROVIDERS`, and why the
 frozen policy gives it a channel of its own.
 
 That is policy and this parser does not yet impose it: `--provider gemini` is still
@@ -504,15 +504,19 @@ def ollama_model_identity(tag: str, binary: str = OLLAMA_BIN) -> tuple[str, str]
     store — and a content id read from one runtime while another produced the text is a
     false identity for the weights, which is the exact defect the id exists to prevent.
     """
-    assert_runtime_is_local()
+    # The checked host is PASSED to the child and not left to the environment. The CLI
+    # reads `OLLAMA_HOST` from its own env at every invocation, so a value changed after
+    # this module was imported would send the child somewhere the check never saw — the
+    # guard would pass on the constant while the answer came from elsewhere.
+    child_env = {**os.environ, "OLLAMA_HOST": assert_runtime_is_local()}
     try:
         listing = subprocess.run(
             [binary, "list"], capture_output=True, timeout=120,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, env=child_env,
         )
         shown = subprocess.run(
             [binary, "show", tag], capture_output=True, timeout=120,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, env=child_env,
         )
     except (OSError, subprocess.SubprocessError) as error:
         raise ModelIdentityUnread(

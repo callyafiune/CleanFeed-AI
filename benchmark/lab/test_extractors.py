@@ -5074,6 +5074,34 @@ class GeneratorCaptureTests(unittest.TestCase):
         with mock.patch.object(generate_ai, "OLLAMA_HOST", "http://10.0.0.5:11434"):
             with self.assertRaises(generate_ai.RuntimeNotLocal):
                 generate_ai.ollama_model_identity("qwen2.5:7b")
+        # The CHECKED host is what the child is given, and the environment is not trusted
+        # to still hold it: the CLI reads `OLLAMA_HOST` at every invocation, so a value
+        # changed after this module was imported would send the child somewhere the check
+        # never saw.
+        captured: list[dict] = []
+
+        class _Ok:
+            returncode = 0
+            stdout = (
+                "NAME ID" + chr(10)
+                + "qwen2.5:7b 845dbda0ea48" + chr(10)
+                + "  quantization Q4_K_M" + chr(10)
+            ).encode("utf-8")
+            stderr = b""
+
+        def spy(argv, **kwargs):
+            captured.append(kwargs.get("env") or {})
+            return _Ok()
+
+        with mock.patch.dict(
+            generate_ai.os.environ, {"OLLAMA_HOST": "http://10.0.0.5:11434"}
+        ):
+            with mock.patch.object(generate_ai.subprocess, "run", spy):
+                generate_ai.ollama_model_identity("qwen2.5:7b")
+        self.assertTrue(captured)
+        for env in captured:
+            self.assertEqual(env["OLLAMA_HOST"], generate_ai.OLLAMA_HOST)
+            self.assertNotIn("10.0.0.5", env["OLLAMA_HOST"])
 
     def test_the_runtime_version_is_asked_of_the_server_that_will_answer(self) -> None:
         from unittest import mock
