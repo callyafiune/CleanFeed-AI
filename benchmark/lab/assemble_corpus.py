@@ -666,11 +666,15 @@ OOD_RESERVED_FAMILIES = {
 #
 # It is deliberately NOT a fourth role. A role decides where a family's lines go, and
 # these have none, so a role over them would be coverage of nothing — the defect
-# `assert_slate_roles_are_consistent` exists to catch. What this list buys is the
-# reverse guard: the day the pools DO deliver one of these, the census stops agreeing
-# with this list and the run halts at IMPORT, which is earlier and louder than the
-# `UndeclaredGeneratorFamily` halt at assembly time. Either way nothing can train on a
-# reserved lineage in silence; this only makes the reminder arrive sooner.
+# `assert_slate_roles_are_consistent` exists to catch.
+#
+# WHAT THIS LIST BUYS, stated no stronger than it is: the two coverage rules already
+# refuse both states it guards, in the same call and before any pool is opened, so the
+# gain is a SPECIFIC message where the generic one said "a family with no role" — and
+# "declare it `ood-reserved`, that is what it was ratified as" is what someone can act
+# on at 3am. The one thing no other rule looks at is the SPELLING of this list, which is
+# why that check is here too: nothing else reads these names, and the day one is
+# promoted is exactly when nobody re-reads them.
 RATIFIED_PENDING_RESERVE = {
     reserve_family("llama3:8b-instruct-q4_K_M", "Q4_K_M"): (
         "Meta open weights at Q4_K_M, the second lineage of the ratified reserve. The "

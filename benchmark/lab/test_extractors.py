@@ -6321,6 +6321,22 @@ class SlateRoleTests(unittest.TestCase):
             assemble_corpus.OOD_RESERVED_FAMILIES.update(saved_reserve)
         self.assertIn("both pending and roled", str(caught.exception))
 
+        # DIRECTION 3 — the spelling of the pending list itself, and it is the only one
+        # of the three that catches a state no other rule looks at: nothing else reads
+        # these names, so a dotted entry would sit here until the day of the promotion,
+        # which is exactly when nobody re-reads them.
+        saved_pending = dict(assemble_corpus.RATIFIED_PENDING_RESERVE)
+        try:
+            assemble_corpus.RATIFIED_PENDING_RESERVE["llama3:8b.instruct"] = "dotted"
+            with self.assertRaises(assemble_corpus.SlateContradiction) as caught:
+                assemble_corpus.assert_slate_roles_are_consistent()
+        finally:
+            assemble_corpus.RATIFIED_PENDING_RESERVE.clear()
+            assemble_corpus.RATIFIED_PENDING_RESERVE.update(saved_pending)
+        message = str(caught.exception)
+        self.assertIn("llama3:8b.instruct", message)
+        self.assertIn("canonical", message)
+
     def test_a_role_over_a_family_the_pools_never_deliver_is_refused(self) -> None:
         import assemble_corpus
 

@@ -10038,3 +10038,25 @@ proximo le, no mesmo commit que o moveu.
 
 **Fechamento:** lab 742 / 742 verde. Bateria da rodada: cinco mutacoes (R6, R7, R7b, R8, R9), todas
 vermelhas no teste nomeado, todas restauradas com sha256 identico.
+
+### Segunda rodada dos papeis: a guarda de grafia era decoracao, e o meu ganho nao era tempo (2026-08-21)
+
+Contrato em `.codex-reviews/codex-papeis-r2-prompt.txt`, veredito em
+`codex-papeis-r2-veredito.txt`, cinco comandos de cinco, `EXIT=0`. **REPROVA**, dois achados, os
+dois meus. Ele confirmou o que eu tinha consertado — `reserve_family` correcta e afirmada nas duas
+direcoes, reordenacao SO trocou mensagem — e pegou o resto.
+
+**A terceira guarda nao era exercitada.** Das tres de `RATIFIED_PENDING_RESERVE`, o teste construia
+os estados de duas e nao o da grafia: remover o bloco inteiro deixava a suite verde. Era decoracao
+pelo meu proprio critério, e escrita na mesma sessao em que eu registrei que guarda sem mutante e
+decoracao. Estado construido (entrada pontuada na lista pendente), mutante R10 vermelho.
+
+**E o meu ganho nao era tempo, era mensagem.** Eu escrevi que a guarda pendente faz a corrida parar
+"no IMPORT", "mais cedo" que a alternativa. Falso duas vezes: `assert_slate_roles_are_consistent`
+corre no topo de `main()` e nao no import, e as regras de cobertura antigas ja recusavam os dois
+estados na MESMA chamada. O que as pendentes compram e a mensagem ESPECIFICA no lugar da generica —
+"declare-a `ood-reserved`, foi o que ela foi ratificada como" contra "familia sem papel" — e e por
+isso que correm antes. So a guarda de grafia pega estado que nenhuma outra regra olha, porque nada
+mais le aquela lista. A frase ficou nessa versao, no codigo e na § 7.
+
+**Fechamento:** lab 742 / 742, `docs:check` OK.
