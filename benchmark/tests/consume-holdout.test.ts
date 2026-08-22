@@ -915,76 +915,86 @@ describe("consume-holdout one-way lease", () => {
     return root;
   }
 
-  it("recusa escrever sobre o recibo de OUTRO bloco em vez de o destruir", async () => {
-    // A segunda das duas sequencias que a forma antiga deixava abertas: uma corrida legitima
-    // sobre outro bloco, partilhando o `--work-dir`, sobrescrevia o registro do primeiro
-    // porque o arquivo nao carregava identidade de bloco. O recibo semeado aqui e o de outro
-    // bloco, e o que se afirma e que ele fica INTACTO — a recusa protege o registro, e nao
-    // apenas relata.
-    const root = await newRoot();
-    const scenario = await buildScenario(root, {
-      scientificUse: "release",
-      visualDocument: 0.8,
-      realEvaluator: false,
-      testNegatives: 4,
-      testPositives: 4,
-      negativeTag: "LOW",
-    });
-    const alheio = {
-      schemaVersion: 1,
-      blockIdentityDigest: hex("outro-bloco"),
-      provisionalThresholdArtifactDigest: hex("corte-do-outro"),
-      files: [],
-    };
-    const receiptPath = join(scenario.options.workDirectory, RECEIPT_FILE);
-    await writeFile(receiptPath, JSON.stringify(alheio), "utf8");
+  it(
+    "recusa escrever sobre o recibo de OUTRO bloco em vez de o destruir",
+    async () => {
+      // A segunda das duas sequencias que a forma antiga deixava abertas: uma corrida legitima
+      // sobre outro bloco, partilhando o `--work-dir`, sobrescrevia o registro do primeiro
+      // porque o arquivo nao carregava identidade de bloco. O recibo semeado aqui e o de outro
+      // bloco, e o que se afirma e que ele fica INTACTO — a recusa protege o registro, e nao
+      // apenas relata.
+      const root = await newRoot();
+      const scenario = await buildScenario(root, {
+        scientificUse: "release",
+        visualDocument: 0.8,
+        realEvaluator: false,
+        testNegatives: 4,
+        testPositives: 4,
+        negativeTag: "LOW",
+      });
+      const alheio = {
+        schemaVersion: 1,
+        blockIdentityDigest: hex("outro-bloco"),
+        provisionalThresholdArtifactDigest: hex("corte-do-outro"),
+        files: [],
+      };
+      const receiptPath = join(scenario.options.workDirectory, RECEIPT_FILE);
+      await writeFile(receiptPath, JSON.stringify(alheio), "utf8");
 
-    const page = stubPage(scenario.status);
-    await expect(
-      runConsumeHoldout(
-        scenario.options,
-        holdoutDeps(scenario, page.createTestPage),
-      ),
-    ).rejects.toMatchObject({ code: "PRE_EXPOSURE_RECEIPT_FOREIGN_CONSUMPTION" });
-    expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toEqual(alheio);
-  }, TIMEOUT_MS);
+      const page = stubPage(scenario.status);
+      await expect(
+        runConsumeHoldout(
+          scenario.options,
+          holdoutDeps(scenario, page.createTestPage),
+        ),
+      ).rejects.toMatchObject({
+        code: "PRE_EXPOSURE_RECEIPT_FOREIGN_CONSUMPTION",
+      });
+      expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toEqual(alheio);
+    },
+    TIMEOUT_MS,
+  );
 
-  it("recusa substituir o corte abencoado, inclusive num recibo sem identidade", async () => {
-    // A primeira sequencia: uma corrida apontada a um ledger que nao registra o gasto le o
-    // bloco como disponivel, chega a escrita e substitui o corte que a primeira tentativa
-    // abencoou enquanto o bloco ainda era cego — depois do que a retomada se amarra a uma
-    // leitura POS-exposicao.
-    //
-    // O recibo semeado NAO carrega `blockIdentityDigest`, e isso e deliberado: e a forma que
-    // um recibo escrito antes deste campo existir tem em disco, e o corte dele continua
-    // protegido. Sem esta metade, um recibo legado ficaria substituivel exactamente pela
-    // sequencia que esta guarda existe para fechar.
-    const root = await newRoot();
-    const scenario = await buildScenario(root, {
-      scientificUse: "release",
-      visualDocument: 0.8,
-      realEvaluator: false,
-      testNegatives: 4,
-      testPositives: 4,
-      negativeTag: "LOW",
-    });
-    const legado = {
-      schemaVersion: 1,
-      provisionalThresholdArtifactDigest: hex("corte-pre-exposicao"),
-      files: [],
-    };
-    const receiptPath = join(scenario.options.workDirectory, RECEIPT_FILE);
-    await writeFile(receiptPath, JSON.stringify(legado), "utf8");
+  it(
+    "recusa substituir o corte abencoado, inclusive num recibo sem identidade",
+    async () => {
+      // A primeira sequencia: uma corrida apontada a um ledger que nao registra o gasto le o
+      // bloco como disponivel, chega a escrita e substitui o corte que a primeira tentativa
+      // abencoou enquanto o bloco ainda era cego — depois do que a retomada se amarra a uma
+      // leitura POS-exposicao.
+      //
+      // O recibo semeado NAO carrega `blockIdentityDigest`, e isso e deliberado: e a forma que
+      // um recibo escrito antes deste campo existir tem em disco, e o corte dele continua
+      // protegido. Sem esta metade, um recibo legado ficaria substituivel exactamente pela
+      // sequencia que esta guarda existe para fechar.
+      const root = await newRoot();
+      const scenario = await buildScenario(root, {
+        scientificUse: "release",
+        visualDocument: 0.8,
+        realEvaluator: false,
+        testNegatives: 4,
+        testPositives: 4,
+        negativeTag: "LOW",
+      });
+      const legado = {
+        schemaVersion: 1,
+        provisionalThresholdArtifactDigest: hex("corte-pre-exposicao"),
+        files: [],
+      };
+      const receiptPath = join(scenario.options.workDirectory, RECEIPT_FILE);
+      await writeFile(receiptPath, JSON.stringify(legado), "utf8");
 
-    const page = stubPage(scenario.status);
-    await expect(
-      runConsumeHoldout(
-        scenario.options,
-        holdoutDeps(scenario, page.createTestPage),
-      ),
-    ).rejects.toMatchObject({ code: "PRE_EXPOSURE_RECEIPT_CUT_CONFLICT" });
-    expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toEqual(legado);
-  }, TIMEOUT_MS);
+      const page = stubPage(scenario.status);
+      await expect(
+        runConsumeHoldout(
+          scenario.options,
+          holdoutDeps(scenario, page.createTestPage),
+        ),
+      ).rejects.toMatchObject({ code: "PRE_EXPOSURE_RECEIPT_CUT_CONFLICT" });
+      expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toEqual(legado);
+    },
+    TIMEOUT_MS,
+  );
 
   it("refuses a wrong --confirm-split-digest before any ledger mutation", async () => {
     const root = await newRoot();
