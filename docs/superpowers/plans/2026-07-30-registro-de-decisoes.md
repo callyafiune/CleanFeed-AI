@@ -10421,3 +10421,21 @@ a causa e o commit que a removeu.
 gasta") virou oracao.
 
 **Fechamento:** lab 756 / 750 verde, `docs:check` OK.
+
+### O meu teste conferia TEXTO onde tinha de conferir comportamento (2026-08-22)
+
+`.codex-reviews/codex-ilhas-r2-veredito.txt`, quatro comandos de quatro, `EXIT=0`. **REPROVA** com um
+achado; a frase da fatia da reserva voltou "mais fraca que se afere" e a entrada da § 6 "suficiente".
+
+**O achado, e ele e sobre a forma da minha prova.** Eu tinha afirmado a ORDEM das duas linhas no
+arquivo com `source.index`, e ele mostrou o mutante que passa por baixo: manter o calculo antecipado e
+**recomputar** `curtas` depois do filtro deixa as duas linhas na ordem afirmada e o relatorio errado.
+Assercao sobre texto nao carrega comportamento.
+
+Trocada pelo que a corrida IMPRIME, dirigida ponta a ponta: um arquivo de pais com `ilha_03` na cota e
+`ilha_04` com um pai, `--target 0` para chegar ao relatorio sem gastar chamada nenhuma, e a saida
+afirmada — `ilha_04 1/…` presente, `ilha_03` ausente da lista, e `ilha_04 0/…` proibido, que e
+exactamente o que o relatorio filtrado produz. Agora as DUAS leituras erradas ficam vermelhas: M4
+(ler a fatia) e M5 (recomputar depois), e a segunda e a que o teste antigo deixava passar.
+
+**Fechamento:** lab 756 / 750 verde.

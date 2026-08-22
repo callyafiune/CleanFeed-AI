@@ -5308,12 +5308,56 @@ class GeneratorCaptureTests(unittest.TestCase):
         for nome, (tem, quota) in todas.items():
             self.assertEqual((nome, tem), (nome, 0))
             self.assertEqual(quota, lab.island_named(lab.ISLAND_PLAN, nome)["lines"]["mixed"])
-        # And `main` computes it BEFORE the island filter, which is the ordering the
-        # equality above makes load-bearing.
-        source = Path(make_mixed.__file__).read_text(encoding="utf-8")
-        antes = source.index("curtas_do_plano = islands_short_of_the_mixed_quota(parents)")
-        depois = source.index('if lab.island_of_seed(lab.ISLAND_PLAN, pai["id"])["island"]')
-        self.assertLess(antes, depois)
+        # And what `main` PRINTS, driven end to end: a text assertion on the order of two
+        # lines in the file would stay green if the early value were recomputed after the
+        # filter, which is the same report and the same defect. `--target 0` reaches the
+        # report without a single provider call.
+        import contextlib
+        import io as _io
+        import os
+        from unittest import mock
+
+        outra = next(
+            f"pai_{index:04d}"
+            for index in range(6000)
+            if lab.island_of_seed(lab.ISLAND_PLAN, f"pai_{index:04d}")["island"]
+            == "ilha_04"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            pais = tmp / "pais.jsonl"
+            pais.write_text(
+                "".join(
+                    json.dumps(
+                        {"id": pid, "text": PROSE_60, "label": 0, "family": "ptwiki_lead"},
+                        ensure_ascii=False,
+                    )
+                    + chr(10)
+                    for pid in [p["id"] for p in mine[:cota]] + [outra]
+                ),
+                encoding="utf-8",
+            )
+            buffer = _ReconfigurableStdout()
+            saved = sys.argv
+            try:
+                sys.argv = [
+                    "make_mixed.py", "--generate", "--island", island["island"],
+                    "--parents", str(pais), "--output", str(tmp / "saida.jsonl"),
+                    "--target", "0",
+                ]
+                with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "x"}):
+                    with contextlib.redirect_stdout(buffer):
+                        make_mixed.main()
+            finally:
+                sys.argv = saved
+        printed = buffer.getvalue()
+        # `ilha_03` is at quota and `ilha_04` is one parent short, so the plan-wide line
+        # names ilha_04 and NOT ilha_03 — and it names the other eighteen as short too,
+        # which is true of this parents file. What it must never do is report ilha_04 as
+        # having zero: that is what reading the island-filtered slice produces.
+        self.assertIn("ilha_04 1/", printed)
+        self.assertNotIn(f"{island['island']} ", printed.split("ilhas curtas")[-1])
+        self.assertNotIn("ilha_04 0/", printed)
 
     def test_the_agy_mixing_lane_asks_by_CELL_and_names_the_island_slot(self) -> None:
         import make_mixed
