@@ -9938,3 +9938,12 @@ para nove, com a que sobreviveu verde declarada.
 outra vez) e M8 (parar de recusar a contradicao do `not-supported`), as duas vermelhas no teste
 nomeado, as duas restauradas com sha256 identico. `evaluatorDigest` republicado — `schema.ts` esta
 em `EVALUATOR_FILES`, entao o conserto move o digesto.
+
+### Segunda rodada da forma das lanes: APROVA sem achado (2026-08-21)
+
+Contrato de retorno em `.codex-reviews/codex-forma-lanes-r2-prompt.txt`, veredito em
+`codex-forma-lanes-r2-veredito.txt`, seis comandos de seis, `EXIT=0`. **APROVA**: invalidacao
+retroativa FECHADA — ele recompos os dois conjuntos por conta propria em vez de confiar na minha
+lista de doze —, apagar o terceiro limite CERTO, a frase que ficou no lugar VERDADEIRA E
+SUSTENTADA, o teste renomeado MEDE O QUE DIZ, nenhum achado nao nomeado. A unidade da FORMA esta
+fechada.
