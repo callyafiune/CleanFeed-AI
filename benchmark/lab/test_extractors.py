@@ -5260,6 +5260,38 @@ class GeneratorCaptureTests(unittest.TestCase):
 
         self.assertIn("reserve_family", inspect.getsource(generate_ai.main))
 
+    def test_the_mixed_lane_names_the_islands_that_cannot_fill_their_quota(self) -> None:
+        import make_mixed
+
+        # A GLOBAL surplus of parents hides the case that matters: surplus in one island
+        # does not fill another's quota, because each island takes only its own seed block.
+        # So the count is per island and it is compared against the island's own quota.
+        lab = make_mixed.assembler()
+        island = make_mixed.island_plan("ilha_03")
+        cota = island["lines"]["mixed"]
+        mine = [
+            {"id": f"pai_{index:04d}", "text": "x", "family": "ptwiki_lead"}
+            for index in range(6000)
+            if lab.island_of_seed(lab.ISLAND_PLAN, f"pai_{index:04d}")["island"]
+            == island["island"]
+        ]
+        self.assertGreater(len(mine), cota)
+
+        # At quota: not short.
+        self.assertNotIn(
+            island["island"],
+            make_mixed.islands_short_of_the_mixed_quota(mine[:cota]),
+        )
+        # One below: short, and the pair reported is (has, quota) — the deficit is the
+        # subtraction the caller can do, and the two numbers say which of them moved.
+        short = make_mixed.islands_short_of_the_mixed_quota(mine[: cota - 1])
+        self.assertEqual(short[island["island"]], (cota - 1, cota))
+        # And the per-island count is a partition of the parents given: nothing is counted
+        # twice and nothing disappears.
+        por_ilha = make_mixed.parents_per_island(mine[: cota - 1])
+        self.assertEqual(sum(por_ilha.values()), cota - 1)
+        self.assertEqual(list(por_ilha), [island["island"]])
+
     def test_the_agy_mixing_lane_asks_by_CELL_and_names_the_island_slot(self) -> None:
         import make_mixed
         import make_mixed_agy

@@ -10353,3 +10353,30 @@ guarda existia e faltava adversario. Esta foi o inverso — o fixture PRODUZIU o
 como propriedade do sistema, e escrevi codigo de producao para o defender. O sinal que eu ignorei
 estava a vista: o caso de piso tinha uma variavel a menos que os outros. Quando um ponto da curva e
 construido diferente dos outros, ele nao pertence a curva.
+
+### Os pais mistos por ilha: o excedente global escondia quatro ilhas impossiveis (2026-08-22)
+
+A § 7 dizia que o pool reservado tem "~112 por ilha ANTES da janela de 50-450 palavras, contra a cota
+de 100 mistas por ilha... O numero por ilha nao foi medido". Medi.
+
+**O total nao e a resposta.** 2.578 linhas passam `label == 0`, **2.247** passam tambem a janela,
+contra cota mista total de 2.000 — excedente global de 247, ou 12,4 %. Lido como total, o plano
+fecha com folga.
+
+**Chaveado pelo bloco de semente, quatro ilhas nao fecham:** `ilha_08` com 92 pais, `ilha_12` com 94,
+`ilha_13` com 95 e `ilha_14` com 99, contra cota de 100. Elas exigiriam rendimento de banda de 1,087,
+1,064, 1,053 e 1,010 — **acima de 1, que e impossivel** —, e a perda de banda vem DEPOIS disso.
+Deficit somado 20 linhas. As outras dezesseis tem 267 de folga e **ela nao transfere**, porque cada
+ilha toma so o proprio bloco de semente.
+
+**O que eu fiz com isso, e por que nao e recusa.** `--generate` passou a imprimir, antes da primeira
+chamada, o deficit da ilha da corrida e a lista das curtas do plano inteiro. Recusar pararia uma
+corrida que ainda produz as linhas que a ilha CONSEGUE, e o remedio — mais pais, outra janela, ou
+celula sub-preenchida aceita — e escolha de quem coleta e nao desta funcao. O aviso e antes de gastar
+porque depois de gastar ele nao muda decisao nenhuma.
+
+**A funcao e por ILHA e a bateria e sobre isso:** M1 calcular o deficit globalmente, M2 deixar de
+chavear pelo bloco de semente, M3 ler "curta" como abaixo da cota menos um — as tres vermelhas. A
+primeira e a que importa, porque e exactamente o erro que a linha antiga da § 7 cometia.
+
+**Fechamento:** lab 756 / 750 verde, § 5.4c nova com a tabela, § 7 reescrita com o numero.

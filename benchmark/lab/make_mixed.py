@@ -570,6 +570,43 @@ def island_plan(value: str) -> dict:
 PARENT_PROJECTION_KEYS = ("id", "text", "family", "sourceMaterialBatch")
 
 
+def parents_per_island(parents: list[dict]) -> dict[str, int]:
+    """ilha -> quantos pais admissiveis o plano lhe da, sobre uma lista JA filtrada.
+
+    Sobre a lista filtrada e nao sobre o arquivo cru, porque o que interessa e o que
+    sobrevive as duas telas que a pista aplica antes de gastar chamada: `label == 0` e a
+    janela de palavras. Um total global que ignore a ilha esconde o caso que importa —
+    excedente numa ilha nao preenche a cota de outra, porque cada ilha toma so o proprio
+    bloco de semente.
+    """
+    lab = assembler()
+    contagem: dict[str, int] = {}
+    for pai in parents:
+        ilha = lab.island_of_seed(lab.ISLAND_PLAN, pai["id"])["island"]
+        contagem[ilha] = contagem.get(ilha, 0) + 1
+    return contagem
+
+
+def islands_short_of_the_mixed_quota(parents: list[dict]) -> dict[str, tuple[int, int]]:
+    """ilha -> (pais admissiveis, cota mista) para as ilhas que NAO fecham a cota.
+
+    O rendimento da banda vem DEPOIS disto e so pode piorar: uma ilha com menos pais que a
+    cota nao fecha nem com rendimento de 100 %, e por isso a conta e feita antes de a
+    corrida gastar a primeira chamada. `--generate` a imprime, e a decisao de que fazer
+    com o deficit — mais pais, outra janela, ou celula sub-preenchida aceita — nao e desta
+    funcao.
+    """
+    lab = assembler()
+    contagem = parents_per_island(parents)
+    curtas: dict[str, tuple[int, int]] = {}
+    for ilha in lab.ISLAND_PLAN:
+        cota = ilha["lines"]["mixed"]
+        tem = contagem.get(ilha["island"], 0)
+        if tem < cota:
+            curtas[ilha["island"]] = (tem, cota)
+    return curtas
+
+
 def parent_projection(
     row: dict, *, id_key: str = "id", text_key: str = "text"
 ) -> dict:
@@ -967,6 +1004,28 @@ def main() -> None:
             f"gerando {len(pending)} mistos em {args.island['island']} "
             f"(celulas={len(set(alocacao))}); ja no --output, de todas as ilhas: {len(done)}"
         )
+        # O DEFICIT desta ilha antes de a primeira chamada ser gasta, e o rendimento da
+        # banda so pode piora-lo. Excedente numa ilha nao preenche a cota de outra, porque
+        # cada ilha toma so o proprio bloco de semente — entao um total global de pais diz
+        # menos do que parece. Aviso e nao recusa: o remedio (mais pais, outra janela, ou
+        # celula sub-preenchida aceita) e escolha de quem coleta, e recusar aqui pararia
+        # uma corrida que ainda produz as linhas que a ilha CONSEGUE.
+        curtas = islands_short_of_the_mixed_quota(parents)
+        desta = curtas.get(args.island["island"])
+        if desta is not None:
+            tem, cota = desta
+            print(
+                f"!! {args.island['island']} tem {tem} pais admissiveis para uma cota de "
+                f"{cota}: ela nao fecha nem com rendimento de banda 100 %, e a banda vem "
+                f"depois. Deficit desta ilha: {cota - tem}"
+            )
+        if curtas:
+            print(
+                "   ilhas curtas no plano inteiro: "
+                + ", ".join(
+                    f"{ilha} {tem}/{cota}" for ilha, (tem, cota) in sorted(curtas.items())
+                )
+            )
         kept = 0
         for index, parent in enumerate(pending, start=1):
             operacao, nivel_da_celula = celula_de[parent["id"]]
