@@ -544,6 +544,12 @@ HUMAN_COLLECTION = collection_targets()
 TARGET = {"human": HUMAN_COLLECTION["total"], "ai": 4000, "mixed": 2000}
 # validate rejects any DECLARED held-out family with fewer positives.
 HELD_OUT_MINIMUM = 200
+# O piso de clusters de `promptTemplate` que cada familia gerada tem de atravessar, e ele e
+# QUALITATIVO e nao afinado: a unidade de `ai-recall` aninha o template dentro da familia, e
+# com um cluster so o nivel do meio nao tem o que sortear. Medido pela funcao de producao —
+# largura do intervalo de 95 % em 0,0000 com um template por familia, 0,6000 com dois, e daí
+# em diante o √n comum. Ver `FamilyInOneTemplateCluster`.
+MINIMUM_TEMPLATE_CLUSTERS_PER_FAMILY = 2
 # Families that CANNOT be claimed as unseen by the detector, and therefore must
 # never be declared held-out — a provenance judgment, not something derivable
 # from the corpus.
@@ -3065,6 +3071,75 @@ def assert_no_stamped_component_straddles(records: list[dict]) -> None:
         )
 
 
+class FamilyInOneTemplateCluster(RuntimeError):
+    """Uma familia geradora nao atravessa mais de um cluster de `promptTemplate`.
+
+    O intervalo publicado de `warning.recall` e reamostrado sobre a unidade
+    HIERARQUICA que a pre-inscricao congela para `ai-recall`: `generatorFamily` fora,
+    `promptTemplate` DENTRO dela, `generationBatch` dentro desse. Uma familia com um
+    cluster de template so nao contribui variabilidade alguma no nivel do meio — o
+    sorteio dentro dela devolve sempre o mesmo — e o intervalo sai mais estreito do que
+    a evidencia sustenta.
+
+    MEDIDO em 2026-08-22 pela funcao de producao (`resolveResampling` +
+    `clusteredPercentileBootstrap`, 10.000 replicas, mesma semente, mesmas linhas, so a
+    estrutura de template a variar): com um template por familia a largura do intervalo
+    de 95 % cai a **0,0000** — o intervalo colapsa num ponto —, com dois da **0,6000**,
+    com tres **0,4000** e com quatro **0,3000**. A descontinuidade e so em UM: de dois em
+    diante o estreitamento e o √n comum e nao defeito. Logo o piso e dois, e ele e
+    qualitativo em vez de escolhido.
+
+    E o dano nao aparece em numero publicado nenhum: `units` e identico nas duas
+    estruturas (120 nas duas medicoes) e `degenerate` e verdadeiro nas duas de qualquer
+    forma, porque o nivel MAIS INTERNO tem uma unidade por linha em todo corpo realista.
+    O unico vestigio e a contagem GLOBAL do nivel do meio, que ninguem compara com
+    expectativa alguma. Por isso e recusa e nao relatorio.
+    """
+
+
+def assert_every_family_spans_two_template_clusters(
+    records: list[dict], minimum: int = MINIMUM_TEMPLATE_CLUSTERS_PER_FAMILY
+) -> None:
+    """Toda familia gerada atravessa ao menos `minimum` identidades de `promptTemplate`.
+
+    Sobre as linhas GERADAS (`ai` e `mixed`), porque sao elas que a unidade de
+    `ai-recall` reamostra; a classe humana nao entra nessa unidade.
+
+    Le os eixos canonicos e nao o bloco `generation`: e `groups.promptTemplate` que a
+    reamostragem resolve, e `generation.promptId` carrega outra coisa (o par
+    receita_semente). Uma familia cuja contagem nao alcanca o piso e nomeada com a
+    contagem, porque o conserto depende de qual e — gerar mais linhas dela noutra ilha,
+    ou aceitar que ela saia do corpus.
+    """
+    por_familia: dict[str, set[str]] = {}
+    for rec in records:
+        if rec.get("label") not in ("ai", "mixed"):
+            continue
+        familia = group_axes.identity_of((rec.get("groups") or {}).get("generatorFamily"))
+        template = group_axes.identity_of((rec.get("groups") or {}).get("promptTemplate"))
+        if familia is None or template is None:
+            continue
+        por_familia.setdefault(str(familia), set()).add(str(template))
+    magras = {
+        familia: sorted(templates)
+        for familia, templates in sorted(por_familia.items())
+        if len(templates) < minimum
+    }
+    if magras:
+        detalhe = "; ".join(
+            f"{familia}: {len(templates)} ({', '.join(templates)})"
+            for familia, templates in magras.items()
+        )
+        raise FamilyInOneTemplateCluster(
+            f"familia(s) gerada(s) abaixo do piso de {minimum} clusters de "
+            f"`promptTemplate` — {detalhe}. A unidade de `ai-recall` aninha o template "
+            "DENTRO da familia, entao uma familia com um cluster so nao contribui "
+            "variabilidade no nivel do meio e o intervalo publicado sai mais estreito do "
+            "que a evidencia sustenta (medido: largura 0,0000 com um, 0,6000 com dois). "
+            "Gere linhas dessa familia noutra ilha ou aceite que ela saia do corpus"
+        )
+
+
 def _plano_de_blocos(records: list[dict], held_out: set[str]) -> dict[str, str]:
     """record id -> bloco, com o componente conexo INTEIRO num bloco so.
 
@@ -4422,6 +4497,13 @@ def main() -> None:
     assert_the_blind_block_holds_both_roles(
         reserved_rows_per_class(per_family, reserved), test_capacity
     )
+    # A estrutura de que a UNIDADE DE REAMOSTRAGEM vive, conferida sobre o corpo INTEIRO e
+    # não no caminho da divisão: as guardas de geometria decidem se o corpo se divide em
+    # cinco, e esta decide se o intervalo que ele publica tem de onde tirar variabilidade.
+    # Um corpo divisível cujas famílias vivem num cluster de template só passa aquelas e
+    # publica intervalo mais estreito do que sustenta. Depois da poda das famílias magras,
+    # porque uma família retirada aqui não publica intervalo nenhum.
+    assert_every_family_spans_two_template_clusters(records)
     held_out = set(reserved)
     assign_partitions(records, held_out)
     # AFTER partitioning: generatedAt is part of the batch key, so batches can

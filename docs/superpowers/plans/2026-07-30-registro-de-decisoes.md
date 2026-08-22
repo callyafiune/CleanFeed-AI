@@ -10250,3 +10250,57 @@ corrigida num sitio.
 `.codex-reviews/codex-pistas-r4-veredito.txt`, tres comandos de tres, `EXIT=0`. **APROVA**: o host do
 filho FECHADO POR CONSTRUCAO, as duas frases IGUAIS E AFERIDAS, nenhuma frase sem assercao, nenhum
 achado nao nomeado. A unidade das PISTAS esta fechada, e com ela as tres desta sessao.
+
+### O cruzamento modelo x effort: a divida dizia uma coisa e a medicao disse outra (2026-08-22)
+
+A § 7 cobrava "nada cruza modelo e effort com template" com prazo antes de gerar a classe `ai`, e
+classificava o dano como AMEACA DE ATRIBUICAO: "se a ilha 00 sair toda de um modelo e a 01 de outro,
+template e modelo ficam colineares e a fatia de um nao separa do outro". Fui medir antes de desenhar
+e as duas metades estavam erradas.
+
+**A fatia que a divida protege NAO EXISTE.** `SliceAxis` tem dez membros e nenhum e familia, modelo
+ou effort; `generatorExposure` — o unico que toca gerador — tem **dois** valores, `seen` e `unseen`.
+Entao nao ha numero publicado que a colinearidade modelo↔template possa confundir. A frase descrevia
+um consumidor imaginario.
+
+**O dano real e no INTERVALO, e foi medido.** A unidade de `ai-recall` que a pre-inscricao congela e
+HIERARQUICA: `generatorFamily` fora, `promptTemplate` DENTRO dela, `generationBatch` dentro desse.
+Uma familia confinada a um cluster de template nao contribui variabilidade no nivel do meio — o
+sorteio dentro dela devolve sempre o mesmo. Medido com as funcoes de PRODUCAO (`resolveResampling` +
+`clusteredPercentileBootstrap`, 10.000 replicas, mesma semente, mesmas linhas, so a estrutura de
+template a variar):
+
+| templates por familia | intervalo de 95 % | largura |
+|---|---|---|
+| 1 | [0,6000, 0,6000] | **0,0000** |
+| 2 | [0,3000, 0,9000] | 0,6000 |
+| 3 | [0,4000, 0,8000] | 0,4000 |
+| 4 | [0,4500, 0,7500] | 0,3000 |
+
+Com um template por familia o intervalo **colapsa num ponto**: o corpo publicaria incerteza zero. De
+dois em diante o estreitamento e o √n comum e nao defeito, entao **o piso e dois e e qualitativo** —
+nao e limiar afinado, e a unica descontinuidade da curva.
+
+**E nada publicado o denunciava.** `units` e identico nas duas estruturas (120 nas duas medicoes) e
+`degenerate` e verdadeiro nas duas de qualquer forma, porque ele significa "uma unidade por linha" e
+o nivel MAIS INTERNO (`generationBatch`) e sempre assim num corpo realista. O unico vestigio e a
+contagem GLOBAL do nivel do meio (6 contra 4 na medicao), que ninguem compara com expectativa
+alguma. Por isso e recusa e nao relatorio: o efeito e sobre um numero PUBLICADO e e invisivel.
+
+**Onde a guarda ficou, e a primeira colocacao estava errada.** Pus
+`assert_every_family_spans_two_template_clusters` no caminho da DIVISAO e dois fixtures do splitter
+ficaram vermelhos — e eles estao certos: sao testes de assentamento de componente e nao tem de
+satisfazer uma invariante de reamostragem. A propriedade e do corpo PUBLICADO, entao ela corre em
+`main()`, sobre o corpo inteiro, **depois** da poda das familias magras (uma familia retirada ali nao
+publica intervalo nenhum).
+
+**Bateria: cinco mutacoes, cinco vermelhas** — a guarda nao ser chamada por `main`, o piso cair a um,
+a classe mista deixar de ser varrida, a familia deixar de ser nomeada na recusa, e a guarda ler
+`generation.promptId` em vez do eixo canonico. O caso que dirige `main()` precisou de um fixture novo
+(`one_template_per_family`), porque o fixture normal da um digest de template POR LINHA e satisfaria
+o piso por acidente — a chamada teria ficado sem adversario.
+
+**O que fica aberto, e e outra pergunta:** o plano de cobertura de modelo × effort. Nada exige que um
+modelo apareca em mais de uma ilha, e congelar a lista de modelos no repositorio esta fora de questao
+porque o roster e de fora e se move (§ 5.10). A guarda de agora impoe a estrutura de que o intervalo
+vive; a cobertura de modelos e decisao de desenho de medicao e continua na § 7.
