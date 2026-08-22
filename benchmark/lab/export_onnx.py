@@ -128,6 +128,14 @@ INVENTED_WEIGHT_PREFIXES = ("classifier", "bert.pooler")
 # five of these are what `save_pretrained` leaves in a CHECKPOINT of ~440 MB, which a
 # predicate written over this list accepts. So removal requires the two markers only this
 # exporter writes, and any of the six `CHECKPOINT_MEMBERS` names, at any depth, refuses it.
+#
+# WHAT THIS IS NOT: "the exporter only removes what it published" is stronger than the
+# mechanism. The mechanism is two markers plus a FINITE list of six names, so a weight file
+# whose name is outside that list does not stop the removal and goes with the directory. The
+# residue is declared in ESTADO.md § 7 and it is accepted, not closed — closing it would
+# need a predicate over CONTENT (a file of ~440 MB that torch can load) instead of a name,
+# and that predicate has to run before anything is deleted, on a path no test of this suite
+# executes.
 BUNDLE_MEMBERS = (
     "onnx/model_int8.onnx",
     "config.json",

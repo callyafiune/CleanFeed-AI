@@ -479,8 +479,15 @@ export function sourceReadinessIdentity(
   return identityOf(readiness, SOURCE_READINESS_IDENTITY);
 }
 
+/**
+ * The one version of the frozen-calibration artifact this evaluator reads. It is a
+ * CONSTANT and not only a literal type because the file enters by cast and the type
+ * cannot check a file — `validateFrozenCalibrationArtifact` compares against this.
+ */
+export const FROZEN_CALIBRATION_SCHEMA_VERSION = 1;
+
 export interface FrozenCalibrationArtifact {
-  schemaVersion: 1;
+  schemaVersion: typeof FROZEN_CALIBRATION_SCHEMA_VERSION;
   model: {
     modelId: string;
     modelVersion: string;
@@ -1280,6 +1287,20 @@ export function validateFrozenCalibrationArtifact(
   const expected = canonicalDigest(artifactWithoutDigest(artifact));
   if (expected !== artifact.artifactDigest) {
     fail("frozen calibration artifactDigest does not match its contents");
+  }
+  // AFTER the seal, for the reason above, and it is not shape hygiene: the file enters
+  // the two consumers by CAST (`as FrozenCalibrationArtifact` in commands/evaluate.ts and
+  // commands/consume-holdout.ts), so the literal `1` of the type is a compile-time claim
+  // about a file nothing parsed. A `schemaVersion: 2` document RE-SEALED — its own digest
+  // recomputed over its own contents — satisfies the check above and every consumer then
+  // reads fields whose meaning the version was supposed to fix.
+  if (artifact.schemaVersion !== FROZEN_CALIBRATION_SCHEMA_VERSION) {
+    fail(
+      `frozen calibration declares schemaVersion ${String(artifact.schemaVersion)}, not ` +
+        `${FROZEN_CALIBRATION_SCHEMA_VERSION}: the version is what fixes the meaning of ` +
+        "every other field, and a re-sealed document of another version satisfies the " +
+        "digest while saying something else",
+    );
   }
   assertPredictionManifestDigestForm(artifact.predictionManifestDigests);
 }

@@ -6,11 +6,13 @@ import {
   readThresholdEvidence,
   sealedCalibrationArtifact,
   validateFrozenCalibrationArtifact,
+  FROZEN_CALIBRATION_SCHEMA_VERSION,
   type FitFrozenCalibrationInput,
   type FitSampleScores,
   type FrozenCalibrationArtifact,
   type ThresholdEvidence,
 } from "../calibration-pipeline.ts";
+import { canonicalJson } from "../../contracts/canonical-json.ts";
 import { sha256BytesHex } from "../digests.ts";
 import { wilsonOneSided } from "../intervals.ts";
 import {
@@ -569,6 +571,67 @@ describe("fitFrozenCalibration governance guards", () => {
         },
       }),
     ).toThrow(/artifactDigest/);
+  });
+
+  it("refuses another schemaVersion even when the document is RE-SEALED", () => {
+    // The hole this closes is the CAST: both consumers read the file with
+    // `readJsonFile(...) as FrozenCalibrationArtifact`, so the literal `1` of the type is
+    // a compile-time claim about a file nothing parsed. Re-sealing is what makes the case
+    // reachable — a bare `schemaVersion: 2` is caught by the digest, and would prove the
+    // digest rather than the version.
+    const other = {
+      ...calibrationResult,
+      schemaVersion: 2,
+    } as unknown as Parameters<typeof validateFrozenCalibrationArtifact>[0];
+    // `canonicalDigest` is private to the module, so the seal is recomputed here from the
+    // same two public primitives it composes — canonical JSON, then the byte digest.
+    const seal = (value: unknown): string =>
+      sha256BytesHex(new TextEncoder().encode(canonicalJson(value)));
+    // The digest input is the NAMED key set and not "everything but the digest":
+    // `fitFrozenCalibration` returns the sealed artifact PLUS two apply functions and a
+    // cross-validation report that the seal does not cover, so filtering by key name would
+    // hand a function to the canonicaliser. This list is a RECONSTRUCTION and not a copy:
+    // if production adds a sealed key and this does not, the two digests diverge and this
+    // case fails loudly, which is the direction that reports a drift instead of hiding it.
+    const SEALED_KEYS = [
+      "schemaVersion",
+      "model",
+      "scoringRuntime",
+      "predictionManifestDigests",
+      "datasetDigest",
+      "datasetAuditDigest",
+      "sourceReadinessDigest",
+      "splitDigest",
+      "evaluatorDigest",
+      "partitionsUsed",
+      "calibrators",
+      "selectionEvidence",
+      "thresholds",
+      "thresholdEvidence",
+      "fitSeed",
+    ] as const;
+    const withoutDigest = (value: object): Record<string, unknown> =>
+      Object.fromEntries(
+        SEALED_KEYS.filter((key) => key in value).map((key) => [
+          key,
+          (value as Record<string, unknown>)[key],
+        ]),
+      );
+    const resealed = {
+      ...other,
+      artifactDigest: seal(withoutDigest(other)),
+    } as typeof other;
+    // The seal ACCEPTS it — that equality is what makes the case reachable — and the
+    // version check is what refuses it.
+    expect(seal(withoutDigest(resealed))).toBe(resealed.artifactDigest);
+    expect(() => validateFrozenCalibrationArtifact(resealed)).toThrow(
+      /schemaVersion 2, not 1/u,
+    );
+    // And the version this evaluator reads is a constant the artifact carries, not a
+    // number retyped in the check.
+    expect(calibrationResult.schemaVersion).toBe(
+      FROZEN_CALIBRATION_SCHEMA_VERSION,
+    );
   });
 
   // The seal is not a form. Every command reads this artifact with

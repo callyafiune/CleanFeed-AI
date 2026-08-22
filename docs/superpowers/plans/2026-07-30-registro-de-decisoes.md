@@ -10616,3 +10616,87 @@ morder sao dois atos, e eu fiz o primeiro.
 quinto leitor da autoridade, nenhuma comparacao vacua, numeros conferem, nenhum achado nao nomeado. A
 unidade da dependencia de ordem esta fechada, e com ela a fila de dividas de Fase 3 que eram minhas e
 autocontidas.
+
+### A lista de nove decisoes era inflada, e o gancho que eu citei a sessao inteira nao existe (2026-08-22)
+
+O operador pediu que eu passasse ao codex a lista de nove decisoes que eu lhe apresentei. Corri duas
+lentes sobre a MESMA lista: o codex (`.codex-reviews/codex-decisoes-veredito.txt`, dez comandos,
+`EXIT=0`, **REPROVA A LISTA**) e um painel proprio de catorze agentes read-only. As duas concordam na
+direcao e o painel foi mais longe, porque leu a arvore em vez da lista.
+
+**SEIS dos nove nao eram dele.** O codex achou tres (2, 4, 5); o painel achou seis (1, 2, 4, 5, 6, 9).
+Ficam **tres**: gastar a cota, a assinatura de B1 e `consume-holdout` — e os dois ultimos nao sao
+moviveis hoje. Cada retirada com a sua medicao:
+
+* **1, a razao da cota `mixed = 2000`** — o VALOR ja foi ratificado por ele em 2026-08-04 (a linha
+  `ai 4000 / mixed 2000` esta na coluna ratificada); falta a coluna de razao, que e prosa. E a
+  derivacao esta medida na arvore: bloco cego 20 % de 2.000 = 400 mistas, coorte ≥ 0,50 = 240 contra
+  `criticalRecallPositives` 200; a alocacao fecha exacta; o teto de material sao 2.247 pais;
+* **2, o nivel de gerador da mista** — o precedente da arvore e do agente (a emenda que pos
+  `proxyFor`/`proxyReason` no MESMO array foi minha e esta selada; o desarme de `warning.mixed-recall`
+  esta como `AG · ratificado`), e a divida gemea custa o mesmo digesto e vive na § 7 como desenho de
+  agente. A linha subiu para a § 4 por SEQUENCIA, e estar antes de um ato dele nao transfere a decisao;
+* **4, permutar as ilhas reservadas** — nem estava na § 4: esta na § 7 com o veredito escrito ("nao
+  permutadas") decidido por delegacao;
+* **5, as 400 do qwen** — a premissa era FALSA, medida por duas rotas: `load_ai` le uma TUPLA
+  declarada de nomes de pool, entao gerar num `--output` novo nao apaga byte nenhum; e
+  `CandidateWriter(..., append=True)` e incondicional, entao relancar a lane ACRESCENTA;
+* **6, o recibo humano** — como estava escrito nao era decidivel por ninguem: `review` e uniao de dois
+  bracos POR REGISTRO e nao ha forma amostral de corpus, `review_state()` devolve
+  `automated/unreviewed` fixo, e as tres saidas mecanicas ja estao nomeadas noutro plano. O que e dele
+  e a jusante: as horas e a ratificacao;
+* **9, codex em R1/R2** — mandato em pe ("manter o codex na revisao gastando menos"), e rodar a janela
+  nao e dinheiro: a fronteira escrita e COMPRAR credito.
+
+**O GANCHO QUE EU CITEI A SESSAO INTEIRA NAO EXISTE NA FONTE.** A lista fechada de nunca-delegado, na
+§ 3.7, e verbatim: "D0; risco juridico pessoal (B1); calendario; apertar botao de publicacao externa;
+ler `test`/`cal-B`/ledger real; dinheiro alem de R$60/mes". **"Apagar material" nao esta nela**, e
+"gastar cota de geracao" tambem nao — e eu invoquei o primeiro varias vezes esta semana para parar num
+item. A § 4 e a § 7 tratam os dois como nunca-delegados. Registrei a divergencia na § 3.7 com a leitura
+que eu adopto: a lista esta **incompleta e nao permissiva**, entao continuo a nao gastar cota nem a
+apagar material; emendar a lista e ato dele, comportar-me conservadoramente nao precisa de licenca.
+
+**E o painel achou o que barra a geracao, e nao e decisao nenhuma — e aritmetica.**
+`RELEASE_CORPUS_POLICY` fixa `mixed: 2_000` e `sealDataset` compara a composicao por IGUALDADE EXACTA.
+As quatro ilhas curtas (92, 94, 95, 99 contra 100) tem teto de 380 contra 400, cada pai rende no
+maximo uma linha, e a folga de 267 nao transfere: a corrida gasta a cota e entrega ≤ 1.980, e o corpus
+nunca sela como `release`. Medi o remedio: a janela de pais e `50 <= palavras <= 450`
+(`make_mixed.py:918`), o **450 nao tem derivacao em lugar nenhum** — literal nu, sem comentario no
+sitio, sem razao no ESTADO nem no registro —, e alarga-la a partilhada (50–5.000) da 2.578 pais e ZERO
+ilhas curtas. Nao a alarguei: falta medir a interacao comprimento × poda de near-dupes que
+`MIX_CELL_EXCLUDED` documenta. Esta na § 7 como primeira linha e na § 3.9 como primeiro passo.
+
+**Uma nota do painel que vale por si:** dois comentarios diziam que `RECIPES` declara QUATRO nomes
+contra quarenta do plano, isto e, que a cota continua trancada por codigo. Medido: `RECIPES` declara
+**quarenta**, o plano pede quarenta, e toda ilha e servida. Os dois enganavam na direcao perigosa e
+foram corrigidos.
+
+### R1 e R2 pelo codex: os dois REPROVAM, e os quatro achados estao consertados (2026-08-22)
+
+O operador autorizou. Prompts de **2 KB cada** — o codex le a arvore sozinho, entao o prompt so aponta
+o commit, o contrato da lente Fable anterior (para nao repetir o que ela achou) e as perguntas.
+
+**R1** (`f5bb548`, a troca da pre-inscricao): os tres bloqueantes do Fable **todos fechados**,
+"derivada em vez de declarada" VERDADE NO CODIGO, a ordem do corte IMPOSTA, nada do `consolidado-c`
+mordendo. Dois achados:
+
+* `commands/evaluate.ts` dizia que o comando "applies the frozen calibration" e a linha 653 usa
+  `documentRawScore` directamente. A frase passou a dizer o que o comando faz: VERIFICA a calibracao
+  congelada e corta o escore CRU com o limiar que ela amarra, porque a v1 nao congela calibrador;
+* **o achado que ele nao nomeou e que era um buraco real:** `frozen-calibration.json` entra nos dois
+  consumidores por CAST, e `validateFrozenCalibrationArtifact` conferia selo e digests mas nao o
+  `schemaVersion` — entao um documento `schemaVersion: 2` RE-SELADO passava, e o literal `1` do tipo e
+  alegacao de compilacao sobre um arquivo que ninguem parseou. Fechado com a conferencia DEPOIS do
+  selo (a ordem que o docstring impoe), constante `FROZEN_CALIBRATION_SCHEMA_VERSION`, e caso que
+  RE-SELA o documento para o tornar alcancavel. Bateria C1 (a conferencia desaparece) e C2 (ela corre
+  antes do selo), as duas vermelhas.
+
+**R2** (`23e26cb`, Fase 4): dirigivel pela suite SIM, o piso interquartil MORDE, nada de A1-A4
+mordendo. Um achado: "o exportador so apaga o que ele mesmo publicou" e **mais forte que o mecanismo**
+— dois marcadores autorizam o `rmtree` e a lista de nomes reconhecidos e FINITA, entao peso com nome
+fora dela vai com o diretorio. E o residuo que a § 7 ja declara; o que estava errado era a frase, que
+passou a dizer o mecanismo e a nomear o que fecharia o residuo (um predicado sobre CONTEUDO, correndo
+antes de qualquer remocao, num caminho que nenhum teste desta suite executa).
+
+**Fechamento:** vitest 172 / 3.116 e lab 761 / 750 verdes, tsc limpo, prettier verde, `docs:check` OK,
+CRLF vazio, `evaluatorDigest` republicado (o conserto do R1 esta em `EVALUATOR_FILES`).

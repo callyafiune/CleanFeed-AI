@@ -298,9 +298,9 @@ def _island(indice: int) -> dict:
     `templates` e `mixingTemplates` sao SLOTS e nao receitas do slate de hoje: o slate e
     decisao de coleta do operador e este arquivo nao a toma. O que a guarda impoe e a FORMA —
     template em uma ilha so — e `generate_ai.island_plan` recusa uma ilha cujos templates o
-    slate nao serve, o que hoje e toda ilha (`RECIPES` declara quatro nomes e o plano pede
-    quarenta). Essa recusa E o ponto: a cota nao pode ser gasta sob um slate que o plano nao
-    cumpre.
+    slate nao serve. Medido em 2026-08-22: `RECIPES` declara **quarenta** nomes, o plano pede
+    quarenta, e toda ilha e servida — entao essa recusa NAO barra corrida alguma hoje. Ela
+    fica como forma, e o que barra a corrida e a chave do provedor.
     """
     return {
         "island": f"ilha_{indice:02d}",

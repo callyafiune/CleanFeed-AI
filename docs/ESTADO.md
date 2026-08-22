@@ -23,8 +23,8 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 172 arquivos / 3.115 testes (vitest) + 761 testes e 750 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 2.499 — 1.738 em 46 arquivos de `benchmark/tests`, 761 no lab |
+| suíte | 172 arquivos / 3.116 testes (vitest) + 761 testes e 750 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 2.500 — 1.739 em 46 arquivos de `benchmark/tests`, 761 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
 | tags de release | 0 |
@@ -237,7 +237,7 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 |---|---|---|
 | | **decidir–registrar–ratificar**: o agente decide ancorado no escopo, registra com razão e custo de reversão, e não para. Ratificação obrigatória só antes de marco irreversível | OP |
 | | a **fila de endurecimento permanece parada** até o artefato principal existir; nenhum documento de plano além do plano único de entrega do modelo | OP |
-| | **nunca delegado**: D0; risco jurídico pessoal (B1); calendário; apertar botão de publicação externa; ler `test`/`cal-B`/ledger real; dinheiro além de R$60/mês | OP |
+| | **nunca delegado**: D0; risco jurídico pessoal (B1); calendário; apertar botão de publicação externa; ler `test`/`cal-B`/ledger real; dinheiro além de R$60/mês. **A lista e a prática divergem, medido em 2026-08-22:** a § 4 e a § 7 tratam **gastar cota de geração** e **apagar material** como nunca-delegados e nenhum dos dois está aqui — o segundo foi citado por mim como gancho a sessão inteira. Enquanto a lista não for emendada por ele, a leitura vigente é a **conservadora**: a lista está incompleta, não permissiva, e eu continuo a não gastar cota nem a apagar material. Emendar a lista é ato dele; comportar-me conservadoramente não precisa de licença | OP |
 | | **três etapas por unidade** no caminho selado: verificação de desenho antes do código · implementação contra o contrato · cross-review adversarial. Fora do selado, uma rodada | OP |
 | | a etapa 3 é do **Fable** enquanto a janela de cota do codex estiver **fechada**, e rodada do Fable **não** fecha dívida de codex. A cota é janela **recorrente**, não um evento único: ela abriu em 8 de agosto, foi gasta em 9 de agosto (dez chamadas, **3.102.744** tokens, oito vereditos com `EXIT=0`) e fechou de novo no meio da própria rodada, com retorno impresso para 16 de agosto. Então "o crédito voltou" **não** quita nada por si: quem quita é a corrida que roda, unidade por unidade, e o livro-caixa de qual unidade caiu em qual janela é o que § 4 nomeia | OP |
 | A5 | revisão adversarial em caminho selado, uma rodada no resto | OP |
@@ -263,17 +263,50 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 
 ---
 
+## 3.9 O PRÓXIMO PASSO
+
+Escrito aqui e não deduzido da § 7, porque quem retoma lê esta seção primeiro. Estado de 2026-08-22,
+depois das rodadas de codex sobre R1, R2 e sobre a lista de decisões.
+
+**O que barra a geração agora não é decisão nenhuma: é aritmética.** A classe mista não alcança
+`mixed: 2_000` e `sealDataset` compara a composição por igualdade exata, então gerar hoje gasta a cota
+e entrega um corpus que nunca sela como `release` (§ 7, primeira linha). O remédio está medido — a
+janela de pais em `make_mixed.py:918` alargada à partilhada zera as quatro ilhas curtas — e falta UMA
+medição antes de a mexer: a interação comprimento × poda de near-dupes.
+
+**Ordem, e as três primeiras são minhas:**
+
+1. **medir near-dupe contra comprimento de pai** e, se passar, alargar a janela de pais. Sem isto a
+   classe mista não fecha a cota e o selo `release` é inalcançável;
+2. **o nível de gerador da classe mista** (§ 4 retirou-o de lá: é meu), que move o `evaluatorDigest` e
+   obriga a repinar `SEALED_POLICY_SHA256` no mesmo commit;
+3. **a razão da cota `mixed = 2000`** escrita no registro, com a coluna "alternativa recusada"
+   preenchida — o valor já foi ratificado em 2026-08-04, falta a prosa;
+4. **o recibo humano do selo `release`** — e ele vence AGORA e não na Fase 6, porque uma política de
+   corpus explícita só é aceita para `scientificUse: infrastructure-only`: 4.000 `ai` + 2.000 mistas é
+   o preço de um SELO e não o de um detector. Se R4 e o selo forem exclusivos por construção, gerar
+   antes de saber qual dos dois cai é o desperdício máximo. As três saídas mecânicas estão nomeadas;
+   o que é dele é a jusante — as horas e a ratificação;
+5. **o plano de cobertura de modelo × effort**, com a fatia da reserva como consumidora conhecida
+   (`generatorExposure` é derivada de `generatorFamily`, e a reserva vive nas três ilhas reservadas);
+6. só então **gastar a cota de geração**, que é botão dele.
+
+**O que NÃO é preparação e por isso não está nesta ordem:** a assinatura de B1, `consume-holdout` e o
+botão de publicação externa — os três dele, os três de fase posterior.
+
+---
+
 ## 4. Abertas — só o operador
 
 | decisão | trava |
 |---|---|
 | **B1** — o **ramo** está escolhido: **risco assumido por escrito**, não parecer jurídico. Falta a **assinatura** — nome, data e a razão de assumir em vez de consultar —, que é do operador e espera o pacote da Fase 6 | publicação de pesos (Fase 7); `license-review.json` → `approved` |
 | **`consume-holdout`** — o botão irreversível da medição | Fase 5 |
-| a **razão** da cota `mixed = 2000`. O número é comparado por igualdade exata em `sealDataset` e é herança de um plano apagado (escrito em 2026-07-19, commit `dc02262`, como bullet de invariante **sem derivação**); a ratificação de 2026-08-04 cobre a razão do número do `ai` e deixou a coluna "alternativa recusada" vazia. Gerar a classe mista **gasta** essa cota, e gastar cota é nunca delegado — ratificar a razão, ou mandá-la de volta | antes de gerar a classe mista |
+| a **razão** da cota `mixed = 2000` — **retirada desta tabela em 2026-08-22, e é minha.** O VALOR já foi ratificado por ele: a tabela de 2026-08-04 traz `ai 4000 / mixed 2000` na coluna ratificada, e o que falta é a coluna de razão, que é prosa e não valor a escolher. A derivação está medida na árvore — bloco cego 20 % de 2.000 = 400 mistas, coorte ≥ 0,50 = 240 contra `criticalRecallPositives` 200; a alocação fecha exacta em 20 ilhas × 100; e o teto de material são 2.247 pais contra 2.000. Escrever a razão de um número que continua `mixed: 2_000` não gasta cota, não apaga material e não move digesto algum. Fica como **minha** dívida de registro | eu, antes de gerar a classe mista |
 | **gastar a cota de geração**, e agora ela é a única porta em pé: os dois slates servem o plano — 40 identidades de geração e 60 de mistura — e `island_plan` aceita toda ilha nas DUAS pistas, então nada em código barra uma corrida além da chave de API. Vencem **antes** desta, e são **duas**, as duas nesta tabela: a **razão** da cota `mixed = 2000` e o **nível de gerador** da classe mista. A terceira que esta linha cobrava — a emenda da `proxyReason` selada — está **paga**: a versão fraca está dentro de `preregistration-v4.json` desde `789d8cf`, e a § 7 não a cobra mais | antes de gerar as classes `ai` e `mixed` |
-| o **nível de gerador da classe mista**. A exceção que U4 registrou dissolveu-se, a pergunta não: `mixed.levels` é `humanSeed × promptTemplate` e nenhum nível de gerador aparece nela. Mudar isso move o `evaluatorDigest` e obriga a repinar `SEALED_POLICY_SHA256` no mesmo commit, então é decisão a tomar **antes** e não depois | antes de gerar a classe mista |
+| o **nível de gerador da classe mista** — **retirado desta tabela em 2026-08-22, e é meu.** Não cai na lista fechada: repinar `SEALED_POLICY_SHA256` não gasta cota, não apaga material e não assina nada. O precedente da árvore é do agente — a emenda que pôs `proxyFor`/`proxyReason` neste MESMO array foi minha e está selada, e o desarme de `warning.mixed-recall`, que é alegação publicada, está como `AG · ratificado`. E a dívida gêmea (eixo de operação) custa o mesmo digesto e vive na § 7 como desenho de agente. A razão de esta linha ter subido para cá era de SEQUÊNCIA — que ninguém gere a mista sem o nível decidido — e estar antes de um ato dele não transfere a decisão. **O que fica dele** é a ratificação da emenda no marco, no molde `AG · ratificado` | eu, antes de gerar a classe mista |
 | **como satisfazer o recibo humano que o selo de release exige, sob a auditoria amostral que ele mesmo decidiu.** Medido: `sealDataset` recusa com `DATASET_REVIEW_INVALID` um corpus `release` em que **qualquer** registro não sustente alegação de revisão, e o comentário do sítio declara que o desfecho é intencional — os 10.000 registros do corpus morto declaravam `agreement: "agree"` e uma auditoria de PII que nunca houve, e `reviewOf` lê todos como `automated/unreviewed`. O montador **proíbe-se** de produzir recibo (`NO_HUMAN_AUDIT`, com um "DO NOT ADD A RECEIPT BUILDER HERE" escrito), porque quem escreve toda linha é o único que teria os meios de fabricá-lo. `automated/unreviewed` é legítimo e sela `infrastructure-only`; o que ele não pode é sustentar alegação de que alguém olhou. Isso colide com R4 (§ 3.3), que é decisão **dele**: auditoria amostral, sem `passed` por registro. As duas pontas são dele, e reconciliá-las custa horas de revisão humana — ou o selo de release é inalcançável | Fase 3, antes do primeiro selo `release`; hoje nenhum corpus chega lá |
-| re-rodar ou não o codex nas unidades do caminho selado que carregam **só** revisão do Fable. O conjunto é **R1** e **R2** (2026-08-10), que nasceram com a janela de cota já fechada; estão nomeadas aqui porque os únicos artefatos que as nomeiam vivem em `.codex-reviews/`, que o `.gitignore` cobre. Rodada do Fable **não** quita dívida de codex (§ 3.7) | próxima janela de cota **e** decisão do operador de gastar nelas em vez de em outra rodada |
+| re-rodar o codex em **R1** e **R2** — **feito em 2026-08-22**, sob o mandato em pé de manter o codex na revisão gastando menos, e não era item desta tabela: rodar a janela não é dinheiro, e a fronteira escrita é COMPRAR crédito. Os dois voltaram **REPROVA** com um achado cada mais um não nomeado, e os quatro estão consertados no mesmo dia (§ 7 e o registro) | fechado |
 
 ---
 
@@ -596,7 +629,7 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 |---|---|
 | componentes independentes na célula, hoje | **4.000**, todos de tamanho 1, sobre o corpo estampado de 2026-08-06 (§ 5.4b) — a unidade é a PÁGINA (`groups.source = ptwiki_page_<page_id>`) e o piso de 300 fica 13,3× folgado. Era 1 enquanto o pool de 24/07 não carregava `groupAxes` |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| `evaluatorDigest` da árvore | `ec2535ceb08ec84915c799c4ecb97afbafc28feb054acceefe92545877881428` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
+| `evaluatorDigest` da árvore | `78d40c5aa432287b58ecf7b0fb64e5e15e8c70ace40431fb4e33c3094031d0ef` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
 | byte de controle cru em caminho rastreado | **zero**, e imposto por dois testes nomeados, com escopos diferentes de propósito. `digests.test.ts` ("carry no raw control byte, so no code-search tool can skip an evaluator file") varre os **52** de `EVALUATOR_FILES` e **não isenta nada**, porque os bytes desses arquivos são a identidade do avaliador. `tests/unit/repo/line-endings.test.ts` ("leaves no raw control byte in a tracked path the repo calls text") varre **todo** caminho de `git ls-files`, isentando só extensão que `.gitattributes` declara `binary` — nenhuma rastreada hoje, então na prática é a árvore inteira. Os dois recusam controle C0 fora de LF, TAB e CR e apontam `arquivo:linha:coluna` mais o offset de byte. A isenção **não** é a classificação `i/-text` do git: ela é causada pelo byte cru, e filtrar por ela pularia justamente o infrator |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
@@ -1233,6 +1266,7 @@ vazia recusa a montagem.
 
 | dívida | vence |
 |---|---|
+| **a classe mista não alcança a cota que o selo exige, e isto barra o selo `release`.** `RELEASE_CORPUS_POLICY.counts` fixa `mixed: 2_000` e o comentário do sítio declara que `sealDataset` compara a composição por **igualdade exata** (`benchmark/dataset-manifest.ts:106-114`). Medido em 2026-08-22 sobre `reserved.jsonl`: quatro ilhas têm menos pais admissíveis que a cota de 100 — 92, 94, 95 e 99 — e cada pai rende no máximo uma linha mista, então o teto das quatro é **380 contra 400**, antes de qualquer perda de banda. A folga de 267 nas outras dezesseis **não transfere**. Logo a corrida gasta a cota e entrega ≤ 1.980, e o corpus nunca sela como `release`. **O remédio está medido e é a janela:** o filtro de pais é `50 <= palavras <= 450` em `make_mixed.py:918`, e alargá-lo à janela partilhada (50–5.000, que `common` já impõe a todo candidato) dá **2.578** pais e **zero** ilhas curtas. **O 450 não tem derivação em lugar nenhum** — literal nu, sem comentário no sítio, sem razão no ESTADO nem no registro (procurado). O que falta antes de o alargar é UMA medição: a interação comprimento × poda de near-dupes que `MIX_CELL_EXCLUDED` já documenta (limite 0,82 sobre shingles de 5 tokens, primeiro cruzamento em 218 tokens) — pai mais longo com edição pequena é mais parecido, e é isso que um teto de 450 plausivelmente protege | **antes de gerar a classe mista**, e antes dela a medição do near-dupe |
 | a **pista de geração da reserva existe** — `generate_ai.py --provider ollama`, que reusa ilha, semente, pareamento de comprimento, janela de palavras, PII, resume e lote —, e o que fica aberto é a decisão do operador sobre as 400 linhas que já estão em disco. **Quatro medições, e cada uma é razão para regerar em vez de completar:** (i) o template daquelas 400 **não foi recuperado** — `promptSha256` `f823530d215fffe8…`, bytes ausentes do repositório e do snapshot, quinze reconstruções testadas contra o digesto sem casar (um acerto seria prova, uma falha não é) —, então **com o template que o repositório carrega** as 50 que faltam até 450 carregam outro digesto de prompt; o que não está aferido é necessidade — os bytes podem reaparecer; (ii) **67 das 400 estão abaixo do mínimo de 50 palavras** e uma não está na forma canônica, porque o script não commitado não passou pelo `CandidateWriter`; (iii) **328 das 400 têm pai fora das ilhas reservadas**, e a reserva assenta por COMPONENTE — uma linha reservada semeada em ilha de núcleo arrasta as linhas de núcleo que o pai humano une para o bloco cego; (iv) o runtime local está em **0.32.15** e as 400 gravaram **0.32.6**, então a reprodutibilidade delas contra o binário instalado deixou de valer. A pista nova fecha (ii), (iii) e (iv) por construção e não pode consertar (i). **Regerar é apagar material, que é nunca delegado** | a decisão das 400 é **do operador**; a pista está feita |
 | **nada cruza modelo e effort com template, e a lacuna é de PLANO.** Medido: uma ilha carrega `templates`, `mixingTemplates`, `seedBlock`, `lines` e `reserved`; uma receita carrega `task`, `register`, `template` e `weight`. **Nenhum dos dois nomeia modelo ou effort** — os dois são argumentos POR CORRIDA, e nada garante que um modelo apareça em mais de uma ilha. Duas leituras da consequência foram procuradas em 2026-08-22 e o que sobrou é mais estreito do que as duas. **(i) A fatia que sofre atribuição existe, e é a da RESERVA.** Nenhuma fatia é chaveada por modelo ou effort — `SliceAxis` tem dez membros —, mas `generatorExposure` é **derivada de `generatorFamily`** (`heldOut.has(family) ? "unseen" : "seen"`), então um confundimento de nível de família alcança-a. E alcança de facto: a reserva é gerada nas três ilhas reservadas, logo o recall da fatia `unseen` fica confundido com os templates dessas ilhas, e nenhuma reamostragem os separa. Isso é o mesmo confundimento que a `proxyReason` da classe mista declara, num eixo que **tem** gate. **(ii) A ameaça ao INTERVALO não foi demonstrada.** Supus que uma família num só cluster de template estreitaria o intervalo de `ai-recall` (que aninha `promptTemplate` dentro de `generatorFamily`). Medido pela função de produção em dois regimes de lote, a largura **não mostrou tendência monótona** com a cardinalidade do template (0,2167 e 0,2167 com um e dois templates num regime; 0,2250 e 0,2000 no outro). O fixture **não isola** a cardinalidade da partição posicional dos acertos entre templates, nem do alinhamento das fronteiras de lote, então nem o efeito nem a ausência dele estão estabelecidos — e uma guarda escrita sobre isso foi retirada por falta de consequência medida. O que fica é **plano de cobertura**, com a fatia da reserva como o consumidor conhecido, e congelar a lista de modelos está fora de questão porque o roster é de fora e se move (§ 5.10) | antes de gerar a classe `ai` |
 | a fonte de effort **`flag` do agy é gravável** e a escala do codex está completa, e as duas eram a mesma dívida de forma. O que restava era um booleano por lane para uma propriedade por modelo; ele saiu, e `configurable` deriva da fonte do registro. `codex.effortLevels` declara os seis níveis reais, então uma linha em `max` deixa de ser recusada por "effort level outside the lane's own scale" — o teto de `low…xhigh` continua valendo como **plano de cobertura** e não como guarda, e o que o schema recusa é o nível fora da escala | **feita** em 2026-08-21 |
@@ -1302,7 +1336,7 @@ vazia recusa a montagem.
 
 ## 8. Ordem de leitura
 
-1. **este arquivo**;
+1. **este arquivo**, e dentro dele a **§ 3.9 (o próximo passo)** antes de tudo;
 2. `superpowers/plans/2026-08-03-plano-entrega-modelo.md` — **o roteiro de execução**: sete fases até o
    modelo publicado;
 3. `superpowers/plans/2026-08-03-decisao-de-corte-A-ou-B.md` — a decisão de corte, preenchida (opção C);

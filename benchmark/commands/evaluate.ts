@@ -5,7 +5,10 @@
 //
 // It re-binds the frozen split and calibration, re-reads the sharded test
 // predictions and the private test labels, resumes the started ledger lease
-// under the FULL scientific tuple, applies the frozen calibration, computes the
+// under the FULL scientific tuple, VERIFIES the frozen calibration and cuts the
+// raw document score with the threshold it binds — it applies no calibrator,
+// because the v1 freezes none (`threshold.probabilisticCalibrator: "none"`), and
+// `frozen.calibrators` is sealed and read by no decider —, computes the
 // v2 metrics/slices/gates and seals the schema v2 report (frozen vs observed
 // identity must match). The report and gate report are written atomically, then
 // the ledger is marked `completed` — even when the gates reject, because a

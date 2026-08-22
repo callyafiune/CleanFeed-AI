@@ -309,11 +309,12 @@ def island_plan(value: str) -> dict:
       3. the reserve leaves room in the blind block for a core island;
       4. `--island` names an island of the plan, and the SLATE serves its templates.
 
-    Leg 4 is the one that refuses today, and the refusal is the decision it names: the plan
-    asks for two templates per island over twenty islands and `RECIPES` declares four
-    names, so the slate has to grow before the ai class can be generated at all. That is
-    the collection decision the operator owns; what this function owns is that the quota
-    cannot be spent while the slate does not meet the plan.
+    Leg 4 refuses an island whose templates the slate does not serve, and it refuses
+    NOTHING today: measured on 2026-08-22, the plan asks two templates per island over
+    twenty islands and `RECIPES` declares **forty** names, so every island is served. The
+    leg stays because it is the form — the day the plan grows past the slate it bites — and
+    the sentence it used to carry ("the slate has to grow before the ai class can be
+    generated at all") was true when written and has not been true since the slate grew.
     """
     lab = assembler()
     try:
