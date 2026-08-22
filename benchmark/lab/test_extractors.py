@@ -6957,59 +6957,6 @@ class SlateRoleTests(unittest.TestCase):
     provider rename slides past a prefix in silence.
     """
 
-    def test_a_family_in_one_template_cluster_refuses_the_corpus(self) -> None:
-        import assemble_corpus
-        from group_axes import known
-
-        # The unit of `ai-recall` nests `promptTemplate` INSIDE `generatorFamily`, so a
-        # family with one template cluster contributes no variability at the middle level.
-        # MEASURED with the production functions (`resolveResampling` +
-        # `clusteredPercentileBootstrap`, 10.000 replicates, same seed, same rows, only the
-        # template structure varying): the 95 % interval is 0,0000 wide with one template
-        # per family and 0,6000 with two. The floor is two and it is qualitative — from two
-        # upward the narrowing is the ordinary root-n.
-        def generated(family: str, template: str, index: int) -> dict:
-            return {
-                "id": f"rec_{family}_{template}_{index}",
-                "label": "ai",
-                "groups": {
-                    "generatorFamily": known(family),
-                    "promptTemplate": known(template),
-                },
-            }
-
-        fine = [
-            generated("familia_ok", f"pt_{i % 2}", i) for i in range(4)
-        ]
-        assemble_corpus.assert_every_family_spans_two_template_clusters(fine)
-
-        thin = fine + [generated("familia_magra", "pt_unico", i) for i in range(4)]
-        with self.assertRaises(assemble_corpus.FamilyInOneTemplateCluster) as caught:
-            assemble_corpus.assert_every_family_spans_two_template_clusters(thin)
-        message = str(caught.exception)
-        # The family is NAMED with its count, because the remedy depends on which it is.
-        self.assertIn("familia_magra", message)
-        self.assertIn("pt_unico", message)
-        self.assertNotIn("familia_ok", message)
-        # The human class is not in this unit and must not be screened by it: a human row
-        # carries no generator family at all.
-        human = [{"id": "h1", "label": "human", "groups": {}}]
-        assemble_corpus.assert_every_family_spans_two_template_clusters(human)
-        # And the MIXED class is: it is a positive of the same recall hypothesis.
-        mixed_thin = [
-            {
-                "id": f"m_{i}",
-                "label": "mixed",
-                "groups": {
-                    "generatorFamily": known("familia_mista"),
-                    "promptTemplate": known("pt_unico"),
-                },
-            }
-            for i in range(3)
-        ]
-        with self.assertRaises(assemble_corpus.FamilyInOneTemplateCluster):
-            assemble_corpus.assert_every_family_spans_two_template_clusters(mixed_thin)
-
     def test_the_roles_partition_the_families_the_slate_knows(self) -> None:
         import assemble_corpus
 
@@ -8565,15 +8512,10 @@ class AssemblyRunTests(unittest.TestCase):
             },
         }
 
-    # When set, every generated row of the fixture carries the SAME template digest, which
-    # is the state the resampling unit cannot live with — one template cluster per family.
-    one_template_per_family = False
-
     def _ai(self, provider: str, family: str, index: int) -> dict:
         import hashlib
 
-        seed = family if self.one_template_per_family else f"{family}:{index}"
-        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(f"{family}:{index}".encode("utf-8")).hexdigest()
         meta = {
             "provider": provider,
             "family": family,
@@ -8787,31 +8729,6 @@ class AssemblyRunTests(unittest.TestCase):
         # leaves as a COUNTED drop — the same vocabulary `MissingMaterialBatch` uses for
         # legacy pools, and never an abort.
         self.assertIn("MissingExtractionRun: 40", self.stdout)
-
-    def test_a_corpus_whose_families_live_in_one_template_cluster_is_refused(self) -> None:
-        import assemble_corpus
-
-        # Through `main()`, because the guard being CALLED is a separate fact from the
-        # guard being right: the fixture normally gives every row its own template digest,
-        # so it would satisfy the floor by accident and the call would have no adversary.
-        self.__class__.one_template_per_family = True
-        try:
-            with tempfile.TemporaryDirectory() as raw:
-                tmp = Path(raw)
-                self._pools(tmp)
-                with self.assertRaises(
-                    assemble_corpus.FamilyInOneTemplateCluster
-                ) as caught:
-                    self._main(tmp, seen_texts=[])
-                # Nothing was written: the refusal sits ahead of records.jsonl, so a corpus
-                # whose interval would be too narrow never exists on disk to be measured.
-                self.assertFalse((tmp / "out" / "records.jsonl").exists())
-        finally:
-            self.__class__.one_template_per_family = False
-        message = str(caught.exception)
-        self.assertIn(self._family(self.RESERVED_FAMILY), message)
-        self.assertIn(self._family(self.CORE_FAMILY), message)
-        self.assertIn("ai-recall", message)
 
     def test_the_quota_truncation_cuts_core_rows_and_never_the_reserve(self) -> None:
         import assemble_corpus

@@ -10304,3 +10304,52 @@ o piso por acidente — a chamada teria ficado sem adversario.
 modelo apareca em mais de uma ilha, e congelar a lista de modelos no repositorio esta fora de questao
 porque o roster e de fora e se move (§ 5.10). A guarda de agora impoe a estrutura de que o intervalo
 vive; a cobertura de modelos e decisao de desenho de medicao e continua na § 7.
+
+### Retratação: a guarda que eu commitei em `0bf5818` foi construida sobre artefato do meu fixture (2026-08-22)
+
+Rodada em `.codex-reviews/codex-reamostragem-veredito.txt`, cinco comandos de cinco, `EXIT=0`.
+**REPROVA**, e o achado central mata a unidade. Eu tinha pedido explicitamente que ele conferisse se
+o colapso em 0,0000 era artefato; era.
+
+**O que eu media e o que eu concluia.** Medi a largura do intervalo variando quantos clusters de
+template uma familia atravessa e obtive 0,0000 com um, 0,6000 com dois, 0,4000 com tres. Concluí que
+uma familia num cluster so colapsa o intervalo e escrevi guarda com piso dois.
+
+**O defeito, que o codex nomeou:** no caso de UM template eu dei taxa CONSTANTE a todas as linhas da
+familia, entao a variabilidade era zero POR CONSTRUCAO — o zero era do meu fixture e nao da
+estrutura. E a serie 0,6/0,4/0,3 segue 1,2/n no fixture; chamar aquilo de "√n comum" foi lei
+assintotica inventada de tres pontos.
+
+**Remedi mantendo a variabilidade intra-cluster FIXA — a mesma sequencia de acertos por familia, so o
+rotulo de template a mudar — e nos DOIS regimes de lote:**
+
+| templates por familia | lote = 1 linha | lote = 5 linhas |
+|---|---|---|
+| 1 | 0,2167 | 0,2250 |
+| 2 | 0,2167 | 0,2000 |
+| 3 | 0,2833 | 0,2750 |
+| 4 | 0,2583 | 0,2250 |
+| 6 | 0,2750 | 0,2250 |
+| 10 | 0,2667 | 0,2414 |
+
+**Plana, sem tendencia monotona e sem colapso.** A cardinalidade do nivel do meio nao move a largura,
+porque o sorteio a tira do nivel das FOLHAS. Entao o efeito sobre o qual eu construi a guarda **nao
+existe**.
+
+**A guarda saiu** — classe, constante, chamada em `main()` e os dois testes —, e saiu porque o meu
+proprio critério manda: guarda sem consequencia medida e decoracao, e uma justificacao que era
+artefato nao vira frase mais fraca, vira frase nenhuma. O que sobra da unidade e o que a medicao de
+facto estabeleceu, e ficou na § 7:
+
+* **a ameaca de ATRIBUICAO nao existe** — nenhuma fatia e chaveada por familia, modelo ou effort;
+  `generatorExposure` tem dois valores. Isto vem de `slices.ts` e nao de fixture;
+* **a ameaca ao INTERVALO foi medida e REFUTADA**, com a tabela acima;
+* a divida volta a ser o **plano de cobertura** de modelo × effort, agora sem consumidor publicado
+  conhecido — o que a torna mais fraca do que ela se dizia, e vale registrar isso em vez de a deixar
+  a cobrar um dano que ninguem achou.
+
+**O que eu levo desta volta, e e diferente das outras.** As outras foram fixture complacente: a
+guarda existia e faltava adversario. Esta foi o inverso — o fixture PRODUZIU o efeito, eu li o efeito
+como propriedade do sistema, e escrevi codigo de producao para o defender. O sinal que eu ignorei
+estava a vista: o caso de piso tinha uma variavel a menos que os outros. Quando um ponto da curva e
+construido diferente dos outros, ele nao pertence a curva.
