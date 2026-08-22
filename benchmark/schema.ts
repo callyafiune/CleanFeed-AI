@@ -3267,13 +3267,15 @@ function assertLaneAgreement(
 
   const harness = groups.harnessVersion;
   if (laneRunsHarness(row)) {
-    // On a CLI lane `notApplicable` is REFUSED and `unknown` is ACCEPTED, and the
-    // difference is the whole of R6. The lane runs a harness binary that injects a
-    // system prompt, loops over tools, retries and post-processes, so its version
-    // is an input to the text: claiming the axis does not apply is a false
-    // statement about the lane, while stating the version was not recovered is a
-    // true statement with a price — the record becomes INELIGIBLE
-    // ({@link recordEligibility}) and is never given a synthesized version.
+    // Wherever a binary of OURS stands in the path, `notApplicable` is REFUSED and
+    // `unknown` is ACCEPTED, and the difference is the whole of R6. What that binary
+    // does to the text varies by channel — an agent CLI loops over tools, retries
+    // and post-processes; a local runtime applies the model's own chat template and
+    // the quantized weights it shipped — and in both the version is an input to the
+    // text. So claiming the axis does not apply is a false statement about the lane,
+    // while stating the version was not recovered is a true statement with a price:
+    // the record becomes INELIGIBLE ({@link recordEligibility}) and is never given a
+    // synthesized version.
     //
     // Refusing `unknown` here too would look stricter and be worse: it would push
     // a producer that genuinely did not capture the binary version toward writing
@@ -3281,7 +3283,7 @@ function assertLaneAgreement(
     // this schema exists to make impossible.
     if (harness.state === "notApplicable") {
       throw new BenchmarkRecordError(
-        `groups.harnessVersion must be known on the CLI lane "${lane}" (or unknown, which makes the record ineligible): the binary is an input to the text, so the axis does apply and is never synthesized`,
+        `groups.harnessVersion must be known on the "${row.channel}" lane "${lane}" (or unknown, which makes the record ineligible): the binary is an input to the text, so the axis does apply and is never synthesized`,
         id,
       );
     }
@@ -3307,9 +3309,14 @@ function assertLaneAgreement(
     );
   }
   if (effort.source !== "not-supported") {
-    if (effort.configurable !== row.effortConfigurable) {
+    // Configurability is a fact about THIS record's own source and never about the
+    // lane: "configurable" means the value was passed as an independent flag, which
+    // is exactly what `source: "flag"` says. The lane cannot decide it, because the
+    // same lane produces both forms — on `agy` the tier is in the model id for
+    // `gemini-3.7-flash-low` and in the flag for `gemini-3.1-pro`.
+    if (effort.configurable !== (effort.source === "flag")) {
       throw new BenchmarkRecordError(
-        `generation.effort.configurable must be ${String(row.effortConfigurable)} on the lane "${lane}"`,
+        `generation.effort.configurable must be ${String(effort.source === "flag")} for the source "${effort.source}": a configurable effort is one passed as a flag`,
         id,
       );
     }

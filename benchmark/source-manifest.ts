@@ -204,9 +204,9 @@ export interface GenerationBatchV1 {
    *
    * It was a required `number` until the C1 correction round, and that made the
    * recipe-identity comparison in benchmark/corpus-source-audit.ts UNSATISFIABLE
-   * for most of the v3 corpus. Three of the four frozen generation lanes (`agy`,
-   * `codex`, `gemini-cli`) are agent CLIs whose policy row sets
-   * `decodingConfigurable: false`, so a v3 record on those lanes has no
+   * for most of the v3 corpus. The CLI lanes — every frozen lane but `gemini-api`
+   * and `ollama` — set `decodingConfigurable: false` in their policy row, so a v3
+   * record on one of them has no
    * temperature field at all and `recipeTemperature` returns `null` BY
    * CONSTRUCTION; against a required number that comparison was `null ===
    * <number>` and always false. There was no way around it either: an axis class

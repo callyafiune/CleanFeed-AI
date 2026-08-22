@@ -283,9 +283,9 @@ describe("reviewed source manifest (closed schema)", () => {
   // C1 correction round — `temperature` gets the same pair `seed` already has,
   // for the same reason and it is the same class of fact.
   //
-  // A batch was required to declare a finite `temperature`, while three of the
-  // four frozen generation lanes (`agy`, `codex`, `gemini-cli`) are agent CLIs
-  // whose frozen policy row sets `decodingConfigurable: false` — they accept no
+  // A batch was required to declare a finite `temperature`, while the CLI lanes —
+  // every frozen lane but `gemini-api` and `ollama` — set
+  // `decodingConfigurable: false` in their policy row and accept no
   // sampling flag at all. So the reviewed batch of a CLI lane had to write down
   // a number that was never applied, and the record's side (`recipeTemperature`,
   // `null` on that lane BY CONSTRUCTION) could never equal it: the

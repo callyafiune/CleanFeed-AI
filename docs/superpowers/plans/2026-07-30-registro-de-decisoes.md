@@ -9798,3 +9798,96 @@ familia hoje: ao trocar a ficha na § 5.10 eu escrevi *"o `llama3:latest` que es
 o que E. Um `grep` pelo rotulo antigo pegou as duas ocorrencias dentro do meu proprio texto novo. A
 frase ficou atemporal: os dois tags sao explicitos porque `latest` e ponteiro movel e nao identifica
 pesos — regra, nao historia.
+
+### A forma da linha de lane: as seis lanes cabem, e a emenda encolheu de novo — para dentro (2026-08-21)
+
+O codex reprovou duas vezes a tentativa de acrescentar `ollama` e `claude-code` a pre-inscricao, e
+as duas recusas eram sobre a FORMA da linha de lane. Esta unidade emenda a forma; as lanes entram
+como consequencia, nao como pedido.
+
+**Os quatro itens, e cada um e uma frase que era falsa.**
+
+*(i) O canal separa duas coisas que estavam colapsadas.* `GenerationChannel` ganha
+`local-runtime`, e a razao nao e taxonomia: `laneRunsHarness` (o eixo `harnessVersion` aplica-se?)
+e `laneExposesDecoding` (os knobs de amostragem eram nossos?) sao **independentes**, e `ollama` e a
+lane onde as duas valem. Sob tres valores de canal a segunda era derivavel da primeira, entao
+declarar `api` perdia a versao do runtime e declarar `cli` perdia o `seed` — o unico campo que faz
+uma geracao reproduzivel. A tabela `[laneRunsHarness, laneExposesDecoding]` das seis lanes esta
+afirmada por teste, com uma lane em cada combinacao habitada.
+
+*(ii) A invariante de decoding passou a ser IGUALDADE contra o canal, nas duas direcoes.* Antes so
+a direcao "harness nao pode ter knobs" era conferida, enquanto o comentario ao lado afirmava as
+duas — comentario sem mutante, e a direcao que faltava e exactamente a que se usaria para forcar o
+`ollama` num canal existente. As duas direcoes agora tem teste nomeado.
+
+*(iii) `not-supported` e fato do REGISTRO.* A definicao textual dizia "a lane nao tem nocao de
+effort" e ja era falsa do agy, onde o arm dispara por modelo. Enfraquecida para "o controle nao
+existia no caminho que esta geracao tomou — a lane, o modelo, ou a forma de invocacao". O que ela
+**nao** licencia ficou escrito: nivel que se aplicou e nao foi anotado nao e `not-supported`, e sim
+proveniencia inventada. Com isso as 122 linhas da sessao interativa Anthropic ficam escreviveis.
+
+*(iv) Effort por MODELO, e o conserto foi RETIRAR um campo.* `effortConfigurable` era um booleano
+por lane para uma propriedade por modelo, e as duas respostas eram falsas — `false` deixava a fonte
+`flag` inabitavel, `true` invalidava 119 registros. O campo saiu da linha de lane, e `configurable`
+passa a ser derivado do REGISTRO: verdade exactamente quando a fonte e `flag`. Consequencia direta:
+`agy.effortSources` ganha `"flag"` sem criar arm inabitavel — a corrida que passa `--effort` num id
+base agora e gravavel, que era a divida —, e nenhum registro agy existente muda, porque
+`model-id` -> `configurable: false` continua sendo o que eles dizem. `effortLevels` passou a ser a
+escala COMPLETA: `codex` declara seis niveis, porque o campo sao os niveis da escala e uma lista de
+quatro e descricao falsa dela. O teto `low…xhigh` continua valendo como **plano de cobertura**, e
+essa e a troca: perdi o fail-closed acidental que recusava uma linha em `max`, e ganhei uma politica
+que nao mente sobre a escala. Quem quiser limitar a geracao limita no plano, nao no esquema.
+
+**Uma quinta coisa que eu apertei e nao estava na lista.** Lane sem escala oferece
+`not-supported` e **nada mais**, por igualdade — antes o codigo conferia inclusao enquanto a
+mensagem dizia "exactly". Toda outra fonte carrega nivel, nivel e conferido contra a escala da
+lane, e `null` nao iguala string nenhuma: entao oferecer `model-id` numa lane sem escala e oferecer
+um arm que nenhum registro pode ocupar. E a mesma familia de defeito que derrubou a minha emenda
+anterior, achada do outro lado.
+
+**As duas lanes, com o que a maquina diz.** `ollama`: canal `local-runtime`, knobs sim, sem escala
+de effort — as 400 linhas em disco gravam `temperature` 0.8, `seed` real e `harnessVersion`
+`ollama 0.32.6`. `claude-code`: canal `agent-cli`, knobs nao (a sessao nao expoe temperatura nem
+seed), escala `claude-code-effort` com os cinco niveis dos 20 pares invocados, fontes `flag` e
+`not-supported`. `PROVIDER_LANE` ganha `ollama` e `anthropic`, e o mapeamento de cada um tem teste
+que o carrega — o primeiro par que eu escrevi passava pela lane DECLARADA no fixture e deixava a
+entrada da tabela sem leitor: mutante sobreviveu verde, e foi assim que eu descobri.
+
+**Medicao que autoriza a frase mais forte desta unidade:** as **400 de 400** linhas do pool do
+ollama passam por `ai_record` e produzem registro v3 — lane `ollama`, `harnessVersion` conhecida,
+decoding configuravel com 0.8, seed 1637398500, effort `not-supported`. Antes, `UnmappableLane`
+recusava todas. Sobra **um** motivo de recusa, que e papel e nao forma: a familia
+`qwen2_5-7b-q4km` nao tem papel no slate.
+
+**A bateria: nove mutacoes, nove vermelhas no teste nomeado, nove restauradas com sha256
+identico.** M1 invariante de decoding perde a direcao nova; M2 regra da lane sem escala volta a
+inclusao; M3 `effortConfigurable` volta a ser chave de politica; M4 escada do codex perde `ultra`;
+M5 `ollama` declarado no canal `api` (quatro vermelhos, entre eles a perda da versao do runtime);
+M6 `claude-code` deixa de oferecer `not-supported`; M7 configurabilidade lida da lane outra vez;
+P1 `ollama` fora de `PROVIDER_LANE`; P1b `anthropic` fora dela. **Uma sobreviveu verde e virou
+achado**: P1 na primeira volta, pelo fixture declarar a lane.
+
+**Frases falsas que as duas lanes criariam, procuradas e emendadas** — dez sitios, todos com a
+forma "as quatro lanes congeladas" ou "gemini-api e a unica com knobs": `corpus-source-audit.ts`,
+`source-manifest.ts`, tres em `tests/corpus-source-audit.test.ts`, `tests/source-manifest.test.ts`,
+o fixture v3, `assemble_corpus.py` (`UnmappableLane`, `seed_pair`, `harness_axis`),
+`diagnostic_probes.py`, `generate_ai.py`, `lab/README.md` e dois testes do lab. O comentario de
+`generate_ai.py` que dizia que a lane do Claude Code "a politica congelada ainda nao carrega" era o
+mais direto: passou a nomear a lane e a dizer por que este script nao a dirige — chamada de
+subagente nao e subprocesso.
+
+**Onde a § 5.10 mentia por omissao.** Ela abria com "nada aqui e congelado no repositorio". Agora
+metade e: a FORMA (canal, nome da escala, niveis, fontes) e congelada e lida por `schema.ts` e pelo
+montador; os ROSTERS continuam de fora e movendo-se. A secao passou a trazer a tabela das seis
+linhas de lane vigentes, que e o que o codigo le.
+
+**Fechamento medido:** vitest 172 / 3.114 e lab 740 / 742, verdes em rodada quieta e sozinha.
+`SEALED_POLICY_SHA256` repinado e os **tres** pinos de bytes de `test_backbone_policy.py` tambem
+(12.070 -> 12.506 no arquivo rastreado, 12.294/12.295 -> 12.730/12.731 na reserializacao por
+Python). `evaluatorDigest` republicado na § 5.6. `docs:check` OK, tsc limpo, lint nos 12
+pre-existentes, `format:check` no unico vermelho herdado (`consume-holdout.test.ts`), `git ls-files
+--eol | grep w/crlf` vazio.
+
+**O que esta unidade NAO faz, e fica dito para nao ser lido como feito:** nao da papel a familia
+nenhuma (`OOD_RESERVED_FAMILIES` continua nas duas OpenAI, e a reserva do slate ainda contradiz a
+reserva ratificada), e nao escreve pista de geracao nenhuma. As duas sao as unidades seguintes.

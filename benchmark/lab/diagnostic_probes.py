@@ -683,8 +683,8 @@ def probe_lanes(rows: Iterable[dict]) -> dict:
 def _lane_of_row(row: dict) -> str | None:
     """The row's frozen generation lane, or None when it names no lane at all.
 
-    None is reachable only from a POOL row: `--provider` is restricted to the four frozen
-    lanes in the argparse and the assembly drops a generated row it cannot map
+    None is reachable only from a POOL row: `--provider` is restricted in the argparse to
+    the lanes generate_ai.py drives and the assembly drops a generated row it cannot map
     (`UnmappableLane`), so an assembled `ai` row always has one — which is why
     `rowsWithoutALane` is reported instead of being asserted away. A non-zero count over
     an assembled corpus is a defect, and over the pools it is the 237 rows the assembly

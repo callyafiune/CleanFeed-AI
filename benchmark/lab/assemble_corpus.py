@@ -709,10 +709,10 @@ POOL_GENERATOR_FAMILIES = {
 # whose whole point is that the pools carry a temperature no lane ever applied is
 # how it gets picked back up.
 SEED_NULL_REASON = "provider API does not expose a sampling seed"
-# The other half of the same pair, on the axis where an agent-CLI lane genuinely
-# applies nothing: `agy`, `codex` and `gemini-cli` take no sampling flag at all
-# (preregistration-v4.json, `decodingConfigurable: false`), so a batch of one of
-# those lanes must say that instead of a number nothing applied.
+# The other half of the same pair, on the axis where a CLI lane genuinely applies
+# nothing: every lane whose row sets `decodingConfigurable: false`
+# (preregistration-v4.json) takes no sampling flag at all, so a batch of one of them
+# must say that instead of a number nothing applied.
 TEMPERATURE_NULL_REASON = "agent-CLI lane: the binary accepts no sampling flag"
 # The mixed cohort this lane produces. The frozen contract
 # (benchmark/preregistration-v4.json, `materialAssistance.generationMode`) closes
@@ -907,13 +907,14 @@ class UnwritableInV3(ValueError):
 
 
 class UnmappableLane(UnwritableInV3):
-    """The record's provider is not one of the four frozen generation lanes.
+    """The record's provider maps to no frozen generation lane.
 
     Its own type because the correct handling is to DROP the record, not to abort
-    the assembly: the pools hold rows from providers that predate the frozen lane
-    table (`anthropic`, `openai`), and `groups.generationLane` must be `known` on
-    every `ai` row. A lane cannot be added here to accommodate them — the four are
-    frozen — and naming one they never ran on would be invented provenance (R4).
+    the assembly: the pools hold rows from providers the frozen lane table does not
+    name (`openai`, the router corpora), and `groups.generationLane` must be `known`
+    on every `ai` row. The table is not extensible from here — the lane vocabulary is
+    sealed in the pre-registration — and naming a lane a row never ran on would be
+    invented provenance (R4).
     """
 
 
@@ -1059,10 +1060,12 @@ class UndecidedDocumentLicense(RuntimeError):
 # binary generate_ai.py calls `agy`, which is why both map onto one lane.
 PROVIDER_LANE = {
     "agy": "agy",
+    "anthropic": "claude-code",
     "antigravity": "agy",
     "codex": "codex",
     "gemini": "gemini-api",
     "gemini_cli": "gemini-cli",
+    "ollama": "ollama",
 }
 
 
@@ -1107,7 +1110,7 @@ def lane_of(provider: str, declared: str | None = None) -> str:
     if lane not in LANE_ROWS:
         raise UnmappableLane(
             f"provider {provider!r} (declared lane {declared!r}) is not one of the "
-            f"four frozen generation lanes {sorted(LANE_ROWS)}. The record cannot "
+            f"frozen generation lanes {sorted(LANE_ROWS)}. The record cannot "
             "name a lane it never ran on, so it leaves the corpus"
         )
     return lane
@@ -1165,13 +1168,12 @@ def effort_config(lane: str, meta: dict) -> dict:
     "medium" off a suffix would record a source the run never consulted — the invented
     identity R6 forbids.
 
-    WHAT IS NOT RECORDABLE, and the residue is a shape and not a value: on a BASE
-    model id the flag IS the source, and no row of this lane can say so. The lane row
-    carries one boolean for a property that is per-model, `schema.ts` refuses
-    `source: "flag"` while `configurable` is false, and flipping the boolean would
-    make every agy record already written invalid. So a run that passed `--effort`
-    has to be recorded as the model-id form or not at all, and a lane row that
-    distinguished per-model effort is the only thing that fixes it.
+    CONFIGURABILITY IS READ OFF THE SOURCE and never off the lane. "Configurable"
+    means the value was passed as an independent flag, which is exactly what
+    `source: "flag"` says, and one lane writes both forms — the flag on a base id,
+    the model id where the tier is embedded. A per-lane boolean for a per-model
+    property has only false answers, so the lane row carries none and this derives
+    it; `schema.ts` refuses any record where the two disagree.
 
     The `not-supported` arm is only available on a lane whose frozen row offers it.
     `codex` does not: its `effortSources` are `flag` and `provider-default`, and both
@@ -1186,9 +1188,9 @@ def effort_config(lane: str, meta: dict) -> dict:
     if level and source:
         return {
             "source": str(source),
-            "configurable": bool(row["effortConfigurable"]),
+            "configurable": str(source) == "flag",
             # The scale comes from the LANE, not from the record: effort is not
-            # comparable across providers (codex reaches xhigh, agy stops at high),
+            # comparable across providers (codex reaches ultra, agy stops at high),
             # so a level without its own lane's scale would read as a shared ordinal.
             "scale": str(row["effortScale"]),
             "level": str(level),
@@ -1207,16 +1209,20 @@ def harness_axis(lane: str, meta: dict) -> dict:
     """`groups.harnessVersion` — the CLI binary that is an input to the text.
 
     Three-way and the difference is the whole of R6. On an API lane there is no
-    harness, so `notApplicable` is TRUE. On a CLI lane the binary injects a system
-    prompt, loops over tools, retries and post-processes, so its version is an input
-    to the text: `notApplicable` there would be a false statement about the lane, and
-    a synthesized version string would be a false statement about the world. What is
+    binary of ours, so `notApplicable` is TRUE. Everywhere else there is one — an
+    agent CLI that injects a system prompt, loops over tools, retries and
+    post-processes, or a local runtime that applies the model's own chat template to
+    the quantized weights it shipped — and its version is an input to the text:
+    `notApplicable` there would be a false statement about the lane, and a
+    synthesized version string would be a false statement about the world. What is
     left is `unknown` — true, and priced at the record's eligibility.
 
-    The pools on disk all take the `unknown` arm, because generate_ai.py did not
-    capture the binary version until this task added it. That is a measured cost of
-    the v2 generation runs and not something to paper over: those records are
-    ineligible until they are regenerated.
+    MEASURED, by provider, over the declared pools: `ollama` records the version on
+    400 of 400 rows and every other harness provider on 0 of its own. So the
+    `unknown` arm is what the v2 generation runs cost — those records are ineligible
+    until they are regenerated — and the reserve's positives floor, which
+    `countsTowardHeldOutFloor` filters by eligibility, is reachable only from the
+    lane that captured it.
     """
     row = LANE_ROWS[lane]
     if row["channel"] == "api":
@@ -1247,10 +1253,12 @@ def seed_pair(meta: dict) -> dict:
     write `seed: ""` and be refused by `nonEmptyString` anyway — loudly, which is
     fine, but at the cost of a full assembly run to discover.
 
-    Defaulting fills in the REASON and never the seed, which is the safe half: no
-    provider on any of the four frozen lanes exposes a sampling seed, so for a row
-    that recorded neither, "there was no seed" is a fact about the lane rather than a
-    guess about the row.
+    Defaulting fills in the REASON and never the seed, which is the safe half. It is
+    also the half that narrowed: the `ollama` lane DOES expose a seed and its rows
+    record one, so "there was no seed" stopped being a fact about every lane. It
+    remains true of the rows that take this branch, which are the ones whose pool
+    recorded no seed on a lane that offers none — and a seed invented for them would
+    claim the text can be regenerated.
     """
     seed = meta.get("seed")
     if seed:

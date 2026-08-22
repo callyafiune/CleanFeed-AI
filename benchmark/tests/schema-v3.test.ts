@@ -34,6 +34,7 @@ import {
   v3Ai,
   v3ApiAi,
   v3EvidenceIndex,
+  v3LocalRuntimeAi,
   v3Human,
   v3Mixed,
   v3MixedEcological,
@@ -466,7 +467,9 @@ describe("v3 generation records the lane, the harness and the effort", () => {
       validateBenchmarkRecordV3(
         withAxis(v3Ai(), "harnessVersion", notApplicable("not recorded")),
       ),
-    ).toThrow(/groups\.harnessVersion must be known on the CLI lane "agy"/u);
+    ).toThrow(
+      /groups\.harnessVersion must be known on the "agent-cli" lane "agy"/u,
+    );
     // ...while `unknown` is a true statement that costs the record its
     // eligibility. Refusing that one too would push a producer who did not capture
     // the binary version toward writing `notApplicable` to get the row accepted,
@@ -594,6 +597,38 @@ describe("v3 generation records the lane, the harness and the effort", () => {
     );
   });
 
+  it("admits a versioned local runtime that carries a harness version AND a seed", () => {
+    const record = validateBenchmarkRecordV3(v3LocalRuntimeAi());
+    expect(record.groups.harnessVersion).toEqual(known("ollama_0_32_6"));
+    expect(record.generation?.decoding).toEqual({
+      configurable: true,
+      strategy: null,
+      temperature: 0.8,
+      topP: null,
+      repetitionPenalty: null,
+    });
+    expect(record.generation?.seed).toBe("1637398500");
+    // Eligible, which is the consequence that matters: the reserve's positives
+    // floor is filtered by eligibility, and an `unknown` harness would forfeit it.
+    expect(recordEligibility(record).eligible).toBe(true);
+  });
+
+  it("refuses a local-runtime record that waives the harness axis it does apply to", () => {
+    // The failure the `api` channel would have produced if `ollama` had been
+    // declared there: the runtime version stops being an input to the text.
+    expect(() =>
+      validateBenchmarkRecordV3(
+        withAxis(
+          v3LocalRuntimeAi(),
+          "harnessVersion",
+          notApplicable("local runtime"),
+        ),
+      ),
+    ).toThrow(
+      /groups\.harnessVersion must be known on the "local-runtime" lane "ollama"/u,
+    );
+  });
+
   it("refuses an effort with no scale", () => {
     expect(() =>
       validateBenchmarkRecordV3(
@@ -622,7 +657,24 @@ describe("v3 generation records the lane, the harness and the effort", () => {
   });
 
   it("refuses an effort source the lane does not offer", () => {
+    // `provider-default` and not `flag`: the agy row offers `flag`, because the
+    // binary takes `--effort` on a base model id, and the pair below asserts both
+    // halves so the refusal cannot be read as "agy has no flag".
     expect(() =>
+      validateBenchmarkRecordV3(
+        withGeneration(v3Ai(), {
+          effort: {
+            source: "provider-default",
+            configurable: false,
+            scale: "agy-model-id-tier",
+            level: "high",
+          },
+        }),
+      ),
+    ).toThrow(
+      /generation\.effort\.source "provider-default" is not offered by the lane/u,
+    );
+    expect(
       validateBenchmarkRecordV3(
         withGeneration(v3Ai(), {
           effort: {
@@ -632,8 +684,68 @@ describe("v3 generation records the lane, the harness and the effort", () => {
             level: "high",
           },
         }),
+      ).generation?.effort,
+    ).toEqual({
+      source: "flag",
+      configurable: true,
+      scale: "agy-model-id-tier",
+      level: "high",
+    });
+  });
+
+  it("derives effort configurability from the record's own source, not from its lane", () => {
+    // The same lane writes both forms, which is why no per-lane boolean can decide
+    // it: `model-id` on agy is not configurable and `flag` on agy is, and the
+    // mismatch is refused in BOTH directions.
+    expect(() =>
+      validateBenchmarkRecordV3(
+        withGeneration(v3Ai(), {
+          effort: {
+            source: "model-id",
+            configurable: true,
+            scale: "agy-model-id-tier",
+            level: "high",
+          },
+        }),
       ),
-    ).toThrow(/generation\.effort\.source "flag" is not offered by the lane/u);
+    ).toThrow(
+      /generation\.effort\.configurable must be false for the source "model-id"/u,
+    );
+  });
+
+  it("admits a claude-code record whose run exposed no effort control", () => {
+    // The 122 rows the interactive Anthropic session wrote recorded no level, and
+    // `not-supported` is the arm that states that without inventing one. The lane
+    // also offers `flag`, so the arm is a fact about the RECORD and not about the
+    // lane — which is the reading that makes both writable.
+    const interactive = withGeneration(
+      withAxis(v3Ai(), "generationLane", known("claude-code")),
+      {
+        provider: "anthropic",
+        effort: { source: "not-supported", configurable: false },
+      },
+    );
+    expect(validateBenchmarkRecordV3(interactive).generation?.effort).toEqual({
+      source: "not-supported",
+      configurable: false,
+    });
+    expect(
+      validateBenchmarkRecordV3(
+        withGeneration(interactive, {
+          effort: {
+            source: "flag",
+            configurable: true,
+            scale: "claude-code-effort",
+            level: "max",
+          },
+        }),
+      ).generation?.effort,
+    ).toEqual({
+      source: "flag",
+      configurable: true,
+      scale: "claude-code-effort",
+      level: "max",
+    });
   });
 
   it("refuses an effort level outside the lane's own scale", () => {

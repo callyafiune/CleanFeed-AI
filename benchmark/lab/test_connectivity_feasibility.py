@@ -3481,7 +3481,7 @@ class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
         in-process da casa. Chamar `island_plan` direto mede a funcao e nada sobre a ordem —
         ficaria verde com a chamada da guarda depois da geracao. As duas assercoes que separam
         "recusou" de "recusou ANTES" sao os `assert_not_called` de `call_provider`, funil unico
-        das quatro lanes, e de `harness_version`, o primeiro toque no binario do provedor.
+        das lanes que este script dirige, e de `harness_version`, o primeiro toque no binario.
         """
         import contextlib
         import io

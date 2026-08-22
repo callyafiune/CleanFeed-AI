@@ -13,6 +13,7 @@ import {
 } from "../metrics.ts";
 import {
   derivedHumanLinesTotal,
+  laneExposesDecoding,
   laneRunsHarness,
   parsePreregistrationV4,
   PREREGISTRATION_V4,
@@ -558,12 +559,58 @@ describe("preregistration-v4.json", () => {
   });
 
   it("derives the harness requirement from the channel, in one place", () => {
-    for (const [lane, row] of Object.entries(
-      PREREGISTRATION_V4.generationLanes,
-    )) {
+    for (const row of Object.values(PREREGISTRATION_V4.generationLanes)) {
       expect(laneRunsHarness(row)).toBe(row.channel !== "api");
-      expect(row.decodingConfigurable).toBe(lane === "gemini-api");
+      expect(row.decodingConfigurable).toBe(laneExposesDecoding(row));
     }
+  });
+
+  // The two facts the channel decides are INDEPENDENT, and the table is the proof:
+  // one lane has a harness and no knobs, one has knobs and no harness, and one has
+  // both. Deriving either predicate from the other is what made `ollama` unwritable.
+  it("keeps the harness fact and the decoding fact independent across the lanes", () => {
+    const observed = Object.fromEntries(
+      Object.entries(PREREGISTRATION_V4.generationLanes).map(([lane, row]) => [
+        lane,
+        [laneRunsHarness(row), laneExposesDecoding(row)],
+      ]),
+    );
+    expect(observed).toEqual({
+      agy: [true, false],
+      "claude-code": [true, false],
+      codex: [true, false],
+      "gemini-api": [false, true],
+      "gemini-cli": [true, false],
+      ollama: [true, true],
+    });
+  });
+
+  // The scale is the lane's whole ladder and not the slice a coverage plan uses:
+  // a level the provider really accepts must not be refused as outside the scale.
+  it("declares the complete effort ladder of every scale it names", () => {
+    const lanes = PREREGISTRATION_V4.generationLanes;
+    expect(lanes.codex.effortLevels).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
+    expect(lanes["claude-code"].effortLevels).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(lanes.agy.effortLevels).toEqual(["low", "medium", "high"]);
+    // No lane may reuse another's scale name: the name is the join key
+    // `compareEffortWithinScale` resolves levels through.
+    const scales = Object.values(lanes)
+      .map((row) => row.effortScale)
+      .filter((scale): scale is string => scale !== null);
+    expect(new Set(scales).size).toBe(scales.length);
   });
 });
 
@@ -572,6 +619,77 @@ describe("parsePreregistrationV4 fails closed", () => {
     expect(parsePreregistrationV4(validPolicyObject())).toEqual(
       PREREGISTRATION_V4,
     );
+  });
+
+  // The lane block, which is the one place the two channel facts can be written so
+  // that they contradict the channel that decides them. Each mutation is a value a
+  // hand edit would reach for while adding a lane.
+  function withLane(
+    lane: string,
+    fields: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const policy = validPolicyObject();
+    const lanes = policy.generationLanes as Record<
+      string,
+      Record<string, unknown>
+    >;
+    lanes[lane] = { ...lanes[lane], ...fields };
+    return policy;
+  }
+
+  it("refuses sampling knobs on a channel that exposes none", () => {
+    expect(() =>
+      parsePreregistrationV4(withLane("agy", { decodingConfigurable: true })),
+    ).toThrow(/generationLanes\.agy\.decodingConfigurable/u);
+  });
+
+  it("refuses a channel whose exposed knobs the row denies", () => {
+    // The direction the previous rule left unguarded, and the one that would have
+    // been used to squeeze `ollama` into an existing channel: denying the knobs
+    // discards the `seed`, the one field that makes a generation reproducible.
+    expect(() =>
+      parsePreregistrationV4(
+        withLane("ollama", { decodingConfigurable: false }),
+      ),
+    ).toThrow(
+      /generationLanes\.ollama\.decodingConfigurable must be true on the "local-runtime" channel/u,
+    );
+  });
+
+  it("refuses a channel outside the frozen vocabulary", () => {
+    expect(() =>
+      parsePreregistrationV4(withLane("ollama", { channel: "local-server" })),
+    ).toThrow(/generationLanes\.ollama\.channel/u);
+  });
+
+  it("refuses an effort source no record of a scale-less lane could occupy", () => {
+    // The uninhabitable arm: every source but `not-supported` carries a level, and a
+    // level is checked against the lane's scale, which here is `null`. Offering one
+    // reads as a capability and is none.
+    expect(() =>
+      parsePreregistrationV4(
+        withLane("ollama", { effortSources: ["not-supported", "model-id"] }),
+      ),
+    ).toThrow(/generationLanes\.ollama\.effortScale/u);
+  });
+
+  it("refuses a lane dropped from the frozen vocabulary", () => {
+    const policy = validPolicyObject();
+    const lanes = { ...(policy.generationLanes as Record<string, unknown>) };
+    delete lanes.ollama;
+    policy.generationLanes = lanes;
+    expect(() => parsePreregistrationV4(policy)).toThrow(
+      /generationLanes\.ollama is missing/u,
+    );
+  });
+
+  it("refuses a lane row carrying the retired per-lane effort boolean", () => {
+    // Closed key set, and this is the key it closes against: a reinstated
+    // `effortConfigurable` would be a per-lane answer to a per-model question, and
+    // it would sit beside the per-record derivation without either one yielding.
+    expect(() =>
+      parsePreregistrationV4(withLane("codex", { effortConfigurable: true })),
+    ).toThrow(/generationLanes\.codex/u);
   });
 
   it("rejects a non-object", () => {

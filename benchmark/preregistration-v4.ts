@@ -199,7 +199,8 @@ export type CalibratorKind = "platt" | "beta" | "isotonic";
 
 /**
  * The channel a generated record's text came OUT of. Not a synonym for the
- * provider: three of the four core families are served by ONE agent CLI (`agy`), so
+ * provider: one lane serves families of more than one vendor (`agy` carries Gemini
+ * and open weights) and one vendor is reachable through more than one lane, so
  * provider and channel vary independently.
  *
  * A CLI is a HARNESS: it injects a system prompt of its own, has a binary version,
@@ -208,26 +209,36 @@ export type CalibratorKind = "platt" | "beta" | "isotonic";
  * tell an authentication failure apart from the model's own prose, which is proof
  * that the harness leaves a mark on the text.
  *
- * The risk this exists to make visible: `agy` serves 3 of 4 core families and is
- * ABSENT from the OOD family, so a detector that learned the harness signature
- * instead of the generator's would fail the OOD family for the wrong reason, and the
- * report would attribute the drop to "unseen generator" when the cause was "unseen
- * harness".
+ * The risk this exists to make visible: a lane that carries core families and no
+ * reserved one lets a detector learn the HARNESS signature instead of the
+ * generator's, and then the reserved family fails for the wrong reason — the report
+ * would attribute the drop to "unseen generator" when the cause was "unseen
+ * harness". The lane is recorded so the two can be told apart.
  */
-export type GenerationLane = "agy" | "codex" | "gemini-api" | "gemini-cli";
+export type GenerationLane =
+  "agy" | "claude-code" | "codex" | "gemini-api" | "gemini-cli" | "ollama";
 
 /**
- * WHAT KIND of channel a lane is, and therefore whether a harness binary stands
- * between the prompt and the text.
+ * WHAT KIND of channel a lane is. Two independent facts hang off it, and the
+ * vocabulary exists to keep them independent: whether a versioned binary of ours
+ * stands between the prompt and the text ({@link laneRunsHarness}), and whether the
+ * sampling knobs are in our hands ({@link laneExposesDecoding}).
  *
- *   * `agent-cli` — a CLI that loops over tools and post-processes (`agy`, `codex`).
+ *   * `agent-cli` — a CLI that loops over tools and post-processes (`agy`, `codex`,
+ *     `claude-code`).
  *   * `cli` — a CLI wrapper around one call (`gemini-cli`).
  *   * `api` — a direct HTTP call, no binary of ours in the path.
+ *   * `local-runtime` — a local inference server we run and whose version we read
+ *     (`ollama`). The transport is a direct call, so `temperature` and a real
+ *     `seed` are ours to pass; the runtime is a binary of ours, so its version is
+ *     an input to the text.
  *
- * `harnessVersionRequired` is NOT a field: it is `channel !== "api"`, derived in one
- * place ({@link laneRunsHarness}) so the two facts cannot disagree.
+ * `local-runtime` is not a fourth flavour of CLI and not an API with extra fields:
+ * it is the combination the other three cannot express, and the two predicates
+ * below are the separation. Reading either fact off `channel !== "api"` alone is
+ * what conflated them.
  */
-export type GenerationChannel = "agent-cli" | "cli" | "api";
+export type GenerationChannel = "agent-cli" | "cli" | "api" | "local-runtime";
 
 /**
  * WHERE a recorded reasoning-effort value came from. Without this, a recorded
@@ -236,16 +247,25 @@ export type GenerationChannel = "agent-cli" | "cli" | "api";
  *
  *   * `model-id` — the effort IS the model identifier (`gemini-3.5-flash-medium`).
  *   * `flag` — an independent flag we passed (`codex`'s `model_reasoning_effort`).
- *   * `not-supported` — the lane has no notion of effort at all.
+ *   * `not-supported` — no effort value applied to THIS generation, because the
+ *     control did not exist in the path it took: the lane has none at all, or the
+ *     model it ran refuses one, or the invocation form exposed none.
  *   * `provider-default` — the provider applied a tier we did not choose, and we
  *     observed which one.
  *
- * Measured by direct probing of `agy` on 2026-07-27: `--effort` is NOT supported on
- * `claude-sonnet-4-6` or `claude-opus-4-6-thinking`, and CONFLICTS with models whose
- * id embeds the tier (`gpt-oss-120b-medium`, `gemini-3.1-pro-high`). So on the `agy`
- * lane the effort either IS the model id or does not exist — never an independent
- * flag. Where it is real is `codex` (`model_reasoning_effort`, which accepts up to
- * `xhigh`).
+ * `not-supported` is a statement about the RECORD and not about the lane, and the
+ * weaker reading is the measured one: on `agy`, `--effort` is refused on
+ * `claude-sonnet-4-6` and on `claude-opus-4-6-thinking` while `gemini-3.1-pro`
+ * accepts `low` and `high` and refuses `medium`, so the arm fires per model on a
+ * lane whose other models carry a level. What it does NOT license is a level that
+ * applied and was not written down: the arm says the control was absent, so using
+ * it for an unrecorded value would be the invented provenance R6 forbids.
+ *
+ * The other measured fact about `agy`, since it decided the shape of this union: the
+ * id-tier form and the `--effort` flag are checked for CONSISTENCY and are not
+ * exclusive — `--model gemini-3.5-flash-low --effort high` exits with "conflicts
+ * with" and `--model gemini-3.5-flash-low --effort low` runs. So a lane may offer
+ * both `model-id` and `flag`, and the record says which one applied.
  */
 export type EffortSource =
   "model-id" | "flag" | "not-supported" | "provider-default";
@@ -255,26 +275,61 @@ export type EffortSource =
  * reports effort.
  *
  * `effortScale` is nullable and is NOT decoration: `effort` is not comparable across
- * providers (`codex` reaches `xhigh`, `agy` stops at `high`), so a level is
+ * providers (`codex` reaches `ultra`, `agy` stops at `high`), so a level is
  * meaningless without the scale it was measured on. The scale is named per lane here
  * and stored beside every recorded level, and `compareEffortWithinScale` in
  * benchmark/schema.ts refuses a cross-scale comparison.
+ *
+ * WHAT THIS ROW MAY NOT CARRY, and it is the reason the row has no
+ * `effortConfigurable` boolean: reasoning effort is a property of the MODEL and of
+ * the invocation, not of the lane. On `agy` the flag is real on a base id and
+ * refused on a Claude id; on `codex` the ladder stops at `xhigh` for `gpt-5.4` and
+ * reaches `ultra` for `gpt-5.6-sol`. A per-lane boolean for a per-model property has
+ * only false answers: `false` makes the `flag` source uninhabitable (benchmark/
+ * schema.ts refuses `source: "flag"` with `configurable: false`), and `true`
+ * invalidates every record already written under the other source. So the lane
+ * declares the union of sources it can produce and the SCALE those levels live on,
+ * and configurability is derived per record from its own `source`.
  */
 export interface GenerationLaneRow {
   readonly channel: GenerationChannel;
-  /** False on every CLI lane: a CLI accepts no `temperature`/`top_p`. */
+  /**
+   * Whether the sampling knobs were ours to pass. Decided by the channel and
+   * checked against it for equality ({@link laneExposesDecoding}): a CLI takes no
+   * `temperature`/`top_p`, a direct call and a local runtime do. It stays a written
+   * field rather than a derivation because the assembler reads the sealed JSON from
+   * Python, where the predicate above does not exist.
+   */
   readonly decodingConfigurable: boolean;
-  /** True only where effort is an independent flag, i.e. only on `codex`. */
-  readonly effortConfigurable: boolean;
   readonly effortScale: string | null;
-  /** The levels of `effortScale`, in increasing order. Empty iff no scale. */
+  /**
+   * The levels OF `effortScale`, in increasing order — the whole scale and not the
+   * subset a coverage plan happens to use. Empty iff no scale. A short list here is
+   * not a ceiling, it is a false description of the scale: the level a record
+   * carries is checked for membership, so a scale declared short refuses a level
+   * that really exists.
+   */
   readonly effortLevels: readonly string[];
   readonly effortSources: readonly EffortSource[];
 }
 
-/** Does this lane put a harness binary between the prompt and the text? */
+/**
+ * Does the `harnessVersion` axis apply on this lane — is there a versioned binary of
+ * ours between the prompt and the text? True on every channel but `api`, which is
+ * the one with nothing of ours in the path.
+ */
 export function laneRunsHarness(row: GenerationLaneRow): boolean {
   return row.channel !== "api";
+}
+
+/**
+ * Were the sampling knobs (`temperature`, `top_p`, and on a local runtime a real
+ * `seed`) ours to pass on this lane? Independent of {@link laneRunsHarness}, and
+ * `local-runtime` is the lane where both are true — which is why neither may be
+ * derived from the other.
+ */
+export function laneExposesDecoding(row: GenerationLaneRow): boolean {
+  return row.channel === "api" || row.channel === "local-runtime";
 }
 
 /**
@@ -1865,18 +1920,19 @@ const FROZEN_BACKBONE = "neuralmind/bert-base-portuguese-cased";
 const FROZEN_ONNX_MAXIMUM_INT8_BYTES = 130_000_000;
 
 // The lane names, frozen as a SET (the JSON block is keyed by them, and object key
-// order is not a decision the way a list's is). Four lanes: one API and three CLIs,
-// which is exactly the confounding the row exists to expose.
+// order is not a decision the way a list's is). One API lane, four CLI lanes and one
+// local runtime, which is exactly the confounding the row exists to expose.
 const FROZEN_GENERATION_LANES: readonly GenerationLane[] = [
   "agy",
+  "claude-code",
   "codex",
   "gemini-api",
   "gemini-cli",
+  "ollama",
 ];
 const LANE_ROW_KEYS = [
   "channel",
   "decodingConfigurable",
-  "effortConfigurable",
   "effortLevels",
   "effortScale",
   "effortSources",
@@ -1885,6 +1941,7 @@ const GENERATION_CHANNELS: readonly GenerationChannel[] = [
   "agent-cli",
   "cli",
   "api",
+  "local-runtime",
 ];
 const EFFORT_SOURCES: readonly EffortSource[] = [
   "model-id",
@@ -1930,6 +1987,12 @@ function member<T extends string>(
 // `--effort` is refused on `claude-sonnet-4-6` and on `claude-opus-4-6-thinking`. So
 // one lane legitimately produces records under both sources, and it is the RECORD
 // that must say which one applies to it.
+//
+// A scale-less lane offers `not-supported` and NOTHING ELSE, and the equality is not
+// tidiness: every other source carries a level, benchmark/schema.ts refuses a level
+// whose `scale` is not the lane's, and a null scale equals no string. So a
+// scale-less lane offering `model-id` offers an arm no record can ever occupy —
+// the uninhabitable option, which reads as a capability and is none.
 function laneRow(value: unknown, path: string): GenerationLaneRow {
   const row = object(value, path, LANE_ROW_KEYS);
   const scale =
@@ -1944,16 +2007,15 @@ function laneRow(value: unknown, path: string): GenerationLaneRow {
     "effortSources",
     EFFORT_SOURCES,
   ) as readonly EffortSource[];
-  if (scale === null && !sources.includes("not-supported")) {
+  if (scale === null && sources.join(",") !== "not-supported") {
     throw new PreregistrationV4Error(
       at(path, "effortScale"),
-      'is null, so effortSources must be exactly ["not-supported"]',
+      'is null, so effortSources must be exactly ["not-supported"]: every other source carries a level, and a level needs the scale this row does not have',
     );
   }
   return Object.freeze({
     channel: member(row, path, "channel", GENERATION_CHANNELS),
     decodingConfigurable: boolean(row, path, "decodingConfigurable"),
-    effortConfigurable: boolean(row, path, "effortConfigurable"),
     effortScale: scale,
     effortLevels: levels,
     effortSources: sources,
@@ -1992,20 +2054,19 @@ function generationLanes(value: unknown): {
     }
     rows[lane] = laneRow(block[lane], `generationLanes.${lane}`);
   }
-  // A harness lane whose decoding is configurable, or an API lane whose decoding is
-  // not, would contradict the measurement the row records.
+  // Decoding is decided by the CHANNEL and checked against it, in both directions:
+  // a row that claims knobs its channel does not expose describes a temperature
+  // nothing applied, and a row that denies knobs its channel does expose throws away
+  // the `seed` that is the one field making a generation reproducible. The rule is
+  // over the channel and NOT over `laneRunsHarness`, because `local-runtime` runs a
+  // versioned binary AND exposes the knobs — deriving one from the other is what
+  // made that combination unwritable.
   for (const lane of FROZEN_GENERATION_LANES) {
     const row = rows[lane];
-    if (laneRunsHarness(row) && row.decodingConfigurable) {
+    if (row.decodingConfigurable !== laneExposesDecoding(row)) {
       throw new PreregistrationV4Error(
         `generationLanes.${lane}.decodingConfigurable`,
-        "must be false on a lane that runs a harness: a CLI accepts no temperature or top_p",
-      );
-    }
-    if (row.effortConfigurable && !row.effortSources.includes("flag")) {
-      throw new PreregistrationV4Error(
-        `generationLanes.${lane}.effortConfigurable`,
-        'is true, so effortSources must offer "flag": a configurable effort is one passed as a flag',
+        `must be ${String(laneExposesDecoding(row))} on the "${row.channel}" channel: a CLI accepts no temperature or top_p, while a direct call and a local runtime do`,
       );
     }
   }

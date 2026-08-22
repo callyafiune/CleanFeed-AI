@@ -439,10 +439,10 @@ export const API_LANE_NO_HARNESS = "the gemini-api lane runs no harness binary";
  * different statement from "this lane has no such knob" and is why the field is
  * required-and-nullable on the `configurable: true` branch.
  *
- * `gemini-api` is the ONLY lane whose frozen policy row sets
- * `decodingConfigurable: true`, so it is the only shape in which a v3 record can
- * carry a temperature at all. Every sampling parameter on that branch is
- * required, so all four are written.
+ * `gemini-api` is the only lane whose frozen row pairs `decodingConfigurable: true`
+ * with a `notApplicable` harness — the local runtime carries both, which is what
+ * {@link v3LocalRuntimeAi} is for. Every sampling parameter on the
+ * `configurable: true` branch is required, so all four are written.
  *
  * It lives here rather than in a test file because two files need it — schema-v3
  * (the accessor's own contract) and corpus-source-audit (the governance recipe
@@ -469,6 +469,45 @@ export function v3ApiAi(temperature: number | null): Record<string, unknown> {
     record,
     "harnessVersion",
     notApplicable(API_LANE_NO_HARNESS),
+  );
+  return record;
+}
+
+/**
+ * A v3 generated record on the `ollama` lane: the one shape that carries a KNOWN
+ * harness version and an applied temperature and a real `seed` at the same time.
+ *
+ * The three together are the reason the `local-runtime` channel exists. A local
+ * inference server is a versioned binary of ours, so the harness axis applies; the
+ * transport is a direct call, so the sampling knobs are ours; and the seed is the
+ * one field that makes a generation reproducible, which no CLI lane can offer.
+ */
+export function v3LocalRuntimeAi(): Record<string, unknown> {
+  const raw = withGeneration(clone(V3_AI), {
+    provider: "ollama",
+    // The quantization is part of the family: two quantizations of one lineage are
+    // two generators, and the reserve exists to answer a question about lineage.
+    family: "qwen2.5-7b-q4km",
+    model: "qwen2.5:7b",
+    version: "qwen2.5:7b@845dbda0ea48",
+    decoding: {
+      configurable: true,
+      strategy: null,
+      temperature: 0.8,
+      topP: null,
+      repetitionPenalty: null,
+    },
+    effort: { source: "not-supported", configurable: false },
+    seed: "1637398500",
+  });
+  delete (raw.generation as Record<string, unknown>).seedNullReason;
+  let record = withAxis(raw, "generationLane", known("ollama"));
+  record = withAxis(record, "harnessVersion", known("ollama_0_32_6"));
+  record = withAxis(record, "generatorFamily", known("qwen2_5-7b-q4km"));
+  record = withAxis(
+    record,
+    "generatorVersion",
+    known("gv_qwen2_5_7b_845dbda0ea48"),
   );
   return record;
 }

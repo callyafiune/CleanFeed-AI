@@ -272,11 +272,11 @@ class ClosedPolicyParse(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = write_policy(Path(tmp))
             on_disk = path.read_bytes()
-            self.assertEqual(len(reserialized), 12_294)
-            self.assertEqual(len(on_disk), 12_295)
+            self.assertEqual(len(reserialized), 12_730)
+            self.assertEqual(len(on_disk), 12_731)
             self.assertEqual(len(on_disk) - len(reserialized), 1)
             self.assertEqual(on_disk, reserialized + b"\n")
-            self.assertEqual(len(POLICY_PATH.read_bytes()), 12_070)
+            self.assertEqual(len(POLICY_PATH.read_bytes()), 12_506)
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8")),
                 json.loads(POLICY_PATH.read_text(encoding="utf-8")),

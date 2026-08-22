@@ -386,13 +386,14 @@ seedNullReason/promptId/promptSha256/generatedAt + `pairedWith`) e um
 `.batch.json` para o source-manifest. Retries com backoff; resume por
 `pairedWith`; o corte pré-ChatGPT fica DESLIGADO (gerados agora).
 
-`--provider` aceita as **quatro lanes congeladas** e recusa o resto na entrada:
-`agy`, `codex` e `gemini_cli` autenticam pelo login do operador e `gemini` é o
-único endpoint REST. Chave só por variável de ambiente (nunca impressa/gravada):
+`--provider` aceita as **quatro lanes que este script dirige** e recusa o resto na
+entrada: `agy`, `codex` e `gemini_cli` autenticam pelo login do operador e `gemini`
+é o único endpoint REST. Chave só por variável de ambiente (nunca impressa/gravada):
 `GEMINI_API_KEY` (ou `GOOGLE_API_KEY`). As superfícies de API da OpenAI e da
 Anthropic ficam nomeadas em `OUT_OF_SLATE_PROVIDERS`, com a razão — as famílias
-OpenAI estão reservadas ao teste de gerador não visto (OOD) e chegam ao corpus
-só pela lane `codex`; as famílias claude vêm pela lane `agy`. A recusa é na
+OpenAI são núcleo e chegam ao corpus só pela lane `codex`; as famílias claude vêm
+pela lane `claude-code`, que é chamada de subagente de dentro de uma sessão e não
+subprocesso que este script consiga lançar. A recusa é na
 argparse porque `PROVIDER_LANE[provider]` é lido **dentro do laço, depois da
 chamada**: pedir uma lane fora do slate gastava uma chamada real e morria com
 `KeyError` na primeira linha escrita.

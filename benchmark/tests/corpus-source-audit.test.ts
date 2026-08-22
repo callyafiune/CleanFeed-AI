@@ -673,9 +673,9 @@ describe("corpus source readiness privacy and determinism", () => {
 // consumer that gives the value its meaning — governance recipe identity.
 // ---------------------------------------------------------------------------
 
-// The `gemini-api` lane is the one lane whose row sets
-// `decodingConfigurable: true`, so it is the only place a v3 record can carry an
-// applied temperature at all. The lane shape itself comes from `v3ApiAi` in the
+// The `gemini-api` lane sets `decodingConfigurable: true`, so a v3 record on it
+// can carry an applied temperature — as can one on `ollama`, the other lane whose
+// channel exposes the knobs. The lane shape itself comes from `v3ApiAi` in the
 // shared fixture helper — it was hand-built here AND in schema-v3.test.ts, down to
 // a byte-identical `notApplicable` reason string, so a drift between the two
 // copies would have been invisible in both. What stays local is the only thing
@@ -776,11 +776,11 @@ describe("the recipe comparison reads a v3 record's applied temperature", () => 
 
 // ---------------------------------------------------------------------------
 // C1 second correction round — the recipe comparison on a CLI LANE, which is
-// three of the four frozen lanes and was UNSATISFIABLE.
+// most of the frozen lanes and was UNSATISFIABLE.
 //
 // `recipeTemperature` returns `null` whenever `decoding.configurable` is false,
 // and `benchmark/preregistration-v4.json` sets `decodingConfigurable: false` on
-// `agy`, `codex` and `gemini-cli` — only `gemini-api` is true. While
+// every CLI lane. While
 // `GenerationBatchV1.temperature` was a required `number`, the comparison
 // `recipeTemperature(generation) === batch.temperature` was `null === <number>` on
 // every one of those lanes: always false, no escape. There was no escape through
@@ -790,7 +790,7 @@ describe("the recipe comparison reads a v3 record's applied temperature", () => 
 // `calibration-pipeline.ts` / `candidate-preflight.ts` hard-fail unless readiness
 // is `ready`.
 //
-// The previous round's coverage sat entirely on `gemini-api`, the ONE lane where
+// The previous round's coverage sat entirely on `gemini-api`, a lane where
 // the comparison can succeed, so the suite documented the satisfiable lane and
 // left the majority lane both broken and unpinned — the same defect class that
 // round was fixing, one lane over. Measured on the committed tree at 7a4d610: an

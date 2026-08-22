@@ -296,8 +296,8 @@ function recipeMatchesBatch(
     //
     // Both sides can now say "none applied": `batch.temperature` is nullable with
     // `batch.temperatureNullReason` carrying the why. Until that pair existed this
-    // very line was UNSATISFIABLE on `agy`, `codex` and `gemini-cli` — three of the
-    // four frozen lanes, whose policy rows set `decodingConfigurable: false`, so
+    // very line was UNSATISFIABLE on every CLI lane — the majority of the frozen
+    // table, whose policy rows set `decodingConfigurable: false`, so
     // `recipeTemperature` returns `null` there by construction and the batch was
     // forced to declare a number. `temperatureNullReason` is deliberately NOT
     // compared, exactly as `seedNullReason` is not: the reason is prose for an

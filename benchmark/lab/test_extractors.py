@@ -760,7 +760,7 @@ class GenerateAiTests(unittest.TestCase):
 
 
 class FrozenLaneEntryTests(unittest.TestCase):
-    """D6 — `--provider` admits the four frozen lanes, and refuses on the way IN.
+    """D6 — `--provider` admits the lanes this script drives, and refuses on the way IN.
 
     Where the refusal happens is the whole point. `PROVIDER_LANE[provider]` is read once
     per generated row, inside the loop, AFTER the provider call: a lane outside the slate
@@ -2963,15 +2963,22 @@ class PolicyLaneReadTests(unittest.TestCase):
             # not a call this test made.
             self.assertIn("LANE_ROWS = lane_rows()", done.stderr)
 
-    def test_the_import_time_table_is_the_four_frozen_lanes(self) -> None:
+    def test_the_import_time_table_is_the_frozen_lane_vocabulary(self) -> None:
         import assemble_corpus
 
         # Literals, because reading the same file the module reads compares a value against
-        # itself and any renamed lane satisfies it. These four are the v3 slate's lanes,
-        # and `lane_of` refuses every provider outside the table.
+        # itself and any renamed lane satisfies it. These are the slate's lanes, and
+        # `lane_of` refuses every provider outside the table.
         self.assertEqual(
             sorted(assemble_corpus.LANE_ROWS),
-            ["agy", "codex", "gemini-api", "gemini-cli"],
+            [
+                "agy",
+                "claude-code",
+                "codex",
+                "gemini-api",
+                "gemini-cli",
+                "ollama",
+            ],
         )
 
 
@@ -3726,9 +3733,11 @@ class LaneIdentityTests(unittest.TestCase):
 
         lanes = {
             "agy": "agy",
+            "anthropic": "claude-code",
             "codex": "codex",
             "gemini": "gemini-api",
             "gemini_cli": "gemini-cli",
+            "ollama": "ollama",
         }
         return {
             "candidateId": f"src_ai_{provider}_deadbeef",
@@ -3764,6 +3773,109 @@ class LaneIdentityTests(unittest.TestCase):
         self.assertEqual(record["generation"]["decoding"]["temperature"], 0.8)
         # gemini-api runs no harness binary, so the axis genuinely does not apply.
         self.assertEqual(record["groups"]["harnessVersion"]["state"], "notApplicable")
+
+    def test_the_local_runtime_lane_keeps_the_version_and_the_seed_together(self) -> None:
+        from assemble_corpus import ai_record
+
+        # The shape of the pool the local runtime writes, and the three facts that no
+        # other lane carries at once: the runtime version is KNOWN, the sampling knobs
+        # were ours, and the seed is real. Declaring this lane `api` would drop the
+        # version to notApplicable; declaring it `cli` would refuse the temperature and
+        # leave the seed with no knob it belongs to.
+        candidate = self._ai_candidate(
+            "ollama", "qwen2.5-7b-q4km", receita_da_tarefa("original")
+        )
+        # The pool this lane wrote records the PROVIDER and no lane, so the mapping is
+        # what places it — asserted without the declared lane, or the entry that does
+        # the placing would have no reader here.
+        del candidate["meta"]["generationLane"]
+        candidate["meta"]["model"] = "qwen2.5:7b"
+        candidate["meta"]["version"] = "qwen2.5:7b@845dbda0ea48"
+        candidate["meta"]["harnessVersion"] = "ollama 0.32.6"
+        candidate["meta"]["temperature"] = "0.8"
+        candidate["meta"]["seed"] = "1637398500"
+        record = ai_record(candidate)
+        self.assertEqual(
+            record["groups"]["generationLane"], {"state": "known", "id": "ollama"}
+        )
+        self.assertEqual(
+            record["groups"]["harnessVersion"],
+            {"state": "known", "id": "ollama_0_32_6"},
+        )
+        self.assertTrue(record["generation"]["decoding"]["configurable"])
+        self.assertEqual(record["generation"]["decoding"]["temperature"], 0.8)
+        self.assertEqual(record["generation"]["seed"], "1637398500")
+        self.assertNotIn("seedNullReason", record["generation"])
+        # No effort control in the path, and the arm says so rather than naming a level.
+        self.assertEqual(
+            record["generation"]["effort"],
+            {"source": "not-supported", "configurable": False},
+        )
+
+    def test_the_interactive_anthropic_pool_maps_onto_the_claude_code_lane(self) -> None:
+        from assemble_corpus import ai_record
+
+        # The 122 rows on disk record `provider: "anthropic"`, no lane, no effort level
+        # and no harness version — an interactive session exposed none of the three.
+        # `not-supported` is the arm that states the absent control instead of naming a
+        # level, and it is a fact about the RECORD: the same lane writes a level when the
+        # invocation chose one.
+        candidate = self._ai_candidate(
+            "anthropic", "claude-fable-5", receita_da_tarefa("original")
+        )
+        del candidate["meta"]["generationLane"]
+        candidate["meta"]["seed"] = ""
+        candidate["meta"]["seedNullReason"] = (
+            "interactive Claude session: sampling seed and temperature are not exposed"
+        )
+        record = ai_record(candidate)
+        self.assertEqual(
+            record["groups"]["generationLane"], {"state": "known", "id": "claude-code"}
+        )
+        self.assertEqual(
+            record["generation"]["effort"],
+            {"source": "not-supported", "configurable": False},
+        )
+        # A harness with no readable version: `unknown` and never notApplicable, which
+        # costs the record its eligibility and is the price the core tolerates.
+        self.assertEqual(record["groups"]["harnessVersion"]["state"], "unknown")
+        self.assertEqual(record["generation"]["decoding"], {"configurable": False})
+        candidate["meta"]["effortLevel"] = "max"
+        candidate["meta"]["effortSource"] = "flag"
+        self.assertEqual(
+            ai_record(candidate)["generation"]["effort"],
+            {
+                "source": "flag",
+                "configurable": True,
+                "scale": "claude-code-effort",
+                "level": "max",
+            },
+        )
+
+    def test_effort_configurability_comes_from_the_source_not_from_the_lane(self) -> None:
+        from assemble_corpus import ai_record
+
+        # One lane, both forms. `agy` takes `--effort` on a base model id and embeds the
+        # tier in the id of the others, so a per-lane boolean would have to be wrong
+        # about one of them.
+        candidate = self._ai_candidate(
+            "agy", "gemini-3.1-pro", receita_da_tarefa("original")
+        )
+        candidate["meta"]["effortLevel"] = "low"
+        candidate["meta"]["effortSource"] = "flag"
+        self.assertEqual(
+            ai_record(candidate)["generation"]["effort"],
+            {
+                "source": "flag",
+                "configurable": True,
+                "scale": "agy-model-id-tier",
+                "level": "low",
+            },
+        )
+        candidate["meta"]["effortSource"] = "model-id"
+        self.assertEqual(
+            ai_record(candidate)["generation"]["effort"]["configurable"], False
+        )
 
     def test_a_cli_lane_refuses_the_temperature_the_pool_carries(self) -> None:
         from assemble_corpus import ai_record
@@ -3822,10 +3934,10 @@ class LaneIdentityTests(unittest.TestCase):
     def test_a_row_with_neither_a_seed_nor_a_reason_gets_the_lane_default(self) -> None:
         from assemble_corpus import SEED_NULL_REASON, ai_record
 
-        # No provider on any of the four frozen lanes exposes a sampling seed, and
-        # that is a property of the LANES rather than of a pool row, so a row that
-        # recorded neither gets the reason and never a synthesized seed. The default
-        # fills in the REASON, which is the safe half of the pair to default.
+        # The `agy` lane exposes no sampling seed, and that is a property of the LANE
+        # rather than of a pool row, so a row that recorded neither gets the reason and
+        # never a synthesized seed. The default fills in the REASON, which is the safe
+        # half of the pair to default.
         candidate = self._ai_candidate(
             "agy", "claude-sonnet-4-6", receita_da_tarefa("original")
         )
@@ -4837,8 +4949,16 @@ class GeneratorCaptureTests(unittest.TestCase):
         )
         frozen = set(policy["generationLanes"])
         # Read against the POLICY rather than a retyped list, so a lane renamed in the
-        # frozen file fails here instead of producing rows no corpus can accept.
-        self.assertEqual(set(generate_ai.PROVIDER_LANE.values()), frozen)
+        # frozen file fails here instead of producing rows no corpus can accept. SUBSET
+        # and not equality: this script spawns a subprocess, and two frozen lanes are not
+        # subprocesses of it — `claude-code` is a subagent call from inside a session and
+        # `ollama` is a local server with its own writer. The complement is asserted by
+        # name so a lane silently dropped from this table still fails.
+        self.assertTrue(set(generate_ai.PROVIDER_LANE.values()) <= frozen)
+        self.assertEqual(
+            frozen - set(generate_ai.PROVIDER_LANE.values()),
+            {"claude-code", "ollama"},
+        )
         # And against the LIVE pre-registration by name. The abandoned rebuild-v3-policy
         # left EVALUATOR_FILES, so a byte changed there no longer moves the
         # evaluatorDigest — an authority outside the evaluator's identity decides without

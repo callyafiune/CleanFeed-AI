@@ -79,7 +79,6 @@
     "agy": {
       "channel": "agent-cli",
       "decodingConfigurable": false,
-      "effortConfigurable": false,
       "effortLevels": [
         "low",
         "medium",
@@ -88,18 +87,36 @@
       "effortScale": "agy-model-id-tier",
       "effortSources": [
         "model-id",
+        "flag",
+        "not-supported"
+      ]
+    },
+    "claude-code": {
+      "channel": "agent-cli",
+      "decodingConfigurable": false,
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effortScale": "claude-code-effort",
+      "effortSources": [
+        "flag",
         "not-supported"
       ]
     },
     "codex": {
       "channel": "agent-cli",
       "decodingConfigurable": false,
-      "effortConfigurable": true,
       "effortLevels": [
         "low",
         "medium",
         "high",
-        "xhigh"
+        "xhigh",
+        "max",
+        "ultra"
       ],
       "effortScale": "codex-reasoning-effort",
       "effortSources": [
@@ -110,7 +127,6 @@
     "gemini-api": {
       "channel": "api",
       "decodingConfigurable": true,
-      "effortConfigurable": false,
       "effortLevels": [],
       "effortScale": null,
       "effortSources": [
@@ -120,7 +136,15 @@
     "gemini-cli": {
       "channel": "cli",
       "decodingConfigurable": false,
-      "effortConfigurable": false,
+      "effortLevels": [],
+      "effortScale": null,
+      "effortSources": [
+        "not-supported"
+      ]
+    },
+    "ollama": {
+      "channel": "local-runtime",
+      "decodingConfigurable": true,
       "effortLevels": [],
       "effortScale": null,
       "effortSources": [
