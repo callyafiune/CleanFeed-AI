@@ -290,6 +290,27 @@ class CandidateWriter:
         stats_path.write_text(self.stats.to_json() + "\n", encoding="utf-8")
 
 
+def canonical_fold_order(labels: list, texts: list) -> list[int]:
+    """The permutation that puts a probe's rows in `(label, text)` order.
+
+    ONE authority for every probe that folds, because `StratifiedKFold` partitions BY
+    POSITION: folds read off the caller's assembly order make every per-fold number a
+    function of the order in which the input files and rows arrived. `shuffle=True` with a
+    fixed seed does NOT fix it — it permutes whatever came in, so a differently ordered
+    input still yields differently populated folds.
+
+    `(label, text)` and not the row id: it is a TOTAL order over the multiset, and two rows
+    with the same label and the same text are indistinguishable to an estimator, so the
+    rendering is unique. Sorting by id would leave a residue wherever one id carries two
+    rows, and the probes here are run over pools where that happens.
+
+    Returns the PERMUTATION and not the reordered rows, because a caller that scatters its
+    out-of-fold scores back to the original positions needs it to invert.
+    """
+    keys = list(zip(labels, texts))
+    return sorted(range(len(keys)), key=keys.__getitem__)
+
+
 def parse_iso_date(value: str) -> datetime | None:
     """Parses `YYYY-MM-DD` or full ISO timestamps; None on anything else."""
     value = value.strip()

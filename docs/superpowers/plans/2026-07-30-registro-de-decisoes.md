@@ -10490,3 +10490,38 @@ lado errado do `dict` sao tres aproximacoes dela.
 `.codex-reviews/codex-ilhas-r5-veredito.txt`, dois comandos de dois, `EXIT=0`. **APROVA**: nao existe
 quinta leitura, nenhuma frase sem assercao. Cinco rodadas numa unidade de duas funcoes e um print —
 quatro delas gastas a fechar leituras erradas do mesmo relatorio, e a quinta a confirmar que acabaram.
+
+### A dependencia de ordem nas tres sondas, e a bateria que eu escrevi primeiro era inutil (2026-08-22)
+
+A § 7 cobrava quatro sitios em `diagnostic_probes.py` que montam `features`/`targets` na ordem do
+jsonl e dividem com `StratifiedKFold`, que particiona POR POSICAO. Fechados: os tres que restavam —
+`_stratified_out_of_fold_probabilities` (a que DECIDE, e a que `probe_lanes` tambem usa),
+`probe_length` e `probe_stylometry`.
+
+**Uma autoridade e nao quatro.** `common.canonical_fold_order(labels, texts)` devolve a permutacao
+`(rotulo, texto)`, e e `common` porque `baseline_tfidf.py` ja tinha o conserto e uma segunda copia
+divergiria. A chave e `(rotulo, texto)` e nao o id: e ordem TOTAL sobre o multiconjunto, e duas linhas
+com o mesmo rotulo e o mesmo texto sao indistinguiveis para um estimador; ordenar por id deixaria
+residuo onde um id carrega duas linhas. A funcao devolve a PERMUTACAO e nao as linhas reordenadas,
+porque quem espalha os escores de volta as posicoes do chamador precisa dela para inverter — e assim
+o contrato das tres funcoes nao muda.
+
+**`shuffle=True` com semente fixa nao consertava, e vale escrever porque parece que conserta:** ele
+permuta o que ENTROU, entao uma entrada em outra ordem ainda da dobras com outra populacao.
+
+**A BATERIA QUE EU ESCREVI PRIMEIRO ERA INUTIL, e a medicao e o achado desta volta.** Montei as
+baterias de permutacao sobre `_length_correlated_corpus` — 30 linhas humanas de 70 palavras e 30 `ai`
+de 300 — e os tres mutantes que removem a renderizacao canonica **sobreviveram verdes**. A razao e
+exacta: dentro de cada classe as linhas sao identicas, entao a PARTICAO das dobras move-se com a ordem
+(e o meu teste de nao-vacuidade confirmava isso) e o CONTEUDO das dobras nao. Um fixture pode provar
+que as dobras se movem e nao provar nada sobre o resultado.
+
+Refeitas sobre um corpo cuja linha difere dentro da classe (contagem de palavras e texto proprios por
+linha), cinco mutantes ficam vermelhos: as tres renderizacoes canonicas e os dois espalhamentos de
+volta. A bateria da sonda que decide compara a superficie inteira — veredito, razoes, AUC macro e a
+tabela por particao com o p-valor.
+
+**A sexta vez que um fixture meu foi complacente nesta sessao**, e a primeira em que o teste de
+nao-vacuidade tambem passou. Nao basta mostrar que a estrutura se move: tem de se mover o numero.
+
+**Fechamento:** lab 760 / 750 verde.

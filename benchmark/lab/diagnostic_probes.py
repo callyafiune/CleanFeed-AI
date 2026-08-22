@@ -317,8 +317,14 @@ def _stratified_out_of_fold_probabilities(
             f"folded: {', '.join(f'{name} {total}' for name, total in sorted(thin.items()))}"
         )
 
-    features = np.array(texts, dtype=object)
-    targets = np.array(labels, dtype=object)
+    # The rows reach the splitter in CANONICAL order and the scores are scattered back to
+    # the caller's positions, so this function's contract does not change and the folds
+    # stop being a function of the order in which the pools were concatenated.
+    # `StratifiedKFold` partitions by position, and `shuffle=True` permutes whatever came
+    # in rather than fixing it.
+    order = common.canonical_fold_order(list(labels), list(texts))
+    features = np.array([texts[position] for position in order], dtype=object)
+    targets = np.array([labels[position] for position in order], dtype=object)
     scores: dict[str, list[float]] = {name: [0.0] * len(texts) for name in classes}
     folds = StratifiedKFold(
         n_splits=PROBE_FOLDS, shuffle=True, random_state=PROBE_SEED
@@ -337,7 +343,7 @@ def _stratified_out_of_fold_probabilities(
                 continue
             column = seen.index(name)
             for offset, row in enumerate(test_index):
-                scores[name][row] = float(predicted[offset][column])
+                scores[name][order[row]] = float(predicted[offset][column])
     return scores
 
 
@@ -540,8 +546,14 @@ def probe_length(rows: Iterable[dict]) -> dict:
             f"{PROBE_FOLDS} rows each and found {dict(sorted(per_class.items()))}"
         )
 
-    features = np.array([[value] for value in counts], dtype=float)
-    targets = np.array([1 if flag else 0 for flag in positive])
+    # Canonical order in, original positions out — see `_stratified_out_of_fold_probabilities`.
+    # The key is `(label, word count)` here because the count IS the feature: two rows with
+    # the same label and the same count are indistinguishable to this estimator.
+    order = common.canonical_fold_order(
+        [1 if flag else 0 for flag in positive], counts
+    )
+    features = np.array([[counts[position]] for position in order], dtype=float)
+    targets = np.array([1 if positive[position] else 0 for position in order])
     out_of_fold = [0.0] * len(labelled)
     coefficients: list[float] = []
     folds = StratifiedKFold(
@@ -554,7 +566,7 @@ def probe_length(rows: Iterable[dict]) -> dict:
         coefficients.append(float(model.coef_[0][0]))
         predicted = model.predict_proba(features[test_index])[:, 1]
         for offset, row in enumerate(test_index):
-            out_of_fold[row] = float(predicted[offset])
+            out_of_fold[order[row]] = float(predicted[offset])
 
     lower = _band_lower_bounds(counts, LENGTH_PROBE_DECILES)
     upper = lower[1:] + [max(counts) + 1]
@@ -1247,8 +1259,14 @@ def probe_stylometry(
 
     texts = [str(row.get("text", "")) for row in labelled]
     names, matrix = feature_matrix(texts)
-    features = np.array(matrix, dtype=float)
-    targets = np.array([1 if row["label"] == "ai" else 0 for row in labelled])
+    # Canonical order in, original positions out — see
+    # `_stratified_out_of_fold_probabilities`. The key is `(label, text)` and not the
+    # feature vector: the vector is DERIVED from the text, so ordering by the text orders
+    # the vectors too, and the text is what a reader can check the rendering against.
+    labels = [1 if row["label"] == "ai" else 0 for row in labelled]
+    order = common.canonical_fold_order(labels, texts)
+    features = np.array([matrix[position] for position in order], dtype=float)
+    targets = np.array([labels[position] for position in order])
 
     out_of_fold = [0.0] * len(labelled)
     folds = StratifiedKFold(n_splits=PROBE_FOLDS, shuffle=True, random_state=seed)
@@ -1258,7 +1276,7 @@ def probe_stylometry(
         )
         predicted = model.predict_proba(features[test_index])[:, 1]
         for offset, row in enumerate(test_index):
-            out_of_fold[row] = float(predicted[offset])
+            out_of_fold[order[row]] = float(predicted[offset])
 
     whole = fit_on_feature_matrix(features, targets, seed=seed)
     coefficients = [

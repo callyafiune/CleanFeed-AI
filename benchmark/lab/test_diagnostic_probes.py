@@ -123,6 +123,44 @@ class PartitionProbeTests(unittest.TestCase):
         # No exception, and the returned value is the report rather than a bare bool.
         self.assertIsNone(probes.assert_partitions_are_exchangeable(report))
 
+    def test_the_deciding_probe_does_not_move_with_the_order_of_the_rows(self) -> None:
+        # THE ONE THAT DECIDES, so the invariance matters most here: a verdict that depends
+        # on the order the pool files were concatenated in is a verdict about the
+        # concatenation. Eight orders, and the whole decision surface compared — verdict,
+        # reasons, macro AUC and the per-partition table.
+        import random
+
+        rows = _five_partition_corpus()
+        rng = random.Random(20260822)
+        orders: list[list[int]] = [list(range(len(rows)))]
+        while len(orders) < 8:
+            order = list(range(len(rows)))
+            rng.shuffle(order)
+            if order not in orders:
+                orders.append(order)
+
+        readings = set()
+        for order in orders:
+            report = probes.probe_partitions([rows[position] for position in order])
+            readings.add(
+                (
+                    report["verdict"],
+                    tuple(report["reasons"]),
+                    round(report["macroAuc"], 12),
+                    tuple(
+                        (
+                            entry["partition"],
+                            round(entry["auc"], 12),
+                            round(entry["pValue"], 12),
+                        )
+                        for entry in sorted(
+                            report["partitions"], key=lambda item: item["partition"]
+                        )
+                    ),
+                )
+            )
+        self.assertEqual(len(readings), 1, readings)
+
     def test_a_signature_only_dev_carries_refuses_naming_the_partition_and_the_metric(
         self,
     ) -> None:
@@ -283,6 +321,100 @@ class LengthProbeTests(unittest.TestCase):
                 _record(f"a{index}", "train", "ai", words=300, seed=500 + index)
             )
         return rows
+
+    def _distinguishable_corpus(self) -> list[dict]:
+        """A corpus whose rows DIFFER within each class, which the batteries need.
+
+        `_length_correlated_corpus` gives every human row 70 words and every ai row 300, so
+        its rows are indistinguishable inside a class: the fold PARTITION moves with the
+        input order while the fold CONTENTS do not, and a battery riding it is green with
+        the order dependence in place — measured, three mutants survived on it. Here every
+        row has its own word count and its own text.
+        """
+        return [
+            _record(f"h{index}", "train", "human", words=60 + 4 * index, seed=index)
+            for index in range(30)
+        ] + [
+            _record(f"a{index}", "train", "ai", words=62 + 4 * index, seed=500 + index)
+            for index in range(30)
+        ]
+
+    @staticmethod
+    def _orders(count: int, total: int = 8) -> list[list[int]]:
+        """`total` DISTINCT permutations of `range(count)`, deterministically."""
+        import random
+
+        rng = random.Random(20260822)
+        orders: list[list[int]] = [list(range(count))]
+        while len(orders) < total:
+            order = list(range(count))
+            rng.shuffle(order)
+            if order not in orders:
+                orders.append(order)
+        return orders
+
+    def test_the_permutation_fixture_moves_the_folds(self) -> None:
+        # What keeps the batteries below from being vacuous: the fold PARTITION itself has
+        # to move with the input order, or a battery that finds the AUC unchanged would be
+        # green with the defect in place. `StratifiedKFold` partitions by position and
+        # `shuffle=True` permutes whatever came in, which is why a fixed seed does not fix
+        # it.
+        import numpy as np
+        from sklearn.model_selection import StratifiedKFold
+
+        rows = self._distinguishable_corpus()
+        counts = [len(str(row["text"]).split()) for row in rows]
+        labels = [1 if row["label"] == "ai" else 0 for row in rows]
+        folds = StratifiedKFold(
+            n_splits=probes.PROBE_FOLDS, shuffle=True, random_state=probes.PROBE_SEED
+        )
+
+        def partition_of(order: list[int]) -> tuple:
+            features = np.array([[counts[position]] for position in order], dtype=float)
+            targets = np.array([labels[position] for position in order])
+            return tuple(
+                frozenset(order[position] for position in test)
+                for _, test in folds.split(features, targets)
+            )
+
+        orders = self._orders(len(rows))
+        raw = partition_of(orders[0])
+        for order in orders[1:]:
+            self.assertNotEqual(partition_of(order), raw)
+
+    def test_the_length_probe_does_not_move_with_the_order_of_the_rows(self) -> None:
+        # The invariance itself, over eight orders. It is a property of the FUNCTION over
+        # every input order, so no predicate over one array can state it — the battery is
+        # what asserts it.
+        rows = self._distinguishable_corpus()
+        readings = set()
+        for order in self._orders(len(rows)):
+            report = probes.probe_length([rows[position] for position in order])
+            readings.add(
+                (
+                    round(report["auc"], 12),
+                    round(report["rawWordCountAuc"], 12),
+                    # The PER-FOLD coefficients too, and they are the sharper half: the AUC
+                    # is out-of-fold over the whole population and can survive a moved
+                    # partition, while a coefficient is fitted on one fold's rows.
+                    tuple(round(value, 12) for value in report["coefficientPerFold"]),
+                    tuple(
+                        (band["band"], band["wordsFrom"], band["human"], band["ai"])
+                        for band in report["bands"]
+                    ),
+                )
+            )
+        self.assertEqual(len(readings), 1, readings)
+
+    def test_the_stylometry_probe_does_not_move_with_the_order_of_the_rows(self) -> None:
+        rows = self._distinguishable_corpus()
+        readings = {
+            round(
+                probes.probe_stylometry([rows[position] for position in order])["auc"], 12
+            )
+            for order in self._orders(len(rows))
+        }
+        self.assertEqual(len(readings), 1, readings)
 
     def test_length_correlated_with_the_class_reports_a_high_auc_and_does_not_refuse(
         self,
