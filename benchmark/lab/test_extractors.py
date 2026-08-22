@@ -4993,7 +4993,11 @@ class GeneratorCaptureTests(unittest.TestCase):
             generate_ai.PROVIDER_LANE["ollama"], "ollama"
         )
         self.assertIn("ollama", generate_ai.DEFAULT_MODELS)
-        self.assertIn("ollama", generate_ai.HARNESS_VERSION_ARGV)
+        # Its version comes from the SERVER that will answer and not from a binary on
+        # PATH: a server started by an older install keeps answering after an upgrade, and
+        # the axis has to name what produced the text.
+        self.assertNotIn("ollama", generate_ai.HARNESS_VERSION_ARGV)
+        self.assertIn("ollama", generate_ai.HARNESS_VERSION_QUERY)
 
     def test_the_local_runtime_passes_the_seed_the_temperature_and_the_ceiling(self) -> None:
         from unittest import mock
@@ -5024,6 +5028,77 @@ class GeneratorCaptureTests(unittest.TestCase):
         self.assertTrue(sent["url"].startswith("http://127.0.0.1:11434"))
         self.assertFalse(sent["payload"]["stream"])
         self.assertEqual(sent["timeout"], generate_ai.OLLAMA_TIMEOUT)
+
+    def test_the_lane_refuses_a_runtime_that_is_not_on_this_machine(self) -> None:
+        from unittest import mock
+
+        import generate_ai
+
+        # `OLLAMA_HOST` takes any URL, so a remote server is one environment variable
+        # away — and against a remote one every claim of the lane breaks at once: the
+        # runtime is not a binary of ours, `local-runtime` is a false channel, and the
+        # version this run captures is another machine's. The refusal is what makes the
+        # channel's two declarations true instead of hoped for.
+        for host in (
+            "http://10.0.0.5:11434",
+            "https://ollama.example.test",
+            "http://192.168.1.9:11434",
+        ):
+            with self.subTest(host=host):
+                with self.assertRaises(generate_ai.RuntimeNotLocal):
+                    generate_ai.assert_runtime_is_local(host)
+        for host in ("http://127.0.0.1:11434", "http://localhost:11434"):
+            with self.subTest(host=host):
+                self.assertEqual(generate_ai.assert_runtime_is_local(host), host)
+        # And the generation path itself goes through the check, not just the helper: a
+        # remote host refuses before any request is built.
+        with mock.patch.object(generate_ai, "OLLAMA_HOST", "http://10.0.0.5:11434"):
+            with mock.patch.object(
+                generate_ai, "http_json", lambda *a, **k: {"response": "x"}
+            ):
+                with self.assertRaises(generate_ai.RuntimeNotLocal):
+                    generate_ai.call_provider(
+                        "ollama", "qwen2.5:7b", "prompt", 1, {}, 120
+                    )
+        # So does the VERSION query, and it propagates instead of returning None: a
+        # swallowed refusal here would read as "the version was not captured", which the
+        # lane answers by stopping — the same outcome for a different reason, and the
+        # message is the difference between diagnosing a remote host and hunting a dead
+        # server.
+        with self.assertRaises(generate_ai.RuntimeNotLocal):
+            generate_ai.ollama_runtime_version("http://10.0.0.5:11434")
+
+    def test_the_runtime_version_is_asked_of_the_server_that_will_answer(self) -> None:
+        from unittest import mock
+
+        import generate_ai
+
+        # The DISPATCH, and not just the table: `harness_version` has to route this
+        # provider to the server query. Routing it to the binary on PATH would return the
+        # version of an install that may not be the one running, and on this lane a
+        # version that is not what answered is worse than none — it is a false axis.
+        with mock.patch.dict(
+            generate_ai.HARNESS_VERSION_QUERY,
+            {"ollama": lambda: "9.9.9"},
+            clear=False,
+        ):
+            self.assertEqual(generate_ai.harness_version("ollama"), "9.9.9")
+        # And the query reads the server's own answer, not a constant.
+        class _Answer:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            @staticmethod
+            def read():
+                return b'{"version":"0.31.1"}'
+
+        with mock.patch.object(
+            generate_ai.urllib.request, "urlopen", lambda *a, **k: _Answer()
+        ):
+            self.assertEqual(generate_ai.ollama_runtime_version(), "0.31.1")
 
     def test_the_local_runtime_refuses_a_cut_answer_and_an_empty_one(self) -> None:
         from unittest import mock

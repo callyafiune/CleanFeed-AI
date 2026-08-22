@@ -23,11 +23,13 @@ same binary that serves the other vendors — rather than through the REST endpo
 `gemini-api` lane stays DECLARED because 1.650 rows already on disk carry it and retiring
 it would make every one of them `UnmappableLane`; what it does not have is new material.
 
-`ollama` is the exception the rule was never against: it is a runtime on THIS machine, and
-what the rule forbids is a provider endpoint that hides both the harness and its version.
-Here the version is read from the binary that answered, the weights are identified by
-content id, and the sampling seed is ours — which is why it is the one provider in
-`SEEDED_PROVIDERS`, and why the frozen policy gives it a channel of its own.
+`ollama` is the exception the rule was never against: it is a runtime on THIS machine —
+imposed, not assumed, because `OLLAMA_HOST` takes any URL and a non-loopback one is refused
+(`assert_runtime_is_local`) — and what the rule forbids is a provider endpoint that hides
+both the harness and its version. Here the version is asked of the SERVER that will answer
+and not of the binary on PATH, the weights are identified by content id, and the sampling
+seed is ours — which is why it is the one provider in `SEEDED_PROVIDERS`, and why the
+frozen policy gives it a channel of its own.
 
 That is policy and this parser does not yet impose it: `--provider gemini` is still
 admissible here, and imposing the decision is a ten-site change (this table,
@@ -74,6 +76,7 @@ import shutil
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -113,6 +116,12 @@ CLI_PROVIDERS = {"agy", "codex", "gemini_cli"}
 # version, and here the version is read from the binary that answered.
 OLLAMA_BIN = os.environ.get("OLLAMA_BIN", "ollama")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+# LOOPBACK ONLY, and the check is what makes the sentence above true rather than a hope.
+# `OLLAMA_HOST` takes any URL, so a remote server is one environment variable away — and
+# on a remote one every claim of this lane breaks at once: the runtime is not a binary of
+# ours, "local-runtime" is a false channel, and the version this run captures is not
+# necessarily the version that answered.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 # Providers that need no credential of ours: the CLI logins plus the local runtime, which
 # listens on loopback and authenticates nothing.
 KEYLESS_PROVIDERS = CLI_PROVIDERS | {"ollama"}
@@ -359,14 +368,14 @@ HARNESS_VERSION_ARGV = {
     "agy": lambda: [AGY_BIN, "--version"],
     "codex": lambda: codex_command() + ["--version"],
     "gemini_cli": lambda: gemini_command() + ["--version"],
-    # The runtime, asked the same way as every other binary. The pool the uncommitted
-    # script wrote recorded `ollama 0.32.6` — the word and the number — and this records
-    # the bare dotted run, as the other three lanes do. The spelling difference is a
-    # residue of that script and not a second convention: `_VERSION` takes the first
-    # dotted run out of "ollama version is 0.32.15", so the axis token here is the version
-    # and nothing else.
-    "ollama": lambda: [OLLAMA_BIN, "--version"],
 }
+# The one provider whose version does NOT come from a binary on PATH: it comes from the
+# server that will answer (`ollama_runtime_version`), because a server started by an older
+# install keeps answering after the binary is upgraded. The pool the uncommitted script
+# wrote recorded `ollama 0.32.6` — the word and the number — and this records the bare
+# dotted run, as the other lanes do; the spelling difference is a residue of that script
+# and not a second convention.
+HARNESS_VERSION_QUERY = {"ollama": lambda: ollama_runtime_version()}
 # A version string is a line like "codex-cli 0.145.0" or "0.145.0"; take the first
 # dotted numeric run and nothing else, so a banner around it cannot become part of the
 # grouping identity.
@@ -388,6 +397,9 @@ def harness_version(provider: str) -> str | None:
     exactly the kind of value that cannot be recovered later, because the binary may
     have been upgraded past recall by the time anyone notices.
     """
+    query = HARNESS_VERSION_QUERY.get(provider)
+    if query is not None:
+        return query()
     build = HARNESS_VERSION_ARGV.get(provider)
     if build is None:
         return None
@@ -411,6 +423,53 @@ def harness_version(provider: str) -> str | None:
 # label and `latest` is a moving one), and the QUANTIZATION, which is part of the
 # generator family because two quantizations of one lineage are two generators.
 _OLLAMA_QUANTIZATION = re.compile(r"^\s*quantization\s+(\S+)\s*$", re.MULTILINE)
+
+
+class RuntimeNotLocal(RuntimeError):
+    """`OLLAMA_HOST` points somewhere other than this machine.
+
+    Refused rather than tolerated. The lane's channel in the frozen policy is
+    `local-runtime`, and the two facts it declares — that a versioned binary of OURS
+    stands in the path, and that the sampling knobs are ours — are both about a runtime we
+    run. Against a remote server the first is a false statement about the row, and the
+    version captured here would be some other machine's.
+    """
+
+
+def assert_runtime_is_local(host: str = "") -> str:
+    """The runtime host, or a refusal. Returns the host so callers cannot skip the check."""
+    resolved = host or OLLAMA_HOST
+    hostname = urllib.parse.urlsplit(resolved).hostname or ""
+    if hostname not in _LOOPBACK_HOSTS:
+        raise RuntimeNotLocal(
+            f"OLLAMA_HOST aponta para {hostname!r}, que nao e loopback: esta lane declara "
+            "o canal `local-runtime`, cujas duas afirmacoes — binario NOSSO no caminho e "
+            "knobs de amostragem nossos — sao sobre um runtime que nos corremos. Contra "
+            "servidor remoto a versao capturada aqui e de outra maquina"
+        )
+    return resolved
+
+
+def ollama_runtime_version(host: str = "") -> str | None:
+    """The version of the runtime that WILL answer, asked of the server itself.
+
+    Of the SERVER and not of the binary on PATH, and the difference is real: a server
+    started by an older install keeps answering after the binary is upgraded, so the
+    version on PATH is not necessarily the version that produced the text. `harnessVersion`
+    is a dependence axis, and the axis has to name what answered.
+
+    None on any failure, which on this lane stops the run rather than costing a row its
+    eligibility — see the refusal in `main`.
+    """
+    try:
+        with urllib.request.urlopen(
+            f"{assert_runtime_is_local(host)}/api/version", timeout=30
+        ) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    found = _VERSION.search(str(data.get("version") or ""))
+    return found.group(0) if found else None
 
 
 class ModelIdentityUnread(RuntimeError):
@@ -981,7 +1040,7 @@ def call_provider(
         # the paired length. `stream: false` because a streamed answer would have to be
         # reassembled here and a reassembly bug is indistinguishable from a truncation.
         data = http_json(
-            f"{OLLAMA_HOST}/api/generate",
+            f"{assert_runtime_is_local()}/api/generate",
             {
                 "model": model,
                 "prompt": prompt,

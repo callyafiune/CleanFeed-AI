@@ -10159,3 +10159,46 @@ a expos, nao a leitura.
 **Fechamento:** lab 753 / 745 verde, `docs:check` OK, `format:check` no unico vermelho herdado. A
 § 7 do residuo (ii) da pista mista passou a dizer o que e: o agy pede por celula, o codex continua
 generico. Nada aqui esta em `EVALUATOR_FILES`.
+
+### O codex achou o buraco na propria justificativa da lane local (2026-08-21)
+
+Rodada sobre `5e60588` e `b957f35`, contrato em `.codex-reviews/codex-pistas-prompt.txt`, veredito
+em `codex-pistas-veredito.txt`, oito comandos de oito, `EXIT=0`. **REPROVA**, tres achados. Ele
+confirmou as duas coisas que eu mais queria conferidas — a recusa de ilha reservada e INVARIANTE
+REAL e `_plano_de_blocos` confirma; os quatro casos novos da pista mista MEDEM O QUE DIZEM — e
+derrubou o resto.
+
+**O achado que eu nao nomeei, e ele fura a justificativa da lane inteira.** `OLLAMA_HOST` aceita URL
+arbitraria, entao um servidor remoto estava a uma variavel de ambiente de distancia. Contra um
+remoto TODAS as afirmacoes da lane caem de uma vez: o runtime nao e binario nosso, `local-runtime` e
+canal falso, e a versao capturada aqui e de outra maquina. Eu escrevi "runtime nesta maquina" como
+premissa e nao como guarda. Dois consertos:
+
+* **loopback imposto** (`assert_runtime_is_local`), na entrada do gerador E na consulta de versao,
+  com recusa propria (`RuntimeNotLocal`) que PROPAGA em vez de virar `None` — uma recusa engolida
+  leria como "versao nao capturada", que tem o mesmo desfecho por outra razao, e a mensagem e a
+  diferenca entre diagnosticar host remoto e caçar servidor morto;
+* **a versao passou a vir do SERVIDOR que vai responder** e nao do binario no PATH. Medido enquanto
+  eu escrevia isto: o binario esta em 0.32.15 e um servidor iniciado por instalacao anterior
+  continuaria a responder depois de um upgrade, entao a versao no PATH nao e necessariamente a que
+  produziu o texto — e `harnessVersion` e eixo de dependencia, tem de nomear o que respondeu.
+
+**Achado 2: uma frase minha afirmava necessidade onde media ausencia.** Eu escrevi que as 50 linhas
+que faltam "carregam OUTRA identidade de prompt". Quinze reconstruções que nao casam aferem que o
+template **nao foi recuperado**; nao aferem que nao possa ser. A frase passou a "com o template que o
+repositorio carrega", com a nao-necessidade dita.
+
+**Achado 3, e e o padrao desta sessao pela quarta vez: eu deixei no ESTADO uma linha que a unidade
+seguinte contradiz.** A § 3.3 dizia "as quatro lanes que `generate_ai.py` dirige... e o complemento
+(`claude-code`, `ollama`)" — escrita por mim na unidade da FORMA, verdadeira nesse dia, e falsa
+depois de a pista entrar no mesmo script. O codex leu-a como autoridade vigente e concluiu que
+arquivo proprio seria melhor; a conclusao dele decorre da minha linha velha e nao do desenho.
+Emendada para cinco lanes, com o complemento `claude-code` sozinho e a razao do reuso escrita ali.
+
+**Bateria da rodada: O10-O13.** O10 (a guarda de loopback desaparece) e O11 (o caminho de geracao
+deixa de a consultar) vermelhas de primeira. **O12 e O13 sobreviveram verdes** — a primeira porque o
+meu teste afirmava as TABELAS e nao o DESPACHO, a segunda porque nenhum caso dirigia a consulta de
+versao contra host remoto. As duas ganharam caso e ficaram vermelhas.
+
+**Fechamento:** lab 755 / 750 verde, vitest 172 / 3.115, `docs:check` OK, tsc limpo, lint nos 12
+pre-existentes, `evaluatorDigest` inalterado (nada aqui esta em `EVALUATOR_FILES`).
