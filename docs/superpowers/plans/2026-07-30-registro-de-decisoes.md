@@ -10525,3 +10525,32 @@ tabela por particao com o p-valor.
 nao-vacuidade tambem passou. Nao basta mostrar que a estrutura se move: tem de se mover o numero.
 
 **Fechamento:** lab 760 / 750 verde.
+
+### "Uma autoridade" era falso, e a bateria olhava um numero de cinco (2026-08-22)
+
+`.codex-reviews/codex-ordem-veredito.txt`, seis comandos de seis, `EXIT=0`. **REPROVA**, tres achados.
+A chave de ordenacao voltou SUFICIENTE NAS TRES, o espalhamento CORRECTO NOS TRES e a colocacao em
+`common` CERTA — e o resto e meu.
+
+**"Uma autoridade" era alegacao e nao facto.** Eu escrevi que `common.canonical_fold_order` e a
+autoridade unica porque uma segunda copia divergiria, e deixei `baseline_tfidf._the_canonical_
+population` com o mecanismo PROPRIO. Duas ordens canonicas, cada uma internamente consistente, que e
+a forma de divergencia que nada reporta. Agora ele delega, e o mutante D8 — baseline voltar a ter
+ordem propria — fica vermelho, o que e o que transforma a alegacao em facto.
+
+**A bateria da estilometria olhava UM campo de cinco.** Ela comparava `auc`, e o relatorio carrega
+tambem `intercept`, `coefficients`, `biasMeasures` e `permutationImportance`. E o codex nomeou o
+mutante concreto: **`permutationImportance` calculada sobre a ordem de entrada preserva a AUC** — ela
+e pontuada nos arrays que lhe chegam — entao move so aquele campo e a bateria fica verde. Pior, o
+campo nem era calculado: `permutation_repeats` tem 0 por omissao, e um campo que o teste nunca manda
+computar e um campo que ele nunca ve. A bateria passou a ligar `permutation_repeats=3` e a comparar a
+superficie inteira, e o mutante D6 fica vermelho.
+
+**E o mesmo achado pela terceira ponta:** o meu comentario declarava invariancia da sonda inteira
+enquanto as tres linhas seguintes observavam `auc`. Terceira vez nesta sessao que a prosa do teste
+promete mais do que a assercao cobra.
+
+**A bateria desta unidade e agora de oito:** tres renderizacoes canonicas, dois espalhamentos de
+volta, a importancia por permutacao, e a autoridade unica. Todas vermelhas.
+
+**Fechamento:** lab 760 / 750 verde.

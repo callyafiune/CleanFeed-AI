@@ -407,14 +407,40 @@ class LengthProbeTests(unittest.TestCase):
         self.assertEqual(len(readings), 1, readings)
 
     def test_the_stylometry_probe_does_not_move_with_the_order_of_the_rows(self) -> None:
+        # THE WHOLE REPORT and not the AUC alone: `permutationImportance` is scored on the
+        # arrays as they reach it, so a version that read the input order there would keep
+        # the AUC and move only that field — and a battery watching one number would be
+        # green. `permutation_repeats` is turned ON here for the same reason: a field the
+        # default never computes is a field the battery never sees.
         rows = self._distinguishable_corpus()
-        readings = {
-            round(
-                probes.probe_stylometry([rows[position] for position in order])["auc"], 12
+
+        def surface(order: list[int]) -> tuple:
+            report = probes.probe_stylometry(
+                [rows[position] for position in order], permutation_repeats=3
             )
-            for order in self._orders(len(rows))
-        }
-        self.assertEqual(len(readings), 1, readings)
+            return (
+                round(report["auc"], 12),
+                round(report["intercept"], 12),
+                tuple(
+                    (entry["feature"], round(entry["coefficient"], 12))
+                    for entry in report["coefficients"]
+                ),
+                tuple(
+                    (name, round(measure["human"], 12), round(measure["ai"], 12))
+                    for name, measure in sorted(report["biasMeasures"].items())
+                ),
+                tuple(
+                    (entry["feature"], round(entry["meanAucDrop"], 12))
+                    for entry in report["permutationImportance"]
+                ),
+            )
+
+        readings = {surface(order) for order in self._orders(len(rows))}
+        self.assertEqual(len(readings), 1)
+        # And the field the AUC cannot see is really in the comparison: a report without it
+        # would make the tuple above shorter and the assertion above vacuous on that half.
+        first = probes.probe_stylometry(rows, permutation_repeats=3)
+        self.assertTrue(first["permutationImportance"])
 
     def test_length_correlated_with_the_class_reports_a_high_auc_and_does_not_refuse(
         self,

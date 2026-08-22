@@ -83,6 +83,7 @@ from sklearn.pipeline import FeatureUnion, make_pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
 import assemble_corpus
+import common
 import diagnostic_probes as probes
 import entity_masking
 
@@ -392,9 +393,13 @@ def _the_canonical_population(texts: np.ndarray, labels: np.ndarray):
     indistinguishable to the estimator — so the rendering is unique and the arrays that
     reach the splitter are identical whatever order the caller assembled them in. Sorting by
     id instead would leave a residue wherever one id carries two rows.
+
+    The permutation comes from `common.canonical_fold_order`, which is the SAME function
+    `diagnostic_probes.py` renders with. Two copies of this order would be two authorities
+    over what "canonical" means, and the day they disagreed the two sides would each be
+    internally consistent — which is the shape of divergence nothing reports.
     """
-    keys = _population_keys(texts, labels)
-    order = sorted(range(len(keys)), key=keys.__getitem__)
+    order = common.canonical_fold_order(list(labels), list(texts))
     return texts[order], labels[order]
 
 
