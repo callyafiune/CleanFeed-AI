@@ -6202,8 +6202,8 @@ class SlateRoleTests(unittest.TestCase):
     """The slate decides each generated family by NAME, and refuses what it cannot decide.
 
     The role is what says whether the training set may contain a family. A prefix or a
-    lane cannot carry it: the two OpenAI families of the reserve arrive on different lanes
-    (`codex` and `agy`), so the provider boundary crosses the lane boundary, and a
+    lane cannot carry it: the two OpenAI families arrive on different lanes (`codex` and
+    `agy`) and are both core, so the provider boundary crosses the lane boundary, and a
     provider rename slides past a prefix in silence.
     """
 
@@ -6378,15 +6378,20 @@ class SlateRoleTests(unittest.TestCase):
         import assemble_corpus
 
         records = [
+            self._generated("qwen2_5-7b-q4km"),
             self._generated("gpt-5_6-luna"),
             self._generated("gemini-3_5-flash-lite"),
             self._generated("gemini-3_1-flash-lite", label="mixed"),
             {"id": "h1", "label": "human", "groups": {}},
         ]
+        # The OpenAI family is CORE and the local lineage is the reserve, which is the
+        # pair that carries the operator's reversal: reading either role off a lane or a
+        # prefix would put them the other way round.
         self.assertEqual(
             assemble_corpus.generator_family_roles(records),
             {
-                "gpt-5_6-luna": assemble_corpus.OOD_RESERVED_ROLE,
+                "qwen2_5-7b-q4km": assemble_corpus.OOD_RESERVED_ROLE,
+                "gpt-5_6-luna": assemble_corpus.CORE_ROLE,
                 "gemini-3_5-flash-lite": assemble_corpus.CORE_ROLE,
                 "gemini-3_1-flash-lite": assemble_corpus.CORE_ROLE,
             },
@@ -6395,12 +6400,14 @@ class SlateRoleTests(unittest.TestCase):
     def test_a_family_the_slate_does_not_name_stops_the_run(self) -> None:
         import assemble_corpus
 
-        # The failure the reserve exists to prevent: the provider renames the reserved
-        # family, so a prefix rule reads it as core and the training set gets it.
-        renamed = "gpt-5_7-luna"
+        # The failure the reserve exists to prevent: the reserved lineage is republished
+        # under another tag, so a prefix rule reads it as core and the training set gets
+        # it. It is also the shape the reserve's SECOND lineage has today — its lines do
+        # not exist, and the day they do with no role naming them, this is what halts.
+        renamed = "qwen2_5-7b-q8_0"
         self.assertNotIn(renamed, assemble_corpus.OOD_RESERVED_FAMILIES)
         self.assertNotIn(renamed, assemble_corpus.CORE_GENERATOR_FAMILIES)
-        self.assertTrue(renamed.startswith("gpt-"))
+        self.assertTrue(renamed.startswith("qwen2_5-7b"))
         with self.assertRaises(assemble_corpus.UndeclaredGeneratorFamily) as caught:
             assemble_corpus.generator_family_roles([self._generated(renamed)])
         message = str(caught.exception)
@@ -6412,17 +6419,17 @@ class SlateRoleTests(unittest.TestCase):
         import assemble_corpus
         from group_axes import known
 
-        # `generation.family` carries the dotted provider label and never equals a slate
+        # `generation.family` carries the provider's own label and never equals a slate
         # entry; the role has to come off `groups.generatorFamily`.
         record = {
             "id": "rec_dotted",
             "label": "ai",
-            "generation": {"family": "gpt-5.6-luna"},
-            "groups": {"generatorFamily": known("gpt-5_6-luna")},
+            "generation": {"family": "qwen2.5-7b-q4km"},
+            "groups": {"generatorFamily": known("qwen2_5-7b-q4km")},
         }
         self.assertEqual(
             assemble_corpus.generator_family_roles([record]),
-            {"gpt-5_6-luna": assemble_corpus.OOD_RESERVED_ROLE},
+            {"qwen2_5-7b-q4km": assemble_corpus.OOD_RESERVED_ROLE},
         )
 
 
@@ -7647,9 +7654,14 @@ class AssemblyRunTests(unittest.TestCase):
     class comes out empty and its shortfall is reported.
     """
 
-    RESERVED_FAMILY = "gpt-5.6-luna"
+    RESERVED_FAMILY = "qwen2.5-7b-q4km"
     CORE_FAMILY = "gemini-3.5-flash-lite"
-    LANE_OF = {"agy": "agy", "codex": "codex", "gemini": "gemini-api"}
+    LANE_OF = {
+        "agy": "agy",
+        "codex": "codex",
+        "gemini": "gemini-api",
+        "ollama": "ollama",
+    }
 
     def _prose(self, tag: str) -> str:
         # Disjoint token sets per row, so neither the near-duplicate prune nor the global
@@ -7735,6 +7747,7 @@ class AssemblyRunTests(unittest.TestCase):
         excluded_rows: int = 0,
         excluded_family: str = "madras:synthetic_corpusqwn",
         document_license: str | None = None,
+        overflow_rows: int = 0,
     ) -> dict:
         """The pool files, and the planted line a seen set may already hold.
 
@@ -7779,10 +7792,24 @@ class AssemblyRunTests(unittest.TestCase):
             for index in range(40 - reserved_rows - excluded_rows)
         ]
         self._write(cand / "ai_fresh_gemini.jsonl", core)
+        if overflow_rows:
+            # Core rows in a file the loader reads AFTER the reserve, so the class goes
+            # OVER quota and the truncation has something to cut. Which rows it cuts is
+            # the whole point: they are these, and never the reserved ones.
+            self._write(
+                cand / "ai_fresh_codex.jsonl",
+                [
+                    self._ai("codex", self.CORE_FAMILY, 3000 + index)
+                    for index in range(overflow_rows)
+                ],
+            )
+        # The reserve arrives on the lane it is generated by, and the file the loader
+        # reads FIRST: a reserved row cut by the class quota is not a smaller reserve, it
+        # is a reserve the assembly then refuses.
         reserved = [
-            self._ai("codex", family, 1000 + index) for index in range(reserved_rows)
+            self._ai("ollama", family, 1000 + index) for index in range(reserved_rows)
         ]
-        self._write(cand / "ai_fresh_codex.jsonl", reserved)
+        self._write(cand / "ai_reserved_qwen.jsonl", reserved)
         if excluded_rows:
             # `ai_reserved.jsonl` is the pool the role lists did not cover, and it is read
             # LAST — so these rows are inside the quota only because the core count above
@@ -7883,6 +7910,33 @@ class AssemblyRunTests(unittest.TestCase):
         # leaves as a COUNTED drop — the same vocabulary `MissingMaterialBatch` uses for
         # legacy pools, and never an abort.
         self.assertIn("MissingExtractionRun: 40", self.stdout)
+
+    def test_the_quota_truncation_cuts_core_rows_and_never_the_reserve(self) -> None:
+        import assemble_corpus
+        from group_axes import identity_of
+
+        # The class goes six rows over its quota, and the cut comes off the END of the
+        # pool order. The reserve is read FIRST for exactly this reason: a reserved row
+        # cut by the quota is not a smaller reserve — the reserved family seats whole in
+        # the blind block or its lines leave the corpus, so cutting it leaves the run
+        # with nothing to declare (`HeldOutReserveEmpty`).
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp, overflow_rows=6)
+            self._main(tmp, seen_texts=[])
+            records, governance = self._outputs(tmp)
+
+        reserved = assemble_corpus.generator_family(self.RESERVED_FAMILY)
+        seated = [
+            r
+            for r in records
+            if identity_of(r["groups"].get("generatorFamily")) == reserved
+        ]
+        self.assertEqual(len(seated), 6)
+        self.assertEqual(governance["heldOutGeneratorFamilies"], [reserved])
+        # And the class is still exactly at quota, so the six that were cut are the six
+        # the overflow added.
+        self.assertEqual(len([r for r in records if r["label"] == "ai"]), 40)
 
     def test_the_run_seats_the_reserve_in_test_and_declares_only_it(self) -> None:
         import assemble_corpus
@@ -8077,8 +8131,8 @@ class AssemblyRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             tmp = Path(raw)
             self._pools(tmp)
-            # 1 of the 6 codex rows = 16.67 %, far above the 2 % ceiling.
-            self.assertEqual(self._contaminate(tmp, "ai_fresh_codex", 1), 6)
+            # 1 of the 6 reserved rows = 16.67 %, far above the 2 % ceiling.
+            self.assertEqual(self._contaminate(tmp, "ai_reserved_qwen", 1), 6)
             with self.assertRaises(artifact_gate.ArtifactContamination) as caught:
                 self._main(tmp, seen_texts=[])
             # Nothing was written: the refusal sits ahead of records.jsonl, so a
@@ -8088,7 +8142,7 @@ class AssemblyRunTests(unittest.TestCase):
         self.assertIn(self._family(self.RESERVED_FAMILY), message)
         self.assertIn("1/6", message)
         self.assertIn("16.67%", message)
-        self.assertIn("codex", message)
+        self.assertIn("ollama", message)
         self.assertIn("REGENERATED", message)
         # The lane's other five lines are not offered as a corpus, and stdout says the
         # same thing in the same words.
@@ -8104,7 +8158,7 @@ class AssemblyRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             tmp = Path(raw)
             self._pools(tmp)
-            self.assertEqual(self._contaminate(tmp, "ai_fresh_codex", 1), 6)
+            self.assertEqual(self._contaminate(tmp, "ai_reserved_qwen", 1), 6)
             with self.assertRaises(artifact_gate.ArtifactContamination):
                 self._main(tmp, seen_texts=[])
             report = json.loads(
@@ -8114,7 +8168,7 @@ class AssemblyRunTests(unittest.TestCase):
             # not exist.
             self.assertFalse((tmp / "out" / "records.jsonl").exists())
             self.assertFalse((tmp / "out" / "governance-inputs.json").exists())
-        self.assertEqual(report["lanesToRegenerate"], ["codex"])
+        self.assertEqual(report["lanesToRegenerate"], ["ollama"])
         breached = [
             entry
             for entry in report["families"]

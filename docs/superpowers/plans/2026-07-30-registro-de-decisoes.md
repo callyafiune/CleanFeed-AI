@@ -9947,3 +9947,53 @@ retroativa FECHADA — ele recompos os dois conjuntos por conta propria em vez d
 lista de doze —, apagar o terceiro limite CERTO, a frase que ficou no lugar VERDADEIRA E
 SUSTENTADA, o teste renomeado MEDE O QUE DIZ, nenhum achado nao nomeado. A unidade da FORMA esta
 fechada.
+
+### Os papeis das familias em codigo, e a segunda linhagem da reserva nao entrou — por medicao (2026-08-21)
+
+A reversao do operador estava no ESTADO e nao no codigo: `OOD_RESERVED_FAMILIES` ainda reservava as
+duas familias OpenAI. Esta unidade a poe em `assemble_corpus.py`. `assemble_corpus.py` nao esta em
+`EVALUATOR_FILES`, entao nada disto move o `evaluatorDigest`.
+
+**Os dois lados entraram juntos, porque reserva vazia recusa a montagem.** `gpt-5_6-luna` e
+`gpt-oss-120b-medium` passaram a `CORE_GENERATOR_FAMILIES` — e continuam a chegar por lanes
+DIFERENTES (`codex` e `agy`), que e a razao permanente de nenhum prefixo e nenhuma lane poderem
+substituir a declaracao. A reserva passou a `qwen2_5-7b-q4km`.
+
+**A segunda linhagem ratificada NAO entrou, e a razao e medida.** O operador ratificou duas
+familias reservadas; a do llama nao tem uma linha em disco, e
+`assert_slate_roles_are_consistent` **recusa** papel sobre familia que os pools nao entregam —
+"cobertura de nada" e exactamente o defeito que essa guarda existe para pegar. Enumerei as quatro
+combinacoes antes de decidir: com a familia do llama declarada a guarda levanta
+`SlateContradiction`; sem ela e com o censo do qwen atualizado, passa. Entao declarar as duas hoje
+exigiria enfraquecer a guarda, e eu prefiro a falta com **direcao fail-fechada**: no dia em que as
+linhas do llama existirem sem papel, a montagem PARA em `UndeclaredGeneratorFamily` em vez de as
+treinar. Custo de reversao: uma linha na lista, no dia em que houver material.
+
+**O censo passou a cobrir DOIS diretorios de pool, e isso era um buraco anterior.**
+`POOL_GENERATOR_FAMILIES` era medido so sobre `data/candidates`, enquanto `--candidates-dir` aponta
+uma corrida para um deles — logo uma familia entregue pelo outro ficava sem papel e nada acusava. O
+censo agora e a uniao dos dois (24 familias, 6.583 linhas) e o comando de remedicao no comentario
+faz o mesmo.
+
+**O pool da reserva passou a ser LIDO, e a posicao dele na ordem e protecao e nao arrumacao.**
+`load_ai` ganhou `ai_reserved_qwen` como **primeiro** nome: a lista e prioridade de selecao e a cota
+de classe corta pelo FIM, e uma linha reservada cortada nao e reserva menor — a familia reservada
+assenta INTEIRA no bloco cego ou sai do corpus, entao cortar deixa a corrida sem nada a declarar.
+
+**A bateria: cinco mutacoes, quatro vermelhas de primeira e uma que sobreviveu verde.** R1 (reserva
+volta as OpenAI), R2 (OpenAI saem do nucleo), R3 (o pool da reserva deixa de ser lido) e R5 (o censo
+esquece a familia) vermelhas. **R4 — mover o pool da reserva para o FIM da ordem — sobreviveu
+verde**, porque o fixture da montagem escreve exactamente 40 linhas `ai` para uma cota de 40 e nada
+e cortado. Escrevi o caso que falta: seis linhas de nucleo a MAIS num arquivo lido depois da
+reserva, o que poe a classe acima da cota e da a truncagem algo para cortar. Com a reserva primeiro
+a corrida declara a reserva e a classe fecha em 40; com ela por ultimo, `HeldOutReserveEmpty`. R4
+ficou vermelha.
+
+**O que eu descobri sobre as 400 linhas e nao e desta unidade.** O template que as produziu e
+**irrecuperavel**: `promptSha256` `f823530d215fffe8…`, e os bytes nao estao no repositorio nem no
+snapshot fora dele (procurei; testei quinze reconstruções plausiveis, nenhuma casa — e uma que
+casasse seria prova, porque sha256). Consequencia registrada na § 7: as 50 que faltam ate 450 vao
+carregar OUTRO digest de template, entao a familia reservada fica com duas identidades de prompt a
+menos que o operador mande regerar as 450 — e regerar e apagar material, que e nunca delegado.
+
+**Fechamento:** lab 741 / 742 verde, `docs:check` OK. Nada aqui toca `EVALUATOR_FILES`.

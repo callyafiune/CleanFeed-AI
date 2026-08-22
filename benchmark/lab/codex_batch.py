@@ -105,8 +105,8 @@ def chunk_prompt(recipe: str, rows: list[dict]) -> str:
     # lane uses: the length distribution of the generated class has to match the human
     # one in EVERY lane, or the word count becomes a proxy for the lane, and
     # `generationLane` is a grouping axis. A clamp here would leave the codex lane — the
-    # OpenAI families, reserved for the unseen-generator test — with a truncated copy of
-    # the human distribution while the other lanes carry the whole of it.
+    # OpenAI families, which are core — with a truncated copy of the human distribution
+    # while the other lanes carry the whole of it.
     items = [
         {
             "pairedWith": row["candidateId"],
