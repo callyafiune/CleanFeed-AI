@@ -10439,3 +10439,28 @@ exactamente o que o relatorio filtrado produz. Agora as DUAS leituras erradas fi
 (ler a fatia) e M5 (recomputar depois), e a segunda e a que o teste antigo deixava passar.
 
 **Fechamento:** lab 756 / 750 verde.
+
+### A terceira leitura errada, e o meu comentario afirmava o que nenhuma assercao exigia (2026-08-22)
+
+`.codex-reviews/codex-ilhas-r3-veredito.txt`, tres comandos de tres, `EXIT=0`. **REPROVA** com um
+achado, que aparece duas vezes na resposta dele porque e o mesmo defeito lido de dois lados.
+
+**A terceira leitura.** Eu tinha fechado duas (ler a fatia; recomputar depois do filtro) e afirmava
+o comportamento por tres predicados: `ilha_04 1/` presente, `ilha_03` ausente, `ilha_04 0/` proibido.
+Ele mostrou a leitura que passa por baixo dos tres: **filtrar do relatorio as ilhas com zero pais**.
+Ela omite as outras dezoito, preserva `ilha_04 1/`, omite `ilha_03` e nunca imprime `ilha_04 0/` — e
+e tao errada como as outras duas, porque dezenove ilhas estao curtas naquele arquivo de pais.
+
+**E o mesmo achado pela outra ponta:** o meu comentario dizia que a saida nomeia as outras dezoito, e
+nenhuma assercao exigia isso. Frase no comentario que o teste nao carrega e a forma mais barata de
+parecer coberto.
+
+Conserto: a linha inteira e **parseada e comparada como MAPA** contra as dezenove entradas esperadas —
+`ilha_04` com `1/100` e as outras dezoito com `0/100` —, mais a cardinalidade. Tres predicados
+soltos viraram uma igualdade. Bateria: M4, M5 e **M6** (o relatorio deixa cair as ilhas com zero
+pais), as tres vermelhas.
+
+**Uma nota dele que nao e defeito e vale ficar:** `--target 0` cria o arquivo de `--output` vazio, por
+`open("a")`. No teste ele fica no diretorio temporario e nada e escrito no repositorio.
+
+**Fechamento:** lab 756 / 750 verde.

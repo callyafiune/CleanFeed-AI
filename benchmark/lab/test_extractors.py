@@ -5351,13 +5351,25 @@ class GeneratorCaptureTests(unittest.TestCase):
             finally:
                 sys.argv = saved
         printed = buffer.getvalue()
-        # `ilha_03` is at quota and `ilha_04` is one parent short, so the plan-wide line
-        # names ilha_04 and NOT ilha_03 — and it names the other eighteen as short too,
-        # which is true of this parents file. What it must never do is report ilha_04 as
-        # having zero: that is what reading the island-filtered slice produces.
-        self.assertIn("ilha_04 1/", printed)
-        self.assertNotIn(f"{island['island']} ", printed.split("ilhas curtas")[-1])
-        self.assertNotIn("ilha_04 0/", printed)
+        # The WHOLE line, parsed and compared as a mapping. Naming one island and
+        # forbidding one spelling is not enough: a report that dropped every island with
+        # zero parents would still say `ilha_04 1/` and still omit `ilha_03`, and it would
+        # be as wrong as the filtered one — nineteen islands are short of this parents
+        # file and the line has to say so.
+        linha = printed.split("ilhas curtas no plano inteiro: ")[-1].splitlines()[0]
+        relatado = {
+            nome: contagem
+            for nome, contagem in (entrada.split(" ") for entrada in linha.split(", "))
+        }
+        esperado = {
+            ilha["island"]: f"{cota if ilha['island'] == 'ilha_04' else 0}"
+            f"/{ilha['lines']['mixed']}"
+            for ilha in lab.ISLAND_PLAN
+            if ilha["island"] != island["island"]
+        }
+        esperado["ilha_04"] = f"1/{lab.island_named(lab.ISLAND_PLAN, 'ilha_04')['lines']['mixed']}"
+        self.assertEqual(relatado, esperado)
+        self.assertEqual(len(relatado), len(lab.ISLAND_PLAN) - 1)
 
     def test_the_agy_mixing_lane_asks_by_CELL_and_names_the_island_slot(self) -> None:
         import make_mixed
