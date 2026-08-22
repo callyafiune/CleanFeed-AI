@@ -4950,14 +4950,14 @@ class GeneratorCaptureTests(unittest.TestCase):
         frozen = set(policy["generationLanes"])
         # Read against the POLICY rather than a retyped list, so a lane renamed in the
         # frozen file fails here instead of producing rows no corpus can accept. SUBSET
-        # and not equality: this script spawns a subprocess, and two frozen lanes are not
-        # subprocesses of it — `claude-code` is a subagent call from inside a session and
-        # `ollama` is a local server with its own writer. The complement is asserted by
-        # name so a lane silently dropped from this table still fails.
+        # and not equality: one frozen lane is not driven from here at all —
+        # `claude-code` is a subagent call from inside a session, not a subprocess this
+        # script can spawn. The complement is asserted by name so a lane silently dropped
+        # from this table still fails.
         self.assertTrue(set(generate_ai.PROVIDER_LANE.values()) <= frozen)
         self.assertEqual(
             frozen - set(generate_ai.PROVIDER_LANE.values()),
-            {"claude-code", "ollama"},
+            {"claude-code"},
         )
         # And against the LIVE pre-registration by name. The abandoned rebuild-v3-policy
         # left EVALUATOR_FILES, so a byte changed there no longer moves the
@@ -4967,9 +4967,180 @@ class GeneratorCaptureTests(unittest.TestCase):
 
         self.assertEqual(assemble_corpus.POLICY_PATH.name, "preregistration-v4.json")
         self.assertTrue(assemble_corpus.POLICY_PATH.exists())
+        # The providers this script drives: the CLI logins, the declared REST lane, and
+        # the local runtime. `KEYLESS_PROVIDERS` is the set that needs no credential of
+        # ours, and the local runtime belongs to it for a different reason than the CLIs —
+        # it listens on loopback and authenticates nothing.
         self.assertEqual(
-            set(generate_ai.PROVIDER_LANE), set(generate_ai.CLI_PROVIDERS) | {"gemini"}
+            set(generate_ai.PROVIDER_LANE),
+            set(generate_ai.CLI_PROVIDERS) | {"gemini", "ollama"},
         )
+        self.assertEqual(
+            generate_ai.KEYLESS_PROVIDERS,
+            set(generate_ai.CLI_PROVIDERS) | {"ollama"},
+        )
+        # The seed is a property of ONE lane, and it is the local runtime.
+        self.assertEqual(generate_ai.SEEDED_PROVIDERS, {"ollama"})
+        self.assertEqual(
+            generate_ai.PROVIDER_LANE["ollama"], "ollama"
+        )
+        self.assertIn("ollama", generate_ai.DEFAULT_MODELS)
+        self.assertIn("ollama", generate_ai.HARNESS_VERSION_ARGV)
+
+    def test_the_local_runtime_passes_the_seed_the_temperature_and_the_ceiling(self) -> None:
+        from unittest import mock
+
+        import generate_ai
+
+        sent: dict = {}
+
+        def fake_http_json(url, payload, headers, timeout=120):
+            sent.update({"url": url, "payload": payload, "timeout": timeout})
+            return {"response": "texto gerado", "done_reason": "stop"}
+
+        with mock.patch.object(generate_ai, "http_json", fake_http_json):
+            text = generate_ai.call_provider(
+                "ollama", "qwen2.5:7b", "prompt", 1637398500, {}, 120
+            )
+        self.assertEqual(text, "texto gerado")
+        # The three sampling parameters this lane owns and no other does. The seed is what
+        # makes the line reproducible, so it travelling is the point of the lane.
+        options = sent["payload"]["options"]
+        self.assertEqual(options["seed"], 1637398500)
+        self.assertEqual(options["temperature"], generate_ai.TEMPERATURE)
+        self.assertEqual(
+            options["num_predict"], generate_ai.max_output_tokens(120)
+        )
+        # Loopback, and never streamed: a reassembled answer is indistinguishable from a
+        # truncated one.
+        self.assertTrue(sent["url"].startswith("http://127.0.0.1:11434"))
+        self.assertFalse(sent["payload"]["stream"])
+        self.assertEqual(sent["timeout"], generate_ai.OLLAMA_TIMEOUT)
+
+    def test_the_local_runtime_refuses_a_cut_answer_and_an_empty_one(self) -> None:
+        from unittest import mock
+
+        import generate_ai
+
+        # `done_reason` other than `stop` means a fragment — `length` is the num_predict
+        # ceiling hit. A fragment accepted as a whole answer is a scientific defect, and
+        # this is the same rule the gemini arm applies to its own finishReason.
+        for answer in (
+            {"response": "meio texto", "done_reason": "length"},
+            {"response": "   ", "done_reason": "stop"},
+            {},
+        ):
+            with self.subTest(answer=answer):
+                with mock.patch.object(
+                    generate_ai, "http_json", lambda *a, **k: answer
+                ):
+                    with self.assertRaises(generate_ai.GenerationRefused):
+                        generate_ai.call_provider(
+                            "ollama", "qwen2.5:7b", "prompt", 1, {}, 120
+                        )
+
+    def test_the_reserve_lane_refuses_a_core_island_before_opening_anything(self) -> None:
+        import contextlib
+        import io as _io
+
+        import assemble_corpus
+        import generate_ai
+
+        # The refusal is at the ENTRY, and the proof that it is at the entry is that a
+        # non-existent seeds file is never reached: a core island dies on the island rule
+        # while a reserved island gets as far as opening the file.
+        def run(island: str) -> BaseException:
+            saved = sys.argv
+            try:
+                sys.argv = [
+                    "generate_ai.py", "--provider", "ollama", "--island", island,
+                    "--humans", "arquivo-que-nao-existe.jsonl",
+                    "--output", "saida.jsonl", "--dry-run",
+                ]
+                with contextlib.redirect_stdout(_io.StringIO()):
+                    try:
+                        generate_ai.main()
+                    except BaseException as error:  # noqa: BLE001 — the verdict IS the error
+                        return error
+                raise AssertionError("a corrida nao levantou nada")
+            finally:
+                sys.argv = saved
+
+        core = run("ilha_00")
+        self.assertIsInstance(core, SystemExit)
+        message = str(core)
+        self.assertIn("ilha_00", message)
+        for reserved in assemble_corpus.RESERVED_ISLANDS:
+            self.assertIn(reserved, message)
+        # And the reserved island passes the rule and dies later, on the file.
+        self.assertIsInstance(run(assemble_corpus.RESERVED_ISLANDS[0]), FileNotFoundError)
+
+    def test_the_reserve_lane_refuses_a_runtime_whose_version_it_cannot_read(self) -> None:
+        import contextlib
+        import io as _io
+        from unittest import mock
+
+        import assemble_corpus
+        import generate_ai
+
+        # Everywhere else an uncaptured harness version costs the row its ELIGIBILITY and
+        # the run continues; on this lane it stops the run, and the asymmetry is the
+        # reserve's positives floor — `countsTowardHeldOutFloor` filters it by that very
+        # eligibility, so hours of generation would produce material that cannot count.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            humans = tmp / "humans.jsonl"
+            humans.write_text(
+                json.dumps(
+                    {
+                        "candidateId": "src_wikipedia_pt_deadbeefcafe",
+                        "text": PROSE_60,
+                        "wordCount": 60,
+                        "domainSource": "ptwiki_lead",
+                    },
+                    ensure_ascii=False,
+                )
+                + chr(10),
+                encoding="utf-8",
+            )
+            saved = sys.argv
+            try:
+                sys.argv = [
+                    "generate_ai.py", "--provider", "ollama",
+                    "--island", assemble_corpus.RESERVED_ISLANDS[0],
+                    "--humans", str(humans),
+                    "--output", str(tmp / "saida.jsonl"),
+                ]
+                with mock.patch.object(
+                    generate_ai, "harness_version", lambda provider: None
+                ):
+                    with contextlib.redirect_stdout(_io.StringIO()):
+                        with self.assertRaises(SystemExit) as caught:
+                            generate_ai.main()
+            finally:
+                sys.argv = saved
+            # Nothing was written: the refusal sits ahead of the lane lock and the writer.
+            self.assertFalse((tmp / "saida.jsonl").exists())
+        message = str(caught.exception)
+        self.assertIn("elegibilidade", message)
+        self.assertIn("R6", message)
+
+    def test_the_local_runtime_row_names_its_weights_and_its_quantization(self) -> None:
+        import assemble_corpus
+        import generate_ai
+
+        # The identity a row of this lane writes: the FAMILY carries the quantization
+        # (two quantizations of one lineage are two generators) and the VERSION carries
+        # the content id (a tag is a label, and `latest` is a moving one). Derived by the
+        # same function the slate's reserve is declared with, so the family a row writes
+        # and the family the slate reserves cannot diverge.
+        self.assertEqual(
+            assemble_corpus.reserve_family("qwen2.5:7b", "Q4_K_M"),
+            sorted(assemble_corpus.OOD_RESERVED_FAMILIES)[0],
+        )
+        import inspect
+
+        self.assertIn("reserve_family", inspect.getsource(generate_ai.main))
 
     def test_the_mixing_lanes_record_which_template_produced_the_row(self) -> None:
         import io

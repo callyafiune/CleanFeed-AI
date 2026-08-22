@@ -10067,3 +10067,58 @@ mais le aquela lista. A frase ficou nessa versao, no codigo e na § 7.
 frase sobre o que a lista pendente compra e a mais fraca que se afere, a guarda de grafia esta
 exercitada e com a mensagem afirmada, nenhuma frase residual, nenhum achado nao nomeado. A unidade
 dos PAPEIS esta fechada.
+
+### A pista de geracao da reserva: um provedor em `generate_ai.py`, e quatro medicoes que pedem regeracao (2026-08-21)
+
+A pista do ollama nao existia no repositorio e as 400 linhas em disco vieram de um script de outra
+sessao. Ela existe agora, e a decisao de desenho e onde ela vive.
+
+**Provedor em `generate_ai.py`, e nao arquivo novo.** A razao e a que este repositorio ja pagou
+varias vezes: um segundo escritor seria uma segunda autoridade sobre ilha, semente, pareamento de
+comprimento, janela de palavras, PII, resume e lote — e as duas divergiriam. Reusar tambem e o que
+fecha por CONSTRUCAO tres dos quatro defeitos que eu medi no material existente. O script tem uma
+arma REST desde sempre (a lane `gemini` declarada), e a arma nova e uma chamada a loopback.
+
+**"Geracao por HARNESS, nunca por API" nao e violado, e vale dizer por que.** A regra e contra
+endpoint de provedor que esconde o arnes E a versao dele. Aqui a versao e lida do binario que
+respondeu, os pesos sao identificados por id de conteudo, e o seed e nosso — e por isso a
+pre-inscricao da a esta lane um canal proprio.
+
+**O que a pista faz que o script perdido nao fazia**, e cada item e um mutante vermelho: passa o
+`seed` (derivado do id do candidato pareado, entao uma retomada reproduz a mesma linha — um seed
+sorteado seria gravado e irreproduzivel, o oposto do que o campo serve), passa a temperatura e o
+teto de saida ESCALADO ao comprimento pareado, recusa resposta cortada (`done_reason` != `stop`),
+nao usa streaming (resposta remontada e indistinguivel de truncada), e escreve a familia com a
+QUANTIZACAO e a versao com o ID DE CONTEUDO — os dois lidos do runtime por
+`ollama_model_identity`, e a familia derivada pela mesma `reserve_family` com que o slate declara a
+reserva, de modo que as duas nao podem divergir.
+
+**Duas recusas proprias desta lane.** (i) **Ilha reservada obrigatoria**: a reserva assenta por
+COMPONENTE, e uma linha reservada semeada em ilha de nucleo arrasta as linhas de nucleo que o pai
+humano une para o bloco cego. Recusa na entrada, antes do arquivo de sementes, do lock e da primeira
+geracao. O converso NAO e guardado e esta dito: lane de nucleo apontada a ilha reservada e admitida,
+e isso e plano de cobertura. (ii) **Versao do runtime nao capturada PARA a corrida**, so nesta lane:
+em toda outra uma versao ausente custa a ELEGIBILIDADE da linha e a corrida segue; aqui as linhas
+sao a reserva, cujo piso de positivos e filtrado por essa elegibilidade, entao horas de geracao
+produziriam material que nao conta.
+
+**AS QUATRO MEDICOES SOBRE AS 400 LINHAS, e as quatro sao razao para regerar em vez de completar:**
+
+| medido | consequencia |
+|---|---|
+| o template nao foi recuperado (`f823530d215fffe8…`; quinze reconstrucoes testadas, nenhuma casa) | as 50 que faltam carregam OUTRA identidade de prompt |
+| **67 das 400** abaixo do minimo de 50 palavras, e 1 fora da forma canonica | o script nao passou pelo `CandidateWriter` |
+| **328 das 400** com pai fora das ilhas reservadas | componentes da reserva fundidos com os de nucleo |
+| runtime instalado **0.32.15** contra **0.32.6** gravado | a versao daquelas linhas nao e conferivel contra esta maquina |
+
+A pista nova fecha os tres ultimos por construcao e nao pode consertar o primeiro. **Regerar as 450
+e apagar material, que e nunca delegado** — entao eu paro NESTE item: a escolha entre completar (duas
+identidades de prompt, 67 linhas curtas, 328 fora de ilha) e regerar (4,7 h de CPU e apagar as 400,
+com snapshot ja fora do repositorio) e do operador, e esta escrita na § 7.
+
+**Bateria: nove mutacoes (O1-O9), nove vermelhas no teste nomeado, nove restauradas com sha256
+identico.** Uma sobreviveu verde na primeira volta — a recusa por versao nao capturada, que nao tinha
+teste — e ganhou um caso que dirige `main()` com `harness_version` devolvendo `None` e afirma que
+nada foi escrito.
+
+**Fechamento:** lab 747 / 745 verde. Nada aqui esta em `EVALUATOR_FILES`.

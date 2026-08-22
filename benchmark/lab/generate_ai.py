@@ -17,11 +17,17 @@ Outputs run through the shared candidate pipeline (normalize -> word window ->
 PII drop), with the pre-ChatGPT date cutoff disabled (these are generated NOW).
 
 `--provider` admits the frozen lanes and nothing else, and refuses the rest at the parser.
-GENERATION GOES THROUGH A HARNESS, NEVER AN API: `agy`, `codex` and `gemini_cli`
+GENERATION GOES THROUGH A HARNESS, NEVER A PROVIDER API: `agy`, `codex` and `gemini_cli`
 authenticate through the operator's own login, and Gemini is reached through `agy` — the
 same binary that serves the other vendors — rather than through the REST endpoint. The
 `gemini-api` lane stays DECLARED because 1.650 rows already on disk carry it and retiring
 it would make every one of them `UnmappableLane`; what it does not have is new material.
+
+`ollama` is the exception the rule was never against: it is a runtime on THIS machine, and
+what the rule forbids is a provider endpoint that hides both the harness and its version.
+Here the version is read from the binary that answered, the weights are identified by
+content id, and the sampling seed is ours — which is why it is the one provider in
+`SEEDED_PROVIDERS`, and why the frozen policy gives it a channel of its own.
 
 That is policy and this parser does not yet impose it: `--provider gemini` is still
 admissible here, and imposing the decision is a ten-site change (this table,
@@ -42,14 +48,17 @@ generates for ONE island: its templates and its block of human seeds. It does NO
 partition the generator version — that identity is the model id, and it is reported by
 the audit rather than unioned by the splitter (see `GROUP_KEYS`, benchmark/split.ts).
 
-Stdlib only. `urllib` is here for the REST arm of `call_provider`, which no admissible
-lane reaches once generation is harness-only.
+Stdlib only. `urllib` serves two arms of `call_provider`: the declared `gemini` REST lane,
+which no run reaches any more, and the local runtime, which is a call to loopback.
 
 Usage (pilot):
   python benchmark/lab/generate_ai.py --provider agy --island ilha_00 \
     --humans ../data/candidates/carolina.jsonl \
     --output ../data/candidates/ai_agy.jsonl --per-provider 60
   (idem para --provider codex | gemini_cli; --dry-run mostra o plano sem chamar nada)
+
+Usage (reserva OOD, runtime local — uma ilha RESERVADA por corrida):
+  python benchmark/lab/generate_ai.py --provider ollama --island ilha_17     --model qwen2.5:7b --humans ../data/candidates-f3/wikipedia_fresh.jsonl     --output ../data/candidates-f3/ai_reserved_qwen.jsonl --per-provider 150
 """
 
 from __future__ import annotations
@@ -95,6 +104,24 @@ AGY_BIN = os.environ.get(
     "AGY_BIN", str(Path.home() / "AppData" / "Local" / "agy" / "bin" / "agy.exe")
 )
 CLI_PROVIDERS = {"agy", "codex", "gemini_cli"}
+# The local inference runtime of the OOD reserve. It is neither a CLI nor a provider API,
+# and the `local-runtime` channel of the frozen policy is what expresses the difference:
+# the transport is a call to a server on this machine, so `temperature` and a real `seed`
+# are ours to pass, and the runtime is a binary of ours, so its version is an input to the
+# text and is captured. "Generation goes through a harness, never an API" is not violated
+# by it — that rule is against a provider endpoint that hides both the harness and its
+# version, and here the version is read from the binary that answered.
+OLLAMA_BIN = os.environ.get("OLLAMA_BIN", "ollama")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+# Providers that need no credential of ours: the CLI logins plus the local runtime, which
+# listens on loopback and authenticates nothing.
+KEYLESS_PROVIDERS = CLI_PROVIDERS | {"ollama"}
+# The ONE ceiling this lane needs and the others do not: a local runtime answers until it
+# decides to stop, and a 7B model that loops on a short prompt can spend minutes on one
+# line. Measured on the material this lane already produced: 400 lines in 249,8 min, i.e.
+# 37,5 s per line on CPU, so a per-item ceiling well above that separates a slow line from
+# a stuck one.
+OLLAMA_TIMEOUT = 600.0
 # A 429 the server says is temporary is waited out rather than counted as a
 # wall; anything longer than this is treated as a wall regardless.
 MAX_HONORED_RETRY_SECONDS = 120.0
@@ -210,6 +237,7 @@ PROVIDER_LANE = {
     "codex": "codex",
     "gemini": "gemini-api",
     "gemini_cli": "gemini-cli",
+    "ollama": "ollama",
 }
 # The two API surfaces this script used to offer that the frozen slate does NOT contain,
 # kept by name with the reason. Refused at the parser and refused again in
@@ -331,6 +359,13 @@ HARNESS_VERSION_ARGV = {
     "agy": lambda: [AGY_BIN, "--version"],
     "codex": lambda: codex_command() + ["--version"],
     "gemini_cli": lambda: gemini_command() + ["--version"],
+    # The runtime, asked the same way as every other binary. The pool the uncommitted
+    # script wrote recorded `ollama 0.32.6` — the word and the number — and this records
+    # the bare dotted run, as the other three lanes do. The spelling difference is a
+    # residue of that script and not a second convention: `_VERSION` takes the first
+    # dotted run out of "ollama version is 0.32.15", so the axis token here is the version
+    # and nothing else.
+    "ollama": lambda: [OLLAMA_BIN, "--version"],
 }
 # A version string is a line like "codex-cli 0.145.0" or "0.145.0"; take the first
 # dotted numeric run and nothing else, so a banner around it cannot become part of the
@@ -369,6 +404,70 @@ def harness_version(provider: str) -> str | None:
         printed = (proc.stderr or b"").decode("utf-8", errors="replace")
     found = _VERSION.search(printed)
     return found.group(0) if found else None
+
+
+# The two facts a local model's identity needs beyond its tag, each read from the runtime
+# and never composed: the CONTENT id, which is what identifies the weights (a tag is a
+# label and `latest` is a moving one), and the QUANTIZATION, which is part of the
+# generator family because two quantizations of one lineage are two generators.
+_OLLAMA_QUANTIZATION = re.compile(r"^\s*quantization\s+(\S+)\s*$", re.MULTILINE)
+
+
+class ModelIdentityUnread(RuntimeError):
+    """The runtime did not tell us which weights it holds, so nothing may be written.
+
+    Refused rather than defaulted, and the reason is narrower than "be careful": this
+    lane's rows are the OOD reserve, and the reserve's positives floor is filtered by
+    record eligibility. A row that names its weights by tag alone cannot be told apart
+    from a row generated by a different pull of the same tag, so writing one would spend
+    hours of generation on material that answers no question.
+    """
+
+
+def ollama_model_identity(tag: str, binary: str = OLLAMA_BIN) -> tuple[str, str]:
+    """(content id, quantization) of one local tag, asked of the runtime.
+
+    Both come from the binary because both are properties of the pull on THIS machine.
+    `ollama list` prints the content id per tag and `ollama show` the quantization; a tag
+    the list does not carry has not been pulled, and generating against it would ask the
+    runtime to fetch weights nobody chose.
+    """
+    try:
+        listing = subprocess.run(
+            [binary, "list"], capture_output=True, timeout=120,
+            stdin=subprocess.DEVNULL,
+        )
+        shown = subprocess.run(
+            [binary, "show", tag], capture_output=True, timeout=120,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ModelIdentityUnread(
+            f"nao foi possivel perguntar ao runtime pela identidade de {tag!r}: {error}"
+        ) from error
+    if listing.returncode != 0 or shown.returncode != 0:
+        raise ModelIdentityUnread(
+            f"o runtime recusou a consulta de identidade de {tag!r} "
+            f"(list rc={listing.returncode}, show rc={shown.returncode})"
+        )
+    content_id = ""
+    for line in listing.stdout.decode("utf-8", errors="replace").splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] == tag:
+            content_id = fields[1]
+            break
+    if not content_id:
+        raise ModelIdentityUnread(
+            f"o tag {tag!r} nao esta em `ollama list`: ele nao foi puxado nesta maquina, "
+            "e gerar contra ele pediria ao runtime para buscar pesos que ninguem escolheu"
+        )
+    found = _OLLAMA_QUANTIZATION.search(shown.stdout.decode("utf-8", errors="replace"))
+    if not found:
+        raise ModelIdentityUnread(
+            f"`ollama show {tag}` nao declara quantizacao: ela e parte da familia "
+            "geradora, e duas quantizacoes de uma linhagem sao dois geradores"
+        )
+    return content_id, found.group(1)
 
 
 def cli_env_without_keys() -> dict[str, str]:
@@ -713,13 +812,17 @@ DEFAULT_MODELS = {
     # with --models gemini-3-flash-preview,gemini-3.5-flash-lite,... to spread
     # across the gemini-3.x buckets.
     "gemini_cli": "gemini-3-flash-preview",
+    # The first of the two reserved lineages. The tag is EXPLICIT and never `latest`: a
+    # moving pointer resolves to one set of weights today and another tomorrow, so it does
+    # not identify what generated a line.
+    "ollama": "qwen2.5:7b",
 }
-# EMPTY, and it is a fact about the lanes THIS script drives rather than a gap: none of
-# them exposes a sampling seed, so every row records the reason instead of a number. The
-# set stays because it is the mechanism — a lane that offers a seed is one entry, and
-# `seed_pair` on the assembler side already expects exactly one of the two. The `ollama`
-# lane does offer one, which is why its rows carry a seed and are written elsewhere.
-SEEDED_PROVIDERS: set[str] = set()
+# The lanes that accept a sampling seed, which is ONE: the local runtime. On it the seed is
+# derived from the paired candidate id, so a resumed run reproduces the same seed for the
+# same line — a seed drawn at random would be recorded and never reproducible, which is
+# the opposite of what the field is for. Every other lane records `seedNullReason`, and
+# `seed_pair` on the assembler side expects exactly one of the two.
+SEEDED_PROVIDERS: set[str] = {"ollama"}
 SEED_NULL_REASON = "provider API does not expose a sampling seed"
 TEMPERATURE = 0.8
 # Output budget of the REST lane, per generation. A token covers a FRACTION of a word of
@@ -754,12 +857,14 @@ def max_output_tokens(target_words: int) -> int:
     return math.ceil(target_words * OUTPUT_TOKENS_PER_WORD) + OUTPUT_TOKEN_MARGIN
 
 
-def http_json(url: str, payload: dict, headers: dict[str, str]) -> dict:
+def http_json(
+    url: str, payload: dict, headers: dict[str, str], timeout: float = 120
+) -> dict:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json", **headers}
     )
-    with urllib.request.urlopen(request, timeout=120) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -868,6 +973,45 @@ def call_provider(
         text = out_file.read_text(encoding="utf-8").strip() if out_file.exists() else ""
         if not text:
             raise GenerationRefused("codex saída vazia")
+        return text
+    if provider == "ollama":
+        # The one lane where the sampling parameters are OURS, and all three are passed:
+        # the seed makes the line reproducible, the temperature is the same 0.8 the rest of
+        # the corpus was generated under, and `num_predict` is the output ceiling scaled to
+        # the paired length. `stream: false` because a streamed answer would have to be
+        # reassembled here and a reassembly bug is indistinguishable from a truncation.
+        data = http_json(
+            f"{OLLAMA_HOST}/api/generate",
+            {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": TEMPERATURE,
+                    "seed": seed,
+                    "num_predict": max_output_tokens(target_words),
+                },
+            },
+            {},
+            timeout=OLLAMA_TIMEOUT,
+        )
+        text = str(data.get("response") or "")
+        if not text.strip():
+            raise GenerationRefused(
+                f"ollama sem conteudo: {str(data)[:160]}"
+            )
+        # `done_reason` is the runtime's own word for why it stopped, and anything but
+        # `stop` means the answer is a fragment — `length` is the `num_predict` ceiling
+        # hit, `load` is a model that never got going. A fragment accepted as a whole
+        # answer is a scientific defect, which is the same rule the other lanes apply to
+        # their own truncation signals.
+        reason = str(data.get("done_reason") or "")
+        if reason and reason != "stop":
+            raise GenerationRefused(
+                f"ollama interrompeu a resposta ({reason}) com {len(text)} caracteres "
+                f"para um alvo de {target_words} palavras: texto cortado nao entra no "
+                "corpus"
+            )
         return text
     if provider == "gemini_cli":
         # Headless, read-only, JSON out; the operator's login supplies auth, so
@@ -1138,6 +1282,27 @@ def main() -> None:
             "--effort e --effort-source andam juntos: um nível sem origem declarada "
             "não é distinguível de um nível inferido"
         )
+    # The reserve generates in the RESERVED islands, imposed here and not promised
+    # downstream. The seating is by FAMILY and by COMPONENT: one reserved line drags its
+    # whole component into `test`, and a component reaches whatever the human seed unions
+    # — so a reserved row seeded from a core island pulls that island's core rows into the
+    # blind block and spends the reserve's line budget somewhere the plan did not put it.
+    # Refused before the seeds file is opened, before the lane lock and before the first
+    # generation, on the same ground as the island check itself.
+    #
+    # The CONVERSE is not guarded: a core lane pointed at a reserved island is admitted
+    # here, and it would consume the budget the plan set aside for the reserve. That is a
+    # coverage-plan question and this refusal does not decide it.
+    if args.provider == "ollama" and args.island["island"] not in (
+        assembler().RESERVED_ISLANDS
+    ):
+        raise SystemExit(
+            f"a ilha {args.island['island']!r} nao e reservada, e esta lane escreve a "
+            f"reserva OOD. Ilhas reservadas: "
+            f"{', '.join(assembler().RESERVED_ISLANDS)}. Uma linha reservada semeada "
+            "numa ilha de nucleo arrasta o componente dela — e as linhas de nucleo que o "
+            "pai humano une — para o bloco cego"
+        )
 
     import os
 
@@ -1175,7 +1340,7 @@ def main() -> None:
             )
         return
     # CLI channels authenticate via the user's login, not an env key.
-    if provider not in CLI_PROVIDERS and not keys[provider]:
+    if provider not in KEYLESS_PROVIDERS and not keys[provider]:
         raise SystemExit(
             f"defina a variável de ambiente da chave do provedor '{provider}'"
         )
@@ -1185,6 +1350,18 @@ def main() -> None:
     # the first call so the version recorded is the one that produced the first row
     # as well as the last.
     captured_harness = harness_version(provider)
+    if provider == "ollama" and captured_harness is None:
+        # Refused instead of written as `unknown`, and ONLY on this lane. Everywhere else
+        # an uncaptured version costs the row its eligibility and the core does not need
+        # it; here the rows ARE the OOD reserve, whose positives floor
+        # (`countsTowardHeldOutFloor`) is filtered by that very eligibility. Hours of
+        # generation that cannot count toward the floor answer no question.
+        raise SystemExit(
+            "a versao do runtime ollama nao foi capturada. Esta lane escreve a reserva "
+            "OOD, cujo piso de positivos e filtrado por elegibilidade, entao uma corrida "
+            "sem versao produz material que nao conta — e uma versao inventada e a "
+            "substituicao que R6 proibe"
+        )
     if provider in HARNESS_VERSION_ARGV:
         print(
             f"harness {provider}: "
@@ -1254,6 +1431,24 @@ def main() -> None:
                 continue
         return None
 
+    # The identity a row writes for its generator, per provider. On every lane but the
+    # local runtime the three fields are the model id, because the id is all the provider
+    # gives; on `ollama` the family carries the QUANTIZATION and the version carries the
+    # CONTENT ID, because a tag is a label and the weights behind it are what generated
+    # the text. Read once, before the first call, for the same reason the harness version
+    # is: it identifies what produced the first row as well as the last.
+    def generator_identity(model: str) -> tuple[str, str, str]:
+        if provider != "ollama":
+            return model, model, model
+        content_id, quantization = ollama_model_identity(model)
+        return (
+            assembler().reserve_family(model, quantization),
+            model,
+            f"{model}@{content_id}",
+        )
+
+    identities = {model: generator_identity(model) for model in models}
+
     try:
         for index, row in enumerate(pairs, start=1):
             recipe = recipe_for_island(island, row["candidateId"])
@@ -1289,9 +1484,9 @@ def main() -> None:
                 domain_source=f"ai_{provider}",
                 meta={
                     "provider": provider,
-                    "family": model,
-                    "model": model,
-                    "version": model,
+                    "family": identities[model][0],
+                    "model": identities[model][1],
+                    "version": identities[model][2],
                     "recipe": recipe,
                     # The lane the generator OBSERVED itself running on, plus the
                     # version of the binary that produced this very text. Both are
@@ -1331,7 +1526,6 @@ def main() -> None:
             time.sleep(args.sleep)
     finally:
         writer.close()
-        batch_family = ",".join(models)
         batch_path.write_text(
             json.dumps(
                 {
@@ -1341,9 +1535,13 @@ def main() -> None:
                     "sourceId": f"src_ai_{provider}",
                     "generationProtocolVersion": "generation-v1",
                     "provider": provider,
-                    "family": batch_family,
-                    "model": batch_family,
-                    "version": batch_family,
+                    # The batch names what the ROWS name, field for field: the governance
+                    # audit compares a record against its declared batch by exact
+                    # equality, so a batch that spelled the family or the version its own
+                    # way would block every row it describes.
+                    "family": ",".join(identities[m][0] for m in models),
+                    "model": ",".join(identities[m][1] for m in models),
+                    "version": ",".join(identities[m][2] for m in models),
                     "models": models,
                     "island": island["island"],
                     "islandSeedBlock": island["seedBlock"],
