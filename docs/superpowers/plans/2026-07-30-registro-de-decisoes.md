@@ -10244,3 +10244,9 @@ da funcao e deixei a MESMA frase no docstring do MODULO. Uma frase corrigida num
 corrigida num sitio.
 
 **Fechamento:** lab 755 / 750 verde.
+
+### Quarta rodada das pistas: APROVA sem achado (2026-08-21)
+
+`.codex-reviews/codex-pistas-r4-veredito.txt`, tres comandos de tres, `EXIT=0`. **APROVA**: o host do
+filho FECHADO POR CONSTRUCAO, as duas frases IGUAIS E AFERIDAS, nenhuma frase sem assercao, nenhum
+achado nao nomeado. A unidade das PISTAS esta fechada, e com ela as tres desta sessao.
