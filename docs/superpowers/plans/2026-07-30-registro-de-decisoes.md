@@ -10609,3 +10609,10 @@ morder sao dois atos, e eu fiz o primeiro.
 **Bateria da unidade: onze mutantes, todos vermelhos.**
 
 **Fechamento:** lab 761 / 750 verde.
+
+### Quarta rodada da dependencia de ordem: APROVA (2026-08-22)
+
+`.codex-reviews/codex-ordem-r4-veredito.txt`, tres comandos de tres, `EXIT=0`. **APROVA**: nao existe
+quinto leitor da autoridade, nenhuma comparacao vacua, numeros conferem, nenhum achado nao nomeado. A
+unidade da dependencia de ordem esta fechada, e com ela a fila de dividas de Fase 3 que eram minhas e
+autocontidas.
