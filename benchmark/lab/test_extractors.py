@@ -5357,10 +5357,16 @@ class GeneratorCaptureTests(unittest.TestCase):
         # be as wrong as the filtered one — nineteen islands are short of this parents
         # file and the line has to say so.
         linha = printed.split("ilhas curtas no plano inteiro: ")[-1].splitlines()[0]
-        relatado = {
-            nome: contagem
-            for nome, contagem in (entrada.split(" ") for entrada in linha.split(", "))
-        }
+        entradas = [entrada.split(" ") for entrada in linha.split(", ")]
+        # Counted BEFORE the mapping is built, and it is not redundant with the equality
+        # below: a `dict` collapses a repeated island silently, so a line that prints one
+        # of them twice satisfies both the mapping and a count taken after it. What the
+        # equality cannot see, the count of PRINTED entries can.
+        self.assertEqual(len(entradas), len(lab.ISLAND_PLAN) - 1)
+        self.assertEqual(
+            len({nome for nome, _ in entradas}), len(entradas), linha
+        )
+        relatado = {nome: contagem for nome, contagem in entradas}
         esperado = {
             ilha["island"]: f"{cota if ilha['island'] == 'ilha_04' else 0}"
             f"/{ilha['lines']['mixed']}"
@@ -5369,7 +5375,6 @@ class GeneratorCaptureTests(unittest.TestCase):
         }
         esperado["ilha_04"] = f"1/{lab.island_named(lab.ISLAND_PLAN, 'ilha_04')['lines']['mixed']}"
         self.assertEqual(relatado, esperado)
-        self.assertEqual(len(relatado), len(lab.ISLAND_PLAN) - 1)
 
     def test_the_agy_mixing_lane_asks_by_CELL_and_names_the_island_slot(self) -> None:
         import make_mixed

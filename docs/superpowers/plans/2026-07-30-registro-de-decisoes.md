@@ -10464,3 +10464,23 @@ pais), as tres vermelhas.
 `open("a")`. No teste ele fica no diretorio temporario e nada e escrito no repositorio.
 
 **Fechamento:** lab 756 / 750 verde.
+
+### A quarta leitura, e a minha contagem estava do lado errado do `dict` (2026-08-22)
+
+`.codex-reviews/codex-ilhas-r4-veredito.txt`, tres comandos de tres, `EXIT=0`. **REPROVA** com um
+achado, e a pergunta que eu fiz foi "existe quarta leitura errada?" — existia.
+
+**Duplicar uma entrada impressa.** Um `dict` colapsa a repetida, entao a igualdade do mapa continua
+verdadeira; e a minha contagem de cardinalidade estava DEPOIS da construcao do `dict`, logo contava as
+chaves e nao as entradas impressas — redundante com a igualdade e cega ao mutante. Duas linhas
+trocadas de lugar: contar `linha.split(", ")` ANTES, e exigir unicidade dos nomes. M7 vermelha.
+
+**O que estas quatro voltas ensinam, e vale mais que a unidade.** Cada rodada achou uma leitura nova
+do MESMO relatorio, e as quatro passavam pelo teste da rodada anterior: ler a fatia filtrada,
+recomputar depois do filtro, deixar cair as ilhas com zero, e imprimir uma duas vezes. O padrao nao e
+descuido de assercao — e que eu escrevia a assercao contra o defeito que eu tinha acabado de
+consertar, e nao contra a FORMA do que a linha afirma. A forma e "este mapa, exactamente, com estas
+chaves, uma vez cada": tres predicados soltos, uma igualdade sobre chaves colapsadas e uma contagem do
+lado errado do `dict` sao tres aproximacoes dela.
+
+**Fechamento:** lab 756 / 750 verde.
