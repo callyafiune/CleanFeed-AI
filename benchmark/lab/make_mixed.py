@@ -924,6 +924,11 @@ def main() -> None:
         # decorativo depois de a cota estar gasta. O arquivo de pais e do corpus inteiro, e
         # a ilha toma a fatia que o plano lhe da.
         lab = assembler()
+        # O plano INTEIRO e conferido sobre a lista ANTES do filtro de ilha, e essa e a
+        # ordem que importa: um relatorio do plano lido da fatia de uma ilha imprime as
+        # outras dezenove como 0 pais, que e falso e mais barato de acreditar do que de
+        # conferir.
+        curtas_do_plano = islands_short_of_the_mixed_quota(parents)
         parents = [
             pai
             for pai in parents
@@ -1004,13 +1009,13 @@ def main() -> None:
             f"gerando {len(pending)} mistos em {args.island['island']} "
             f"(celulas={len(set(alocacao))}); ja no --output, de todas as ilhas: {len(done)}"
         )
-        # O DEFICIT desta ilha antes de a primeira chamada ser gasta, e o rendimento da
-        # banda so pode piora-lo. Excedente numa ilha nao preenche a cota de outra, porque
+        # A corrida imprime o deficit antes de gastar a primeira chamada, e o rendimento da
+        # banda so pode piorar o numero impresso. Excedente numa ilha nao preenche a cota de outra, porque
         # cada ilha toma so o proprio bloco de semente — entao um total global de pais diz
         # menos do que parece. Aviso e nao recusa: o remedio (mais pais, outra janela, ou
         # celula sub-preenchida aceita) e escolha de quem coleta, e recusar aqui pararia
         # uma corrida que ainda produz as linhas que a ilha CONSEGUE.
-        curtas = islands_short_of_the_mixed_quota(parents)
+        curtas = curtas_do_plano
         desta = curtas.get(args.island["island"])
         if desta is not None:
             tem, cota = desta

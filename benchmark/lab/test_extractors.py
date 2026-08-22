@@ -5292,6 +5292,29 @@ class GeneratorCaptureTests(unittest.TestCase):
         self.assertEqual(sum(por_ilha.values()), cota - 1)
         self.assertEqual(list(por_ilha), [island["island"]])
 
+        # THE WHOLE MAP, and not just the island under test: handed one island's slice, the
+        # function reports the other nineteen as EMPTY — which is true of the slice and
+        # false of the plan. So a caller that filters first and reports afterwards prints
+        # nineteen false deficits, and this equality is what refuses that reading.
+        todas = make_mixed.islands_short_of_the_mixed_quota(mine[:cota])
+        self.assertEqual(
+            sorted(todas),
+            sorted(
+                ilha["island"]
+                for ilha in lab.ISLAND_PLAN
+                if ilha["island"] != island["island"]
+            ),
+        )
+        for nome, (tem, quota) in todas.items():
+            self.assertEqual((nome, tem), (nome, 0))
+            self.assertEqual(quota, lab.island_named(lab.ISLAND_PLAN, nome)["lines"]["mixed"])
+        # And `main` computes it BEFORE the island filter, which is the ordering the
+        # equality above makes load-bearing.
+        source = Path(make_mixed.__file__).read_text(encoding="utf-8")
+        antes = source.index("curtas_do_plano = islands_short_of_the_mixed_quota(parents)")
+        depois = source.index('if lab.island_of_seed(lab.ISLAND_PLAN, pai["id"])["island"]')
+        self.assertLess(antes, depois)
+
     def test_the_agy_mixing_lane_asks_by_CELL_and_names_the_island_slot(self) -> None:
         import make_mixed
         import make_mixed_agy

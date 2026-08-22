@@ -10380,3 +10380,44 @@ chavear pelo bloco de semente, M3 ler "curta" como abaixo da cota menos um — a
 primeira e a que importa, porque e exactamente o erro que a linha antiga da § 7 cometia.
 
 **Fechamento:** lab 756 / 750 verde, § 5.4c nova com a tabela, § 7 reescrita com o numero.
+
+### O codex achou o defeito que eu embarquei, e derrubou duas frases da minha propria retratacao (2026-08-22)
+
+`.codex-reviews/codex-ilhas-curtas-veredito.txt`, seis comandos de seis, `EXIT=0`. **REPROVA**, cinco
+achados. Ele confirmou o aviso-em-vez-de-recusa e os quatro numeros das ilhas, e achou o resto.
+
+**O DEFEITO QUE EU EMBARQUEI, e e o pior desta volta.** `main` filtra `parents` para a ilha da
+corrida e eu passava ESSA FATIA ao relatorio do plano inteiro. Consequencia: com uma ilha na cota, as
+outras dezenove eram impressas como **0/100** — falso, e mais barato de acreditar do que de conferir.
+E o meu teste nao o pegava porque so passava pais de UMA ilha: a mesma forma de fixture complacente
+que esta sessao ja registrou cinco vezes. Conserto: o plano e conferido ANTES do filtro, com a ordem
+afirmada por teste (`antes < depois` no arquivo) e o mapa COMPLETO exigido — as dezenove ilhas com
+`(0, cota)` quando se passa a fatia de uma. Mutante M4 vermelho.
+
+**E ele derrubou duas frases da minha retratacao, o que e a parte que eu nao esperava.**
+
+*"Plana" e "o efeito nao existe" afirmam demais.* A remedicao mantem a sequencia global de acertos
+fixa, mas **nao isola** a cardinalidade do template da particao POSICIONAL dos acertos entre
+templates — e, nos lotes de cinco, do alinhamento das fronteiras de lote. Logo o que eu medi e "nao
+houve tendencia monotona nesta atribuicao", e nem o efeito nem a ausencia dele estao estabelecidos. A
+retirada da guarda continua certa pela mesma razao de sempre — guarda precisa de consequencia
+MEDIDA, e nao ha — mas a frase que a justifica encolheu.
+
+*E `generatorExposure` NAO sustenta "nenhuma fatia pode sofrer atribuicao".* Ele e **derivado** de
+`generatorFamily` (`heldOut.has(family) ? "unseen" : "seen"`), entao um confundimento de nivel de
+familia alcanca-o. E alcanca de facto, e isto e achado novo: **a reserva e gerada nas tres ilhas
+reservadas**, logo o recall da fatia `unseen` fica confundido com os templates dessas ilhas, e
+reamostragem nenhuma os separa. E o mesmo confundimento que a `proxyReason` da classe mista declara,
+num eixo que **tem** gate. A § 7 passou a nomear a fatia da reserva como o consumidor conhecido da
+divida do plano de cobertura — que era exactamente a pergunta "quem consome isto?" que eu tinha
+declarado sem resposta.
+
+**O residuo do registro foi para onde ele pertence.** Ele apontou que a entrada original ainda
+descreve a guarda como valida. O registro e append-only e nao se reescreve; o mecanismo da casa para
+isto e a § 6 do ESTADO — "aparecem no registro e nao valem" —, e a alegacao entrou lá com o numero,
+a causa e o commit que a removeu.
+
+**Uma frase sem predicado** em `make_mixed.py` ("O DEFICIT desta ilha antes de a primeira chamada ser
+gasta") virou oracao.
+
+**Fechamento:** lab 756 / 750 verde, `docs:check` OK.
