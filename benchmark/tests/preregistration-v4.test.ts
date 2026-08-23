@@ -1964,26 +1964,55 @@ describe("o eixo que sai da união é carregado por outro mecanismo, e o conjunt
     );
   });
 
-  it("mantém aberta a DECISÃO do nível de gerador da classe mista, que a emenda não fecha", () => {
-    // A exceção `(mixed, generatorVersion)` que a emenda de U4 registrou DISSOLVEU-SE, e
-    // dissolveu-se pelo motivo errado para quem a leia depressa: não porque a classe mista
-    // passou a declarar um nível de gerador, e sim porque o eixo deixou de ser reportado. A
-    // pergunta que a exceção nomeava continua ABERTA e vai a ratificação, então ela migra
-    // para uma asserção sobre a tabela em vez de desaparecer com a entrada.
+  it("declara o nível de GERADOR da classe mista, e declara por que só a família", () => {
+    // A classe mista reamostra o pai CRUZADO com a operação (por proxy de template) e agora
+    // CRUZADO com a família geradora. O vão da IA de uma linha mista é escrito por um modelo,
+    // então linhas do mesmo modelo estão correlacionadas por ele; um desenho que não nomeie o
+    // fator sorteia-as como independentes nessa dimensão e o limite publicado sai mais
+    // ESTREITO. R3 proíbe comprar passe com menos evidência, e `ai-recall` já aninha a família
+    // no topo — o silêncio da tabela sobre a mista era lacuna registrada, não decisão.
     const mixed = PREREGISTRATION_V4.resampling.estimandClasses.mixed;
     expect(mixed.levels.map((level) => level.axis)).toEqual([
       "groups.humanSeed",
       "groups.promptTemplate",
+      "groups.generatorFamily",
     ]);
-    // NENHUM nível de gerador, nem a família nem a versão, nem como fallback. A classe mista
-    // constrói ZERO linhas hoje; no dia em que construir, um intervalo de
-    // `mixed.warning.recall` é agrupado por semente e template e por mais nada, e é isso que
-    // esta asserção mantém visível.
+    expect(mixed.unitKind).toBe("multiway");
+
+    // A FAMÍLIA e não a versão, e a razão é colinearidade MEDIDA e não preferência:
+    // `mixed_record` chama `generation_axes(lane, model, model, ...)`, então numa linha mista
+    // os dois eixos carregam o MESMO token para todo modelo. Dois fatores com níveis
+    // idênticos multiplicariam a contagem de reamostragem do mesmo nível duas vezes em
+    // `drawMultiway`, o que infla a variância por uma dependência que não existe.
     const niveis = declaredLevelAxes(GENERATED_CLASS_ESTIMANDS.mixed);
-    expect([...niveis]).not.toContain("groups.generatorFamily");
+    expect([...niveis]).toContain("groups.generatorFamily");
     expect([...niveis]).not.toContain("groups.generatorVersion");
-    // A classe `ai` tem os dois, e é o contraste que impede a asserção acima de passar por a
-    // tabela não nomear gerador em parte alguma.
+
+    // O fator novo NÃO carrega proxy: `proxyFor` é para o fator da tabela congelada que um
+    // eixo substitui, e a família não substitui nada — a tabela simplesmente não a nomeava.
+    // Só o nível da operação é substituição, e ele continua o único.
+    const comProxy = mixed.levels.filter(
+      (level) => level.proxyFor !== undefined,
+    );
+    expect(comProxy.map((level) => level.axis)).toEqual([
+      "groups.promptTemplate",
+    ]);
+
+    // A contagem de níveis deste fator é do CONJUNTO DE MODELOS da corrida, que é argumento
+    // por corrida. Por N5 o critério é declaração e não presença, e o que declara é o número
+    // publicado: o relatório imprime o nível por eixo, então uma corrida de um modelo só
+    // publica `groups.generatorFamily=1` e o leitor vê que o fator não variou. Quem PRENDE
+    // isso é `report.test.ts` ("a seção de reamostragem"), que casa `groups.generatorFamily=1`
+    // na linha renderizada da mista — não este teste, que só lê a tabela. A frase fica aqui
+    // porque é a razão de a linha existir; a asserção fica lá porque é lá que ela pode existir.
+    //
+    // E o que ESTE teste pode prender: a tabela é obrigatória e não cai para linhas
+    // independentes, sem o que um fator declarado não carregaria dependência nenhuma.
+    expect(PREREGISTRATION_V4.resampling.required).toBe(true);
+    expect(PREREGISTRATION_V4.resampling.fallbackToIndependentRows).toBe(false);
+
+    // O CONTRASTE, sem o qual as asserções acima passariam por a tabela não nomear gerador em
+    // parte alguma: `ai-recall` tem os dois eixos.
     const doAi = declaredLevelAxes(GENERATED_CLASS_ESTIMANDS.ai);
     expect([...doAi]).toContain("groups.generatorFamily");
     expect([...doAi]).toContain("groups.promptTemplate");
@@ -2062,12 +2091,17 @@ describe("o eixo que sai da união é carregado por outro mecanismo, e o conjunt
     expect(PREREGISTRATION_V4.resampling.publishedBound).toBe(
       "wider-of-analytic-and-resampled",
     );
-    // O fator de `mixed`, medido pelo mesmo caminho.
+    // Os fatores de `mixed`, medidos pelo mesmo caminho: pai, operação por proxy de
+    // template, e família geradora.
     expect(
       PREREGISTRATION_V4.resampling.estimandClasses.mixed.levels.map(
         (level) => level.axis,
       ),
-    ).toEqual(["groups.humanSeed", "groups.promptTemplate"]);
+    ).toEqual([
+      "groups.humanSeed",
+      "groups.promptTemplate",
+      "groups.generatorFamily",
+    ]);
   });
 
   it("deixa a DÍVIDA de `domainSource` escrita, e não escondida", () => {

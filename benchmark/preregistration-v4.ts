@@ -83,7 +83,28 @@ export type ResamplingUnitKind = "hierarchical" | "multiway";
  *     generation batch, nested in that order.
  *   * `mixed` — statistics over mixed text: the human parent CROSSED with the edit
  *     operation, never nested, because nesting what is crossed understates the
- *     variance.
+ *     variance; and CROSSED with the generator family, because the AI stretch of a
+ *     mixed line is written by a model and lines sharing one are correlated through
+ *     it. A design silent about that factor draws them as independent on that
+ *     dimension and publishes a NARROWER limit, which R3 forbids buying.
+ *
+ *     The family and not the version, and the reason is measured collinearity rather
+ *     than preference: `assemble_corpus.mixed_record` calls
+ *     `generation_axes(lane, model, model, ...)`, so on a row THAT ASSEMBLER wrote the
+ *     two axes carry the SAME token for every model. Two factors with identical levels
+ *     would multiply the same level's resample count twice in `drawMultiway`, inflating
+ *     the variance for a dependence that does not exist. The scope is that assembler and
+ *     not the class: a v4 mixed record admitted from outside it may carry a family and a
+ *     version that differ, and then the collinearity does not hold — what holds is that
+ *     every lane this repository runs (api, local runtime, reserve, session ingest) goes
+ *     through `mixed_record`.
+ *
+ *     How many levels that factor has is decided by the RUN's model set, which is a
+ *     per-run argument. That is admissible here and not in the human rows below
+ *     because the criterion is DECLARATION, not presence: the resampling report
+ *     publishes the level count per axis, so a one-model run publishes
+ *     `groups.generatorFamily=1` and the reader sees a factor that did not vary. What
+ *     the human rows could not do is the same thing in SILENCE.
  *   * `calibration` — ECE and Brier inherit the unit of the population under
  *     analysis, so the row names that unit and lets it fall back per row.
  *

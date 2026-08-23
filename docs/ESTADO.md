@@ -23,7 +23,7 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 172 arquivos / 3.116 testes (vitest) + 767 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| suíte | 172 arquivos / 3.118 testes (vitest) + 767 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
 | dos quais, o avaliador | 2.500 — 1.739 em 46 arquivos de `benchmark/tests`, 761 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
@@ -75,6 +75,7 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | | "texto em pt-BR em geral" **não é alegável** — sem moldura amostral não há estimando | OP |
 | | a pré-inscrição vigente é **`benchmark/preregistration-v4.{json,ts}`** (`PREREGISTRATION_V4`, `policyVersion: "preregistration-v4-v1"`) | código |
 | | a família certificadora é **por célula**, `m=4`: `calibration-global`, `fpr-ptwiki`, `integrity`, `recall-at-threshold`. α familiar 0,05; α por hipótese **0,0125**; correção de Bonferroni | OP |
+| | a unidade de reamostragem da classe **mista** é `groups.humanSeed` × `groups.promptTemplate` (proxy da operação) × **`groups.generatorFamily`**, `multiway`. A família e não a versão: medido, `mixed_record` escreve o MESMO token nos dois eixos, e dois fatores de níveis idênticos contariam a mesma dependência duas vezes. A contagem de níveis do fator é do conjunto de modelos da corrida, e o que a declara é o número publicado no relatório (§ 5.11) | AG |
 | Regime 2 | cada release certifica **só a própria hipótese versionada**; erro familiar ao longo da história do produto **não é alegado**. Toda execução certificadora é publicada, passe ou reprove | OP |
 | | pisos de poder: **300** negativos humanos por célula em `test` (`criticalFprHumanNegatives`), **300** unidades de amostragem (`samplingUnits`), **200** positivos para recall (`criticalRecallPositives`) | código |
 | | coleta: alvo de **4.000** linhas humanas na célula, piso de **1.500**, total de **4.000**, **1** linha por documento de origem (`collection`) | OP |
@@ -129,7 +130,7 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | | **pertença de célula é exigida no selo, não presença**: em corpus `release`, `sealDataset` recusa quando alguma linha humana declara `humanSourceType` fora de `requiredHumanSourceTypes` — a recusa nomeia cada grafia observada fora da moldura, em ordem, e diz quantas deixou de listar. O gate antigo se satisfazia com **uma** linha da célula, então 3.999 podiam não declarar célula nenhuma sob uma tabela publicada POR célula. O esquema não mudou: `assemble_corpus.py` já escreve a célula em toda linha humana, medido | código |
 | | **o gate de composição deixa recibo dentro do artefato selado**: `compositionReceipt` é chave obrigatória de `SplitArtifact` (`null` fora de `release`), o critério dos três limites é **chamado** e não copiado, e `validateSplitArtifact` **reconta** o recibo a partir dos registros e das atribuições, comparando por digest canônico. O par é conferido: atestado e recibo caem juntos, porque os dois derivam de `scientificUse: "release"` e um sem o outro descreve um corpus que é release e não é | código |
 | | `BenchmarkReport` chega por **parser** e não por cast: `parseBenchmarkReport` recusa com **oito** códigos nomeados, recomputa o selo, e os três sítios que faziam `as BenchmarkReport` (`verify-evidence`, `publish-evidence`, `publish-profile`) passam por ele — o de `verify-evidence` é o que lia `releaseDecision` do objeto castado e **decidia o ramo**. O limite está declarado e preso por teste: o parser fecha a edição **não re-selada**; uma edição re-selada com a receita exportada passa, porque `release.json` não sela `evidenceDigest` nem `gateDecision` | código |
-| | as **varreduras de prosa têm alcance medido**, não declarado: a do `evaluatorDigest` ancora na LINHA de publicação e conta multiplicidade (uma linha carregando o valor vivo **e** um hex velho era aceita); a das contagens ratificadas varre **141** arquivos (103 `.ts` + 38 `.py`) contra os 49 de antes e lê também o número do bloco cego, que derivou junto; a do NOTICE proíbe o **nome publicado** e não só o token entre backticks. A varredura alargada achou uma deriva real na primeira passada: `split-audit.test.ts` afirmava 880 linhas no bloco cego onde a autoridade congelada diz **800** | código |
+| | as **varreduras de prosa têm alcance medido**, não declarado: a do `evaluatorDigest` ancora na LINHA de publicação e conta multiplicidade (uma linha carregando o valor vivo **e** um hex velho era aceita); a das contagens ratificadas varre **142** arquivos (103 `.ts` + 39 `.py`) contra os 49 de antes e lê também o número do bloco cego, que derivou junto; a do NOTICE proíbe o **nome publicado** e não só o token entre backticks. A varredura alargada achou uma deriva real na primeira passada: `split-audit.test.ts` afirmava 880 linhas no bloco cego onde a autoridade congelada diz **800** | código |
 | | a sonda de mascaramento **impõe partição** e não só cobertura: registro em duas classes é contado uma vez em `records` e pesado em duas médias, e linha de classe fora dos ids pontuados é média sobre registro que `records` não conta. Id sem rótulo saía das **duas** classes sem ninguém contar | código |
 | | a AUC do baseline é **invariante à ordem da entrada**: a população é renderizada canonicamente antes de chegar ao `StratifiedKFold`, que particiona por POSIÇÃO — dois operadores com os mesmos arquivos em ordem diferente publicavam números diferentes e nada avisava. A guarda lê as DUAS condições (ordem e multiconjunto) e a posição dela é fixada por teste, porque uma linha perdida entre a guarda e o `split` é sempre a mesma linha em qualquer ordem e nenhuma bateria de permutação a vê | código |
 | | rótulo `human` = corte de data **pré-ChatGPT** (`< 2022-11-30`), por campo do documento — nunca por declaração. Na Wikipédia o campo é `revision/timestamp` do dump, e o `pages-articles` carrega só a revisão corrente: dump recente derruba tudo em vez de admitir texto recente, que é a direção fail-closed | OP |
@@ -272,20 +273,18 @@ depois da janela do pai e da medição de poda em material.
 ilhas curtas foram a zero (§ 7, § 5.4d). O que sobra antes de gastar cota é decisão e prosa, não
 medição.
 
-**Ordem, e as duas primeiras são minhas:**
+**Ordem, e a primeira é minha:**
 
-1. **o nível de gerador da classe mista** (§ 4 retirou-o de lá: é meu), que move o `evaluatorDigest` e
-   obriga a repinar `SEALED_POLICY_SHA256` no mesmo commit;
-2. **a razão da cota `mixed = 2000`** escrita no registro, com a coluna "alternativa recusada"
+1. **a razão da cota `mixed = 2000`** escrita no registro, com a coluna "alternativa recusada"
    preenchida — o valor já foi ratificado em 2026-08-04, falta a prosa;
-3. **o recibo humano do selo `release`** — e ele vence AGORA e não na Fase 6, porque uma política de
+2. **o recibo humano do selo `release`** — e ele vence AGORA e não na Fase 6, porque uma política de
    corpus explícita só é aceita para `scientificUse: infrastructure-only`: 4.000 `ai` + 2.000 mistas é
    o preço de um SELO e não o de um detector. Se R4 e o selo forem exclusivos por construção, gerar
    antes de saber qual dos dois cai é o desperdício máximo. As três saídas mecânicas estão nomeadas;
    o que é dele é a jusante — as horas e a ratificação;
-4. **o plano de cobertura de modelo × effort**, com a fatia da reserva como consumidora conhecida
+3. **o plano de cobertura de modelo × effort**, com a fatia da reserva como consumidora conhecida
    (`generatorExposure` é derivada de `generatorFamily`, e a reserva vive nas três ilhas reservadas);
-5. só então **gastar a cota de geração**, que é botão dele — e a primeira corrida tem de **medir o
+4. só então **gastar a cota de geração**, que é botão dele — e a primeira corrida tem de **medir o
    rendimento de banda**, porque `ilha_08` fecha a cota só com 92,6 % e nenhuma corrida mediu isso.
 
 **O que NÃO é preparação e por isso não está nesta ordem:** a assinatura de B1, `consume-holdout` e o
@@ -300,8 +299,7 @@ botão de publicação externa — os três dele, os três de fase posterior.
 | **B1** — o **ramo** está escolhido: **risco assumido por escrito**, não parecer jurídico. Falta a **assinatura** — nome, data e a razão de assumir em vez de consultar —, que é do operador e espera o pacote da Fase 6 | publicação de pesos (Fase 7); `license-review.json` → `approved` |
 | **`consume-holdout`** — o botão irreversível da medição | Fase 5 |
 | a **razão** da cota `mixed = 2000` — **retirada desta tabela em 2026-08-22, e é minha.** O VALOR já foi ratificado por ele: a tabela de 2026-08-04 traz `ai 4000 / mixed 2000` na coluna ratificada, e o que falta é a coluna de razão, que é prosa e não valor a escolher. A derivação está medida na árvore — bloco cego 20 % de 2.000 = 400 mistas, coorte ≥ 0,50 = 240 contra `criticalRecallPositives` 200; a alocação fecha exacta em 20 ilhas × 100; e o teto de material são 2.247 pais contra 2.000. Escrever a razão de um número que continua `mixed: 2_000` não gasta cota, não apaga material e não move digesto algum. Fica como **minha** dívida de registro | eu, antes de gerar a classe mista |
-| **gastar a cota de geração**, e agora ela é a única porta em pé: os dois slates servem o plano — 40 identidades de geração e 60 de mistura — e `island_plan` aceita toda ilha nas DUAS pistas, então nada em código barra uma corrida além da chave de API. Vencem **antes** desta, e são **duas**, as duas nesta tabela: a **razão** da cota `mixed = 2000` e o **nível de gerador** da classe mista. A terceira que esta linha cobrava — a emenda da `proxyReason` selada — está **paga**: a versão fraca está dentro de `preregistration-v4.json` desde `789d8cf`, e a § 7 não a cobra mais | antes de gerar as classes `ai` e `mixed` |
-| o **nível de gerador da classe mista** — **retirado desta tabela em 2026-08-22, e é meu.** Não cai na lista fechada: repinar `SEALED_POLICY_SHA256` não gasta cota, não apaga material e não assina nada. O precedente da árvore é do agente — a emenda que pôs `proxyFor`/`proxyReason` neste MESMO array foi minha e está selada, e o desarme de `warning.mixed-recall`, que é alegação publicada, está como `AG · ratificado`. E a dívida gêmea (eixo de operação) custa o mesmo digesto e vive na § 7 como desenho de agente. A razão de esta linha ter subido para cá era de SEQUÊNCIA — que ninguém gere a mista sem o nível decidido — e estar antes de um ato dele não transfere a decisão. **O que fica dele** é a ratificação da emenda no marco, no molde `AG · ratificado` | eu, antes de gerar a classe mista |
+| **gastar a cota de geração**, e agora ela é a única porta em pé: os dois slates servem o plano — 40 identidades de geração e 60 de mistura — e `island_plan` aceita toda ilha nas DUAS pistas, então nada em código barra uma corrida além da chave de API. Vence **antes** desta, e é **uma**, e não está nesta tabela porque é minha: a **razão** da cota `mixed = 2000`. As outras duas que esta linha cobrava estão **pagas** — a emenda da `proxyReason` selada, dentro de `preregistration-v4.json` desde `789d8cf`, e o **nível de gerador** da classe mista, decidido em 2026-08-23 (§ 3.1, § 5.11), que espera só a ratificação no molde `AG · ratificado` | antes de gerar as classes `ai` e `mixed` |
 | **como satisfazer o recibo humano que o selo de release exige, sob a auditoria amostral que ele mesmo decidiu.** Medido: `sealDataset` recusa com `DATASET_REVIEW_INVALID` um corpus `release` em que **qualquer** registro não sustente alegação de revisão, e o comentário do sítio declara que o desfecho é intencional — os 10.000 registros do corpus morto declaravam `agreement: "agree"` e uma auditoria de PII que nunca houve, e `reviewOf` lê todos como `automated/unreviewed`. O montador **proíbe-se** de produzir recibo (`NO_HUMAN_AUDIT`, com um "DO NOT ADD A RECEIPT BUILDER HERE" escrito), porque quem escreve toda linha é o único que teria os meios de fabricá-lo. `automated/unreviewed` é legítimo e sela `infrastructure-only`; o que ele não pode é sustentar alegação de que alguém olhou. Isso colide com R4 (§ 3.3), que é decisão **dele**: auditoria amostral, sem `passed` por registro. As duas pontas são dele, e reconciliá-las custa horas de revisão humana — ou o selo de release é inalcançável | Fase 3, antes do primeiro selo `release`; hoje nenhum corpus chega lá |
 | re-rodar o codex em **R1** e **R2** — **feito em 2026-08-22**, sob o mandato em pé de manter o codex na revisão gastando menos, e não era item desta tabela: rodar a janela não é dinheiro, e a fronteira escrita é COMPRAR crédito. Os dois voltaram **REPROVA** com um achado cada mais um não nomeado, e os quatro estão consertados no mesmo dia (§ 7 e o registro) | fechado |
 
@@ -699,7 +697,7 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 |---|---|
 | componentes independentes na célula, hoje | **4.000**, todos de tamanho 1, sobre o corpo estampado de 2026-08-06 (§ 5.4b) — a unidade é a PÁGINA (`groups.source = ptwiki_page_<page_id>`) e o piso de 300 fica 13,3× folgado. Era 1 enquanto o pool de 24/07 não carregava `groupAxes` |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| `evaluatorDigest` da árvore | `78d40c5aa432287b58ecf7b0fb64e5e15e8c70ace40431fb4e33c3094031d0ef` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
+| `evaluatorDigest` da árvore | `375e6cc4f46a738829d8c7ea9e2ffe559b709b3825fbcf869417ca599e5c6220` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
 | byte de controle cru em caminho rastreado | **zero**, e imposto por dois testes nomeados, com escopos diferentes de propósito. `digests.test.ts` ("carry no raw control byte, so no code-search tool can skip an evaluator file") varre os **52** de `EVALUATOR_FILES` e **não isenta nada**, porque os bytes desses arquivos são a identidade do avaliador. `tests/unit/repo/line-endings.test.ts` ("leaves no raw control byte in a tracked path the repo calls text") varre **todo** caminho de `git ls-files`, isentando só extensão que `.gitattributes` declara `binary` — nenhuma rastreada hoje, então na prática é a árvore inteira. Os dois recusam controle C0 fora de LF, TAB e CR e apontam `arquivo:linha:coluna` mais o offset de byte. A isenção **não** é a classificação `i/-text` do git: ela é causada pelo byte cru, e filtrar por ela pularia justamente o infrator |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
@@ -1107,6 +1105,71 @@ linha foi gerada. Ela não é opcional — reserva com uma família só não est
 vazia recusa a montagem.
 **Rendimento medido**, do log da corrida que produziu as 400 linhas do qwen: 400 em 249,8 min = **37,5 s por linha** em CPU. Logo 450 linhas custam **≈ 4,7 h por família** e as duas ≈ 9,4 h, sequenciais — 15,7 GB de RAM não sustentam dois modelos carregados. O plano sequencial (pull → gerar → `rm`) mantém o pico num modelo, e apagar a cópia local não custa reprodutibilidade porque o artefato de registro é o id de conteúdo.
 
+### 5.11 O nível de gerador da classe mista, e por que só a família (2026-08-23)
+
+**Medido:** `assemble_corpus.mixed_record` chama `generation_axes(lane, model, model, ...)`, então numa
+linha mista `groups.generatorFamily` e `groups.generatorVersion` carregam o **mesmo token** para todo
+modelo — conferido em `gemini-2.5-flash`, `qwen2.5:7b` e `gpt-5.6-sol`, os três iguais depois de
+`generator_family` e de `axis_token`. O escopo é **aquele montador** e não a classe: um registro
+misto v4 admitido de fora dele pode carregar família e versão diferentes, e aí a colinearidade não
+vale — o que vale é que toda pista que este repositório roda passa por `mixed_record`. Declarar os dois seria dois fatores de níveis idênticos, e
+`drawMultiway` multiplicaria a contagem de reamostragem do mesmo nível duas vezes: variância inflada por
+uma dependência que não existe.
+
+**O efeito na LARGURA, medido com a função de produção** (`bootstrap.test.ts`, "o terceiro fator
+cruzado da classe mista"), porque a alegação foi atacada: percentis de uma estatística de razão não são
+monotônicos sob um vetor de pesos novo, então acrescentar fator poderia **estreitar** — e limite mais
+estreito compra passe. Medido sobre populações sintéticas de 100 a 2.000 linhas, 20 a 60 templates:
+
+| famílias | razão da largura (com fator / sem) |
+|---:|---|
+| 1 (degenerado) | **1,000 a 1,006** nas médias de 12 sementes, e as duas faixas **se sobrepõem** |
+| 2 | 2,05 a 3,91 |
+| 3 | 1,81 a 3,81 |
+| 4 | 1,70 a 3,38 |
+| 8 | 1,79 a 3,10 |
+
+Com mais de um nível o fator **alarga**, em todo regime medido. Com um nível o ataque é certo em espécie
+e nulo em magnitude: `drawMultiway` faz `min(levels − 1, …) = 0`, o multiplicador do fator é sempre 1, e
+o que muda é a **posição no fluxo do PRNG** — o laço consome um sorteio a mais por replicado. Ponto
+contra ponto na semente pré-inscrita isso lê como 0,972, que é estreitamento aparente; faixa contra
+faixa em 12 sementes as duas se sobrepõem. Semente que andou não é variância.
+
+**E há razão mais forte que a medição, achada por mutante equivalente:** um fator de um nível
+contribui um multiplicador **constante** ao peso de toda célula, e o intervalo de uma estatística
+de **razão** é invariante a escala uniforme. Logo nenhuma mutação que só mexa na magnitude desse
+multiplicador pode mover a perna degenerada — três sobrevivem —, e o que a move é quebrar a
+estrutura de produto (`weight *= …` para `weight += …`). A degeneração deste fator não pode
+estreitar um intervalo de razão **por construção**, e não só nos regimes medidos.
+
+**Por que o fator entra.** O vão de IA de uma linha mista é escrito por um modelo, e linhas do mesmo
+modelo estão correlacionadas por ele. `drawMultiway` sorteia os níveis de cada fator com reposição e o
+peso da célula é o produto, então um fator ausente é tratado como sem variação: o limite publicado sai
+mais **estreito**, e R3 proíbe comprar passe com menos evidência. `ai-recall` já aninha a família no
+topo; o silêncio da tabela sobre a mista estava registrado como **aberto**, não como decidido.
+
+**A contagem de níveis é da corrida, e é isso que a declara.** O conjunto de modelos é argumento por
+corrida (§ 7, "nada cruza modelo e effort com template"), então o fator pode ser degenerado numa corrida
+e não noutra, e prosa estática nenhuma diria a verdade sobre as duas. O relatório de reamostragem imprime
+o nível por eixo: uma corrida de um modelo só publica `groups.generatorFamily=1`, e o leitor vê um fator
+que não variou. Pelo critério de N5 — declaração e não presença — isso é admissível, e é mais forte que
+prosa porque diz o que aconteceu.
+
+**Uma fixture que a emenda expôs.** `report.test.ts` escrevia a declaração da unidade mista à mão com
+**três** eixos em `axes` e **dois** em `levels`, e a linha renderizada declarava três fatores e media
+dois — o terceiro desaparecia da coluna "Níveis por fator" sem sequer aparecer como `=1`, que é a falsa
+implicatura que N5 proíbe. Em produção os dois campos vêm do mesmo `chains` e têm sempre o mesmo
+comprimento, então essa forma é **inconstruível** ali: a fixture expressava o que a produção não produz.
+Corrigida, e a linha renderizada passou a ser asserção — é ela que sustenta a frase de que a degeneração
+é declarada por número publicado.
+
+**O que a emenda move, e foi tudo repinado no mesmo commit:** `SEALED_POLICY_SHA256`
+(`b0ad4994…`), o `evaluatorDigest` da árvore (`d7faa854…`, § 5.6) e as três contagens de bytes de
+`test_backbone_policy.py`. A emenda é legítima por § 3.4 — estrutura dos grupos, não resultados: `issuedAt`
+é nulo, 0 tags, nenhum `fit` selado.
+
+**O que fica dele:** a ratificação, no molde `AG · ratificado`.
+
 ## 6. NÃO APLICAR — aparecem no registro e não valem
 
 **A célula v1 × inserção como "inalcançável em todo comprimento", e os Jaccard de 0,848–0,869** (publicados em 2026-08-12 no ESTADO, no registro e em duas mensagens de commit). A sonda que os produziu passou uma **string** para `shingles_of`, que recebe **lista de tokens**: ela mediu 5-gramas de **caractere**, que é outra quantidade. Medido com a API correta, o par cruza 0,82 só a partir de ~223 tokens de pai — a álgebra que eu havia feito antes e depois declarado refutada estava certa. A exclusão da célula permanece, com a razão trocada para viés de comprimento (§ 3.3), e agora presa por teste nos dois lados da fronteira. Lição registrada: passar o tipo errado a uma função de produção devolve um número que **parece** medido.
@@ -1336,6 +1399,7 @@ vazia recusa a montagem.
 
 | dívida | vence |
 |---|---|
+| a **fração descartada de replicados não tem teto.** `MINIMUM_VALID_REPLICATES` exige **1.000** valores finitos e nada limita quantos foram descartados, então um intervalo pode ser publicado condicionado aos sobreviventes sem que a condição apareça. Um fator cruzado a mais aumenta os replicados sem massa em desenho esparso: medido, com 40 linhas em 20 templates e 4 famílias, **4 de 10.000** descartados; nos regimes de 100 a 2.000 linhas, **0 ou 1**. Pequeno hoje e sem teto por construção | antes da primeira corrida certificadora, que é onde o intervalo passa a decidir |
 | a **cota mista é alcançável, e o vínculo que sobrou é rendimento de banda e não número de pais.** A janela de pais é a do extrator — `common.MINIMUM_WORDS`–`MAXIMUM_WORDS`, lida por nome em `make_mixed.admissible_parents` —, e sobre `reserved.jsonl` ela admite **2.578** pais contra os 2.247 do teto anterior, o que leva as quatro ilhas curtas (92, 94, 95, 99) a **zero**. O que fica: a folga mínima é de **8** pais em `ilha_08`, então essa ilha exige **92,6 %** das edições dentro da banda, e a perda de banda vem depois da contagem. As outras dezenove exigem 87,0 % ou menos. Logo a cota deixa de ser impossível — exigia rendimento acima de 1 — e passa a ser condicional ao rendimento medido, que **nenhuma corrida mediu ainda** | medir o rendimento de banda real na primeira corrida, antes de confiar na cota |
 | a **geometria da operação não é conferida no que o gerador devolve, e uma célula excluída volta pela porta de trás.** `mixed_record` recomputa `aiFraction` dos vãos e a corrida descarta fora de banda, mas **nada afere que uma `substituicao` removeu de facto uma seção**. Uma `substituicao/15` que só INSERE satisfaz a banda — o trecho novo continua 15 % do texto final — e degenera em `insercao/15`, que é a célula que `MIX_CELL_EXCLUDED` exclui: medido no modelo, esse par cruza o limite de poda a partir de **218 palavras**, e o que cai é o pai humano com a ponte da ilha. Não é dívida desta unidade — 218 está dentro do teto anterior de 450 — e não é coberta pela taxa da § 5.4d, que mede a geometria PEDIDA e não a devolvida | antes de gerar a classe mista, com o nível de gerador |
 | a **poda morde em `insercao/25`, e a taxa é medida mas o regime de ECO não.** § 5.4d: 11 cruzamentos em 618.720 sorteios, todos nessa célula, **0,036** linhas esperadas por corrida. Quatro dos onze são de pai que o teto anterior já admitia. O que **não** está medido é gerador que ecoa o pai — ali a razão vai a ~1 em qualquer comprimento —, e não há outro gate: `artifact_gate` delega esse caso a `near_dupes` por escrito. Medir exige saída de gerador real | na primeira corrida, junto com o rendimento de banda |

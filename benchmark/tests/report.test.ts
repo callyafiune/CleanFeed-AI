@@ -556,7 +556,11 @@ function metrics(): EvaluationMetrics {
               measured: {
                 estimand: "mixed.warning.recall",
                 method: "multiway" as const,
-                axes: ["groups.humanSeed", "groups.promptTemplate"],
+                axes: [
+                  "groups.humanSeed",
+                  "groups.promptTemplate",
+                  "groups.generatorFamily",
+                ],
                 items: 3,
                 units: 3,
                 levels: [
@@ -572,6 +576,17 @@ function metrics(): EvaluationMetrics {
                     levels: 1,
                     degenerate: false,
                     proxyFor: "operação de edição",
+                  },
+                  // UM nivel, que e a corrida de um modelo so. Em producao `axes` e
+                  // `levels` vem do mesmo `chains` e tem sempre o mesmo comprimento, entao
+                  // uma declaracao com tres eixos e dois fatores e forma que a producao nao
+                  // constroi — e era o que esta fixture escrevia antes de a tabela ganhar o
+                  // terceiro fator, com a linha renderizada a declarar tres e a medir dois.
+                  {
+                    position: 2,
+                    axis: "groups.generatorFamily",
+                    levels: 1,
+                    degenerate: false,
                   },
                 ],
                 demotions: [],
@@ -1942,6 +1957,16 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     expect(mixedRow).toMatch(/3\/3 \(degenerada\)/u);
     expect(mixedRow).toMatch(/groups\.humanSeed=3 \(uma por linha\)/u);
     expect(mixedRow).toMatch(/groups\.promptTemplate=1/u);
+    // O TERCEIRO fator, e e esta assercao que torna verdadeira a frase de que a
+    // degeneracao do fator de gerador e DECLARADA por numero publicado e nao por prosa:
+    // uma corrida de um modelo so imprime `=1` nesta coluna, e o leitor ve um fator que
+    // nao variou. Sem ela, o eixo pode desaparecer da coluna medida enquanto continua na
+    // unidade declarada, que e a falsa implicatura que N5 proibe.
+    expect(mixedRow).toMatch(/groups\.generatorFamily=1/u);
+    // E as duas colunas CONCORDAM no numero de fatores.
+    expect(mixedRow).toMatch(
+      /groups\.humanSeed × groups\.promptTemplate × groups\.generatorFamily/u,
+    );
     // The substitution is named, with the factor it replaces and why.
     expect(units).toMatch(
       /`groups\.promptTemplate` no lugar de "operação de edição"/u,

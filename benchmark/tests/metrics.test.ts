@@ -394,6 +394,7 @@ describe("the published plan declares a unit for every estimand", () => {
     expect(byEstimand.get("mixed.warning.recall")?.unitAxes).toEqual([
       "groups.humanSeed",
       "groups.promptTemplate",
+      "groups.generatorFamily",
     ]);
     // Only the estimands this run actually resampled say so, and they carry the
     // measured unit; the rest declare the unit without claiming a resample (R7).

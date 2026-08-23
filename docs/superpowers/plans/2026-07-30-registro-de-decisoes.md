@@ -10828,3 +10828,128 @@ pela cota — 2.247 → 2.578 pais, quatro ilhas curtas a zero —, e a poda pas
 honestidade da alegação, não a direção dela.
 
 **Bateria final:** 14 mutantes, 17 asserções, zero sobreviventes.
+
+## O nível de gerador da classe mista: entra a FAMÍLIA, e a versão fica fora por colinearidade medida (2026-08-23)
+
+**A decisão.** `resampling.estimandClasses.mixed.levels` ganha um terceiro fator cruzado,
+`groups.generatorFamily`. A unidade da classe mista passa a ser pai × operação (por proxy de template) ×
+família geradora, `multiway`.
+
+**Por que entra.** O vão de IA de uma linha mista é escrito por um modelo, e linhas do mesmo modelo estão
+correlacionadas por ele. `drawMultiway` sorteia os níveis de cada fator com reposição e o peso da célula é
+o produto dos níveis sorteados, então um fator que a tabela não nomeia é tratado como sem variação e o
+limite publicado sai mais **estreito**. R3 proíbe comprar passe com menos evidência, e `ai-recall` já
+aninha a família no topo pela mesma razão. O silêncio da tabela sobre a classe mista estava registrado
+como **ABERTO** desde que a exceção `(mixed, generatorVersion)` se dissolveu — e dissolveu-se pelo motivo
+errado para quem lesse depressa: não porque a classe passou a declarar nível de gerador, mas porque o
+eixo deixou de ser reportado. Uma asserção de teste guardava a pergunta; ela agora carrega a resposta.
+
+**Alternativa recusada: deixar a tabela como estava e declarar a omissão.** Ela é mais fraca e não mais
+honesta: subestimaria a variância em toda corrida de mais de um modelo, e o slate misto planeia cobertura
+de modelo × effort exactamente para ter mais de um. Declarar uma omissão não a corrige.
+
+**Por que a FAMÍLIA e não a versão, e a razão é medida.** `assemble_corpus.mixed_record` chama
+`generation_axes(lane, model, model, ...)` — o mesmo `model` nas duas posições —, então numa linha mista
+`groups.generatorFamily` e `groups.generatorVersion` carregam o **mesmo token**. Conferido em
+`gemini-2.5-flash`, `qwen2.5:7b` e `gpt-5.6-sol`: os três iguais depois de `generator_family` e de
+`axis_token`. Dois fatores de níveis idênticos fariam `drawMultiway` multiplicar a contagem de
+reamostragem do mesmo nível duas vezes, o que infla a variância por uma dependência que não existe. A
+família é também o eixo de que `generatorExposure` deriva.
+
+**Por que o fator novo NÃO carrega `proxyFor`.** Aquele campo é para o fator da tabela congelada que um
+eixo substitui. A família não substitui nada: a tabela simplesmente não a nomeava. Só o nível da operação
+é substituição, e continua o único — preso por asserção, porque uma substituição que se espalhasse em
+silêncio é o defeito que o campo existe para impedir.
+
+**A degeneração possível, e é aqui que o critério de N5 morde.** A contagem de níveis deste fator é do
+CONJUNTO DE MODELOS da corrida, que é argumento por corrida (§ 7, "nada cruza modelo e effort com
+template"). Então o fator pode ser degenerado numa corrida e não noutra, e prosa estática nenhuma diria a
+verdade sobre as duas. Por N5 o critério é **declaração e não presença**, e o que declara é o número
+publicado: o relatório de reamostragem imprime o nível por eixo, então uma corrida de um modelo só
+publica `groups.generatorFamily=1` e o leitor vê um fator que não variou. Declaração por medição é mais
+forte que por prosa, porque diz o que aconteceu e não o que poderia.
+
+**Legitimidade da emenda:** § 3.4 — emendar pré-inscrição depois de ver a ESTRUTURA dos grupos é legítimo,
+depois de ver RESULTADOS não. Nenhum resultado foi visto: `issuedAt` nulo, 0 tags, nenhum `fit` selado. É
+o mesmo fundamento da emenda que pôs `proxyFor`/`proxyReason` neste MESMO array, que foi minha e está
+selada.
+
+**Referência:** Owen 2007 (bootstrap multiway/pigeonhole para fatores cruzados não aninhados) já está em
+`docs/references.md` § "Reamostragem: unidade, hierarquia e fatores cruzados", ancorado em
+`bootstrap.ts:105` e `:444`. A perna de disciplina de publicação é N5, estendida com este caso.
+
+### O que a emenda moveu, tudo repinado no MESMO commit
+
+| coisa | de | para |
+|---|---|---|
+| `SEALED_POLICY_SHA256` | `eb7b439c…` | `b0ad4994…` |
+| `evaluatorDigest` da árvore (ESTADO § 5.6) | `78d40c5a…` | `375e6cc4…` |
+| bytes reserializados / em disco / rastreados | 12.730 / 12.731 / 12.506 | 12.829 / 12.830 / 12.605 |
+
+A primeira tentativa de emenda foi feita reserializando o JSON com `json.dumps`, e ela mudou os bytes de
+um valor **alheio** — `learningRate` de `0.00002` para `2e-05`, mesmo número, representação diferente.
+Num arquivo selado isso é inaceitável: o digesto tem de se mover só pela emenda. Revertida e refeita como
+edição de texto cirúrgica, o diff é de quatro linhas.
+
+### Um defeito de documentação que a decisão desenterrou
+
+`docs/references.md` § N5 citava o `proxyReason` selado a dizer que `promptTemplate` "tem um único nível
+sobre as linhas mistas montadas, logo este fator é degenerado por construção até um eixo de operação
+existir". **Essas palavras não estão no arquivo.** O texto selado diz o oposto — o eixo "carrega TRÊS
+níveis por ilha, um por operação, então este fator deixa de ser degenerado". A citação envelheceu quando o
+slate misto passou de um template único para as 60 identidades `mix-<operação>-ilha-NN`, e o parágrafo que
+estabelece o critério ficou apoiado numa frase que o arquivo já não carregava. O critério não muda; o
+exemplo estava errado. Uma entrada de referência que cita o código tem de ser reconferida contra ele
+quando o código se move, e nada na suíte cobrava isso.
+
+**O que fica dele:** a ratificação da emenda no marco, no molde `AG · ratificado`.
+
+### O ciclo de codex, e ele devolveu REPROVA no ponto que mais importava
+
+O ataque central foi ao raciocínio, não ao código: **percentis de uma estatística de razão não são
+monotônicos sob a multiplicação por um vetor de pesos novo**, então acrescentar um fator cruzado poderia
+ESTREITAR o intervalo — e limite mais estreito compra passe, que é o oposto do que a emenda alega fazer.
+Se isso valesse, a emenda estaria invertida.
+
+**Medido com a função de produção, e o ataque está certo em espécie e nulo em magnitude.** Com mais de um
+nível o fator alarga em todo regime: razão de 1,70 a 3,91 sobre populações de 100 a 2.000 linhas e 20 a
+60 templates. Com **um** nível a razão ponto-contra-ponto na semente pré-inscrita dá **0,972**, que lê
+como estreitamento — e não é: com um nível `drawMultiway` faz `min(levels − 1, …) = 0`, o multiplicador do
+fator é sempre 1, e o que muda é a POSIÇÃO no fluxo do PRNG, porque o laço consome um sorteio a mais por
+replicado. Varridas as MESMAS 12 sementes nos dois desenhos, as faixas **se sobrepõem** e as médias
+coincidem a 0,06 %. Semente que andou não é variância, e a diferença entre as duas coisas é faixa contra
+faixa em vez de ponto contra ponto. Está pinado em `bootstrap.test.ts` com as duas pernas — a que exige
+alargamento acima de 1,5× com dois e quatro níveis, e a que exige sobreposição de faixas com um.
+
+**Os outros três achados, todos válidos:**
+
+- **a colinearidade família/versão não vale em toda linha mista.** Ela vale nas linhas que
+  `assemble_corpus.mixed_record` escreve — e é por ali que passa toda pista deste repositório, api, runtime
+  local, reserva e ingest de sessão —, mas um registro misto v4 admitido de fora dele pode carregar os dois
+  eixos diferentes. A frase foi escopada ao montador, no sítio e no ESTADO;
+- **frase minha sem asserção.** Um comentário de teste dizia "aqui fica preso que o relatório PUBLICA a
+  contagem por eixo" e era seguido só de asserções sobre `required` e `fallbackToIndependentRows`. A
+  asserção existe, mas noutro arquivo: `report.test.ts` casa `groups.generatorFamily=1` na linha
+  renderizada. O comentário passou a apontar para lá em vez de fingir prender;
+- **a fração descartada de replicados não tem teto.** `MINIMUM_VALID_REPLICATES` exige 1.000 finitos e nada
+  limita o descarte, então um intervalo pode ser publicado condicionado aos sobreviventes sem a condição
+  aparecer. Medido: 4 de 10.000 no regime mais esparso, 0 ou 1 nos outros. Virou linha da § 7.
+
+### E uma fixture que a emenda desmascarou
+
+`report.test.ts` escrevia a declaração da unidade mista à mão com **três** eixos em `axes` e **dois** em
+`levels`. A linha renderizada saía declarando três fatores e medindo dois, com o terceiro ausente da
+coluna "Níveis por fator" — nem `=1`, nem `=0`, ausente. É exactamente a falsa implicatura que N5 proíbe,
+e ela sobreviveu porque a suíte inteira estava verde: o renderizador imprime as duas colunas de fontes
+independentes e nada as confronta.
+
+Em produção a forma é **inconstruível**: `resolveResampling` deriva `declaredAxes` e `levelReports` do
+mesmo `chains`, então os dois campos têm sempre o mesmo comprimento. A fixture expressava uma forma que a
+produção não produz — e a lição é que uma declaração escrita à mão numa fixture não é uma amostra do que
+o código gera, é uma segunda autoridade capaz de discordar dele em silêncio.
+
+**Bateria final:** 7 mutantes, 11 asserções, zero sobreviventes. Dois mutantes não aplicaram na primeira
+passagem por âncora ambígua — o eixo `groups.generatorFamily` aparece TAMBÉM em `ai-recall` —, e um
+sobreviveu por eu ter apontado o teste errado: reverter `SEALED_POLICY_SHA256` não move o teste de
+reserialização, move 46 outros. A acoplagem que a docstring de `sealed_policy.py` promete existe, e foi
+medida rodando a suíte com o pino revertido.

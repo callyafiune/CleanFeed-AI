@@ -4492,13 +4492,31 @@ a razão é que a tabela é lida como declaração do desenho, e declarar um fat
 **A qualificação, e ela é necessária.** A regra não é "nenhum fator degenerado na tabela": é "nenhum fator
 degenerado **sem a declaração de que é degenerado**". A mesma tabela carrega o caso contrário e ele fica:
 `resampling.estimandClasses.mixed.levels[1]` nomeia `groups.promptTemplate` **com** `proxyFor` e
-`proxyReason`, e o `proxyReason` diz por escrito que o fator "tem um único nível sobre as linhas mistas
-montadas, logo este fator é degenerado por construção até um eixo de operação existir". As duas linhas
-diferem no que o leitor pode concluir: `groups.domainSource` nomeado sem qualificação afirmaria variação
-entre estratos que o sorteio não viu; `groups.promptTemplate` declarado como **proxy com a lacuna
-nomeada** afirma o oposto — que o eixo que a classe precisaria não existe no esquema, e que o nível está
-ali como marcador da lacuna. Remover essa linha esconderia a lacuna, que é o erro simétrico. O critério é
-portanto **declaração**, não presença, e é isso que distingue os dois casos.
+`proxyReason`, e o `proxyReason` diz por escrito que nenhum eixo do schema v4 registra a operação de
+edição, que `promptTemplate` é o eixo mais próximo, e que operação e template ficam colineares dentro da
+ilha. As duas linhas diferem no que o leitor pode concluir: `groups.domainSource` nomeado sem
+qualificação afirmaria variação entre estratos que o sorteio não viu; `groups.promptTemplate` declarado
+como **proxy com a lacuna nomeada** afirma o oposto — que o eixo que a classe precisaria não existe no
+esquema, e que o nível está ali como marcador da lacuna. Remover essa linha esconderia a lacuna, que é o
+erro simétrico. O critério é portanto **declaração**, não presença, e é isso que distingue os dois casos.
+
+**Correção de 2026-08-23.** Este parágrafo citava o `proxyReason` a dizer que o fator "tem um único nível
+sobre as linhas mistas montadas, logo este fator é degenerado por construção até um eixo de operação
+existir". Essas palavras não estão no arquivo selado e provavelmente nunca estiveram na forma vigente: o
+texto selado diz o contrário — `promptTemplate` "carrega TRÊS níveis por ilha, um por operação, então
+este fator **deixa de ser degenerado**". A citação envelheceu quando o slate misto passou de um template
+único para as 60 identidades `mix-<operação>-ilha-NN`, e o exemplo ficou apoiado numa frase que o arquivo
+já não carregava. O **critério** não muda; o exemplo estava errado, e uma entrada de referência que cita
+o código tem de ser reconferida contra ele quando o código se move.
+
+**O terceiro caso, de 2026-08-23**, e ele é a razão de o critério ser sobre declaração e não sobre
+presença: `mixed.levels[2]` nomeia `groups.generatorFamily`, e a contagem de níveis desse fator é do
+CONJUNTO DE MODELOS da corrida, que é argumento por corrida. Logo ele pode ser degenerado numa corrida e
+não noutra, e nenhuma prosa estática diria a verdade sobre as duas. O que declara é o número
+**publicado**: o relatório de reamostragem imprime o nível por eixo, então uma corrida de um modelo só
+publica `groups.generatorFamily=1` e o leitor vê um fator que não variou. É a mesma regra dos dois casos
+acima, com a declaração feita por medição em vez de por prosa — o que é mais forte, porque diz o que
+aconteceu e não o que poderia.
 
 ### N6 — derivação degenerada sob a política vigente é pinada num insumo NÃO degenerado, não removida
 

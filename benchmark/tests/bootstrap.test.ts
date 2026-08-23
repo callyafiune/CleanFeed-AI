@@ -19,6 +19,7 @@ interface Row {
   inner?: string;
   parent?: string;
   operation?: string;
+  family?: string;
   score?: number;
   state?: "known" | "notApplicable" | "unknown";
 }
@@ -50,6 +51,7 @@ const OUTER = field("groups.source", (row) => row.outer);
 const INNER = field("groups.author", (row) => row.inner);
 const PARENT = field("groups.humanSeed", (row) => row.parent);
 const OPERATION = field("groups.promptTemplate", (row) => row.operation);
+const FAMILY = field("groups.generatorFamily", (row) => row.family);
 
 function hierarchical(
   estimand: string,
@@ -475,5 +477,123 @@ describe("frozen replicate counts, seeds and effort", () => {
 
   it("refuses an empty population instead of returning an interval", () => {
     expect(() => resolveResampling([], design)).toThrow(/at least one/u);
+  });
+});
+
+describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", () => {
+  // A emenda que pos `groups.generatorFamily` em `mixed.levels` alega que o fator ALARGA o
+  // intervalo, e a alegacao foi atacada assim: percentis de uma estatistica de RAZAO nao sao
+  // monotonicos sob a multiplicacao por um vetor de pesos novo, entao acrescentar fator
+  // poderia ESTREITAR — e um limite mais estreito compra passe, que e o oposto do que a
+  // emenda diz fazer. O ataque esta certo em especie e e nulo em magnitude, e a diferenca
+  // entre as duas coisas e esta medicao.
+  interface Linha extends Row {
+    hit: number;
+  }
+
+  function populacao(n: number, templates: number, familias: number): Linha[] {
+    let s = 11;
+    const rnd = () => {
+      s ^= s << 13;
+      s >>>= 0;
+      s ^= s >>> 17;
+      s ^= s << 5;
+      s >>>= 0;
+      return s / 0x1_0000_0000;
+    };
+    return Array.from({ length: n }, (_unused, i) => {
+      const fam = i % familias;
+      // O acerto depende da FAMILIA: e essa a dependencia que o fator existe para carregar.
+      const base = 0.5 + 0.25 * ((fam / Math.max(1, familias - 1)) * 2 - 1);
+      return {
+        parent: `p${i}`,
+        operation: `t${i % templates}`,
+        family: `f${fam}`,
+        hit: rnd() < base ? 1 : 0,
+      };
+    });
+  }
+
+  function largura(
+    linhas: Linha[],
+    comFamilia: boolean,
+    semente: number,
+  ): number {
+    const fatores = comFamilia
+      ? [chain(PARENT), chain(OPERATION), chain(FAMILY)]
+      : [chain(PARENT), chain(OPERATION)];
+    const resolucao = resolveResampling(
+      linhas,
+      multiway("mixed.warning.recall", fatores),
+    );
+    // Agregado por cluster ANTES do primeiro sorteio, que e o contrato de `statistic`.
+    const acertos = new Array<number>(resolucao.clusterCount).fill(0);
+    const total = new Array<number>(resolucao.clusterCount).fill(0);
+    linhas.forEach((linha, i) => {
+      const c = resolucao.clusterOf[i];
+      acertos[c] += linha.hit;
+      total[c] += 1;
+    });
+    const intervalo = clusteredPercentileBootstrap(resolucao, {
+      iterations: 10_000,
+      seed: semente,
+      statistic: (pesos) => {
+        let a = 0;
+        let t = 0;
+        for (let c = 0; c < pesos.length; c += 1) {
+          a += pesos[c] * acertos[c];
+          t += pesos[c] * total[c];
+        }
+        return t === 0 ? Number.NaN : a / t;
+      },
+    });
+    return intervalo.upper95 - intervalo.lower95;
+  }
+
+  it("ALARGA quando o fator tem mais de um nivel, e nao por pouco", () => {
+    // Duas familias e quatro, e a razao e sempre bem acima de 1. Sem esta perna a emenda
+    // seria uma afirmacao sobre `drawMultiway` que ninguem mediu.
+    for (const familias of [2, 4]) {
+      const linhas = populacao(200, 60, familias);
+      const sem = largura(linhas, false, SEED);
+      const com = largura(linhas, true, SEED);
+      expect(com, `familias=${familias}`).toBeGreaterThan(sem * 1.5);
+    }
+  });
+
+  it("nao ESTREITA quando o fator e degenerado: a diferenca e do fluxo do PRNG", () => {
+    // Com um nivel so, `drawMultiway` faz `min(levels - 1, ...)` = 0 e a contagem do fator
+    // e sempre 1, entao o multiplicador do peso e constante. O que muda e a POSICAO no
+    // fluxo, porque o laco consome um sorteio a mais por replicado — e uma semente que
+    // andou nao e variancia. Logo a comparacao correta e de FAIXAS e nao de pontos: medido,
+    // um ponto contra ponto na semente pre-inscrita da 0,972 e leria como estreitamento.
+    //
+    // E ha uma razao mais forte que a medicao, achada por MUTANTE EQUIVALENTE: um fator de um
+    // nivel contribui um multiplicador CONSTANTE ao peso de toda celula, e o intervalo de uma
+    // estatistica de RAZAO e invariante a escala uniforme. Logo nenhuma mutacao que so mexa na
+    // magnitude desse multiplicador — curto-circuitar o sorteio, contar 2 em vez de 1, dar
+    // `levels + 1` voltas — pode mover esta perna, e as tres sobrevivem. O que a move e quebrar
+    // a estrutura de PRODUTO (`weight *= …` para `weight += …`), que e o mutante que a mata.
+    const linhas = populacao(200, 60, 1);
+    const sementes = [
+      SEED,
+      SEED + 6,
+      SEED + 22,
+      SEED + 94,
+      SEED + 990,
+      SEED + 1002,
+    ];
+    const dois = sementes.map((s) => largura(linhas, false, s));
+    const tres = sementes.map((s) => largura(linhas, true, s));
+    const faixa = (a: number[]) => [Math.min(...a), Math.max(...a)] as const;
+    const [d0, d1] = faixa(dois);
+    const [t0, t1] = faixa(tres);
+    // As duas faixas se sobrepoem...
+    expect(d0 <= t1 && t0 <= d1, `[${d0}, ${d1}] vs [${t0}, ${t1}]`).toBe(true);
+    // ...e as MEDIAS coincidem a menos de um por cento, que e o que separa "deslocou o
+    // fluxo" de "mudou a variancia".
+    const media = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
+    expect(media(tres) / media(dois)).toBeGreaterThan(0.99);
+    expect(media(tres) / media(dois)).toBeLessThan(1.01);
   });
 });
