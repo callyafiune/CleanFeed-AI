@@ -49,6 +49,7 @@ import hashlib
 import json
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -664,6 +665,150 @@ def admissible_parents(rows) -> list[dict]:
     ]
 
 
+class GeometryNotRealized(RuntimeError):
+    """O texto devolvido nao realiza a geometria que a operacao pediu."""
+
+
+class PairEchoesTheParent(RuntimeError):
+    """O par pai/mista alcanca o limite de poda: o enxerto ecoa o pai."""
+
+
+def parent_survival(parent: str, edited: str) -> tuple[int, int, bool]:
+    """(palavras do pai preservadas, removidas, sobrou palavra do pai DEPOIS do enxerto).
+
+    Derivado do MESMO diff por palavra de `mixture_spans`, e nao de uma segunda contagem: as
+    duas nao podem discordar sobre o que o modelo devolveu. `equal` e palavra do pai que
+    sobreviveu; `delete` e `replace` consomem palavra do pai que saiu.
+
+    A terceira componente e o que separa `substituicao` de `concatenacao`: as duas removem, e
+    so uma deixa pai depois do enxerto.
+    """
+    pai = [palavra for palavra, _inicio, _fim in _word_offsets(parent)]
+    filho = [palavra for palavra, _inicio, _fim in _word_offsets(edited)]
+    matcher = difflib.SequenceMatcher(a=pai, b=filho, autojunk=False)
+    preservadas = 0
+    removidas = 0
+    depois = False
+    viu_enxerto = False
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            preservadas += i2 - i1
+            if viu_enxerto and i2 > i1:
+                depois = True
+        else:
+            removidas += i2 - i1
+            if j2 > j1:
+                viu_enxerto = True
+    return preservadas, removidas, depois
+
+
+def incidental_removal_tolerance(parent_words: int) -> int:
+    """Quantas palavras do pai uma `insercao` pode perder e continuar a ser insercao.
+
+    "Removeu zero" e estrito demais para saida real: um provedor a quem se pede "copie palavra
+    por palavra" conserta uma gralha, normaliza uma aspa ou junta um hifen, o diff marca
+    `replace`, e uma insercao legitima seria recusada como substituicao. O que separa as duas
+    geometrias e a MAGNITUDE: numa substituicao a secao removida e da ordem do nivel pedido, e
+    o menor nivel do slate e 15 %.
+
+    Um TERCO do menor nivel -- 5 % das palavras do pai -- fica bem abaixo de qualquer remocao
+    intencional e bem acima de reescrita incidental. Derivado de `MIX_LEVELS` e nao digitado,
+    porque um teto digitado sobrevive a uma mudanca de niveis e passa a aferir contra a
+    geometria errada.
+    """
+    lab = str(Path(__file__).resolve().parent)
+    if lab not in sys.path:
+        sys.path.insert(0, lab)
+    import assemble_corpus
+
+    fracao = min(assemble_corpus.MIX_LEVELS) / 100.0 / 3.0
+    return int(parent_words * fracao)
+
+
+# A geometria de cada operacao em termos de sobrevivencia do pai, e e esta tabela que
+# `assert_the_geometry_matches` le. Ela e a mesma prosa de `MIX_GEOMETRIES` dita na forma que o
+# texto devolvido permite aferir: (remove palavra do pai?, sobra pai depois do enxerto?).
+#
+#   * `insercao` -- "sem remover nada", logo nao remove;
+#   * `substituicao` -- secao contigua do MEIO substituida, logo remove E sobra pai depois;
+#   * `concatenacao` -- "descarte o resto", logo remove e NAO sobra pai depois.
+GEOMETRY_SURVIVAL: dict[str, tuple[bool, bool]] = {
+    "insercao": (False, True),
+    "substituicao": (True, True),
+    "concatenacao": (True, False),
+}
+
+
+def assert_the_geometry_matches(operation: str, parent: str, edited: str) -> None:
+    """Recusa um texto devolvido que nao realiza a geometria pedida.
+
+    `mixed_record` recomputa `aiFraction` e a corrida descarta fora de banda, entao a FRACAO
+    era conferida e a GEOMETRIA nao. A consequencia nao e estetica: uma `substituicao` que so
+    insere satisfaz a banda e degenera em `insercao`, e no nivel mais baixo essa e a celula que
+    `MIX_CELL_EXCLUDED` exclui -- o par cruza a poda a partir de 218 palavras e o que cai e o
+    PAI humano, com a ponte da ilha. A degeneracao simetrica (`substituicao` que descarta o
+    resto) e concatenacao com outro nome, e muda a celula tanto quanto.
+
+    A recusa NOMEIA a geometria que o texto realizou, porque "nao casa" nao diz a quem le o log
+    o que o provedor fez.
+    """
+    esperado = GEOMETRY_SURVIVAL.get(operation)
+    if esperado is None:
+        raise GeometryNotRealized(
+            f"operacao {operation!r} nao esta em GEOMETRY_SURVIVAL: as operacoes sao "
+            f"{sorted(GEOMETRY_SURVIVAL)}, e uma operacao desconhecida aceita por omissao "
+            "seria geometria nenhuma conferida"
+        )
+    palavras_do_pai = len(_word_offsets(parent))
+    _preservadas, removidas, depois = parent_survival(parent, edited)
+    realizado = (removidas > incidental_removal_tolerance(palavras_do_pai), depois)
+    if realizado == esperado:
+        return
+    nomes = [nome for nome, forma in GEOMETRY_SURVIVAL.items() if forma == realizado]
+    virou = nomes[0] if nomes else "geometria nenhuma do slate"
+    raise GeometryNotRealized(
+        f"a operacao pedida foi {operation!r} e o texto devolvido realiza {virou!r}: "
+        f"removeu {removidas} palavra(s) do pai e "
+        f"{'sobrou' if depois else 'nao sobrou'} pai depois do enxerto. A banda de "
+        "`aiFraction` nao separa as duas, e a celula que a linha ocuparia nao e a que o "
+        "plano alocou"
+    )
+
+
+def assert_the_pair_is_not_an_echo(parent_id: str, parent: str, edited: str) -> None:
+    """Recusa no EMIT o par que alcanca o limite de poda contra o proprio pai.
+
+    Eco do pai nao tem gate proprio: `artifact_gate` recusa-se por escrito a julga-lo, porque
+    as sondas de eco derivam so a parte da receita ANTES de `{reference}` e "uma linha que a
+    repete e uma quase-duplicata de linha humana, que `near_dupes` decide e este gate nao deve
+    contar duas vezes sob outro nome". Entao quem decide e `near_dupes` -- na MONTAGEM, depois
+    de a cota estar gasta, e o que a poda derruba e o PAI humano (prioridade `ai` > `mixed` >
+    `human`) e com ele a ponte da ilha.
+
+    Esta guarda nao acrescenta condicao: le `near_dupes.JACCARD_THRESHOLD`, entao e a MESMA
+    condicao que a poda aplicaria. O que ela muda e o momento, e o momento e tudo -- uma linha
+    recusada aqui nao entrou no corpus e nao gastou a vaga da celula.
+
+    Importado TARDE, no molde de `assembler()`.
+    """
+    lab = str(Path(__file__).resolve().parent)
+    if lab not in sys.path:
+        sys.path.insert(0, lab)
+    import near_dupes
+
+    razao = near_dupes.jaccard(
+        near_dupes.shingles_of(near_dupes.tokens_of(parent)),
+        near_dupes.shingles_of(near_dupes.tokens_of(edited)),
+    )
+    if razao >= near_dupes.JACCARD_THRESHOLD:
+        raise PairEchoesTheParent(
+            f"o par do pai {parent_id!r} mede {razao:.4f} contra o limite de poda "
+            f"{near_dupes.JACCARD_THRESHOLD}: o enxerto ecoa o pai, e na montagem "
+            "`near_dupes.prune` derrubaria o PAI humano e com ele a ponte da ilha. Nenhum "
+            "outro gate julga este regime"
+        )
+
+
 def emit(
     output,
     parent_row,
@@ -727,6 +872,12 @@ def emit(
                 "decidida sobre outra cadeia que a escrita, e os vaos indexariam um texto "
                 "que ninguem gravou. Canonize na entrada (`canonical_text`), nao aqui"
             )
+    # As duas guardas de ADMISSAO, e as duas correm aqui e nao na montagem porque o momento
+    # e o que elas compram: a linha recusada aqui nao entrou no corpus e nao gastou a vaga da
+    # celula. `mix_operation` pode ser None numa receita legada, que nao pediu geometria.
+    if mix_operation is not None:
+        assert_the_geometry_matches(mix_operation, parent_row["text"], edited)
+    assert_the_pair_is_not_an_echo(parent_row["id"], parent_row["text"], edited)
     mixture = compute_mixture(parent_row["text"], edited)
     record = {
         "parentId": parent_row["id"],
@@ -970,6 +1121,10 @@ def main() -> None:
             else [args.model]
         )
         state = {"i": 0}
+        # Tentativas descartadas por guarda de admissao, por NOME da guarda. Publicado no fim
+        # porque e o denominador: as linhas escritas sao as sobreviventes, e sem a contagem
+        # ninguem sabe de quantas.
+        descartes: Counter[str] = Counter()
 
         def edit_with_failover(prompt: str) -> tuple[str, str] | None:
             """(texto, modelo) — ou None quando TODOS os modelos esgotaram.
@@ -1123,6 +1278,19 @@ def main() -> None:
                 )
                 continue
             edited, used_model = result
+            # As duas guardas de ADMISSAO, como DESCARTE e nao como aborto: a forma e a do
+            # veredito de banda logo acima, e por isso -- uma linha que o provedor devolveu
+            # errada custa a linha, nao a corrida. E o CONTADOR e o que faz a alegacao ser
+            # condicional a saidas pos-guarda em vez de silenciosa: sem o denominador, uma
+            # corrida que descartou metade das tentativas publica os sobreviventes como se
+            # fossem a amostra.
+            try:
+                assert_the_geometry_matches(operacao, pai, edited)
+                assert_the_pair_is_not_an_echo(parent["id"], pai, edited)
+            except (GeometryNotRealized, PairEchoesTheParent) as recusa:
+                descartes[type(recusa).__name__] += 1
+                print(f"  {parent['id']} — descartado: {recusa}")
+                continue
             emit(
                 output,
                 {**parent, "text": pai},
@@ -1145,6 +1313,10 @@ def main() -> None:
                 print(f"  {index}/{len(pending)} (kept={kept})")
             time.sleep(args.sleep)
         print(f"mistos gerados: {kept}")
+        # O DENOMINADOR, sempre impresso e nao so quando ha descarte: "descartados por
+        # guarda: {}" diz que a corrida mediu zero, e a ausencia da linha diria que
+        # ninguem contou. As duas coisas nao podem parecer iguais.
+        print(f"descartados por guarda: {dict(sorted(descartes.items()))}")
 
 
 if __name__ == "__main__":

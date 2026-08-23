@@ -11136,3 +11136,87 @@ valor, é o reflexo de escrever o número antes de escrever a asserção.
 
 **Bateria:** 14 mutantes, 14 asserções, zero sobreviventes — e ela agora atravessa as duas suítes, com
 o mutante que desfaz a colinearidade do fixture a ficar vermelho no pino de largura.
+
+## Unidade 2: a geometria devolvida e o eco do pai, como contrato de admissão (2026-08-23)
+
+Unidade 2 do plano do codex: **C + o fecho protocolar de E**, juntas porque são o mesmo contrato
+*fail-closed* de admissão da saída mista, e revertem juntas. A medição empírica de E **não** entra —
+ela precisa de saída de gerador real.
+
+### C — a geometria era prometida pelo prompt e nunca aferida na resposta
+
+`mixed_record` recomputa `aiFraction` e a corrida descarta fora de banda, então a **fração** era
+conferida e a **geometria** não. A consequência é uma célula excluída a voltar pela porta de trás: uma
+`substituicao` que só INSERE satisfaz a banda — o trecho novo continua a fração pedida do texto final —
+e degenera em `insercao`. No nível mais baixo essa é a célula que `MIX_CELL_EXCLUDED` exclui, e o par
+cruza a poda a partir de 218 palavras: o que cai é o **pai humano**, com a ponte da ilha.
+
+O que discrimina as três operações é **quanto do pai sobrevive**, e o diff por palavra de
+`mixture_spans` já o calculava. `parent_survival` lê do MESMO diff — duas contagens não podem discordar
+sobre o que o modelo devolveu — e `GEOMETRY_SURVIVAL` diz a prosa de `MIX_GEOMETRIES` na forma
+aferível: remove palavra do pai? sobra pai depois do enxerto? A degeneração **simétrica** também é
+pega: `substituicao` que descarta o resto é concatenação com outro nome.
+
+**A tolerância deriva, e a razão é saída real.** "Removeu zero" é estrito demais: um provedor a quem se
+pede "copie palavra por palavra" conserta uma gralha, o diff marca `replace`, e uma inserção legítima
+seria recusada. Um terço do menor nível — 5 % das palavras do pai — fica bem abaixo de remoção
+intencional e bem acima de reescrita incidental, e **deriva de `MIX_LEVELS`** porque um teto digitado
+sobrevive a uma mudança de níveis e passa a aferir contra a geometria errada.
+
+### E — o eco fecha por protocolo, e o valor fica sem medida
+
+`artifact_gate` recusa-se **por escrito** a julgar eco da referência: as sondas derivam só a parte da
+receita antes de `{reference}`, porque "uma linha que a repete é uma quase-duplicata de linha humana,
+que `near_dupes` decide e este gate não deve contar duas vezes sob outro nome". Então quem decide é a
+**poda** — na montagem, depois de a cota estar gasta, e o que ela derruba é o pai humano.
+
+`assert_the_pair_is_not_an_echo` move a decisão para o `emit`. Ela **não acrescenta condição**: lê
+`near_dupes.JACCARD_THRESHOLD`, então é a mesma condição que a poda aplicaria e não uma segunda
+autoridade capaz de discordar dela. O que muda é o momento, e o momento é tudo — uma linha recusada
+aqui não entrou no corpus e não gastou a vaga da célula.
+
+**E o denominador.** As duas guardas correm como **descarte** no laço, no molde do veredito de banda —
+uma linha errada custa a linha e não a corrida — e a corrida publica a linha de descartes por guarda
+**sempre**, inclusive vazia: a ausência dela diria que ninguém contou, e o mapa vazio diz que a corrida
+mediu zero. É isso que torna a alegação condicional a saídas pós-guarda em vez de silenciosa. O que
+continua sem número é a **taxa** com que um gerador real ecoa.
+
+### O fixture que a guarda desmascarou, e ele servia as três operações com uma resposta
+
+O provedor falso de `_gerar` devolvia **uma resposta única** — as oito primeiras de sessenta palavras
+trocadas — a `insercao`, `substituicao` e `concatenacao`. Aquilo **é** geometria de substituição, então
+duas das três células recebiam texto que não realizava a operação pedida, e três testes ficaram
+vermelhos assim que a guarda entrou. O fixture não estava a medir a pista: estava a medir uma resposta
+que a produção não aceita.
+
+Refeito, o provedor falso lê do prompt a **geometria** e o **nível** e devolve texto que os honra — o
+que é o que um provedor falso deve fazer. As três operações passaram a ter resposta própria e as vinte
+células voltaram ao verde, com o fixture mais fiel do que antes da guarda.
+
+### A bateria expôs quatro fraquezas minhas, e uma delas era a que mais importava
+
+Primeira passagem: **quatro sobreviventes**.
+
+- **nada provava que as guardas estão ligadas ao `emit`** — remover as duas chamadas deixava tudo verde,
+  porque o fixture corrigido nunca dispara guarda nenhuma. É exactamente o `guarda-nao-invocada` que o
+  codex verifica, e sobreviveu. Agora há perna que dirige a corrida com resposta que ecoa e afere o
+  denominador, e perna que chama `emit` direto e exige a recusa;
+- **a operação desconhecida** era recusada, mas pelo caminho errado: arrancar a recusa por omissão
+  deixava o esperado em `None`, a comparação falhava e a exceção vinha da outra ponta. A mensagem passou
+  a ser asserção;
+- **a tolerância** era mutante equivalente — `0,05` é numericamente igual a `min(15)/100/3`. Agora há
+  teste que move `MIX_LEVELS` e exige que a tolerância o siga;
+- e a perna do laço não distinguia as duas guardas.
+
+**Três iterações no fixture de eco**, e cada uma foi uma peneira que eu não tinha visto: a **geometria**
+morde antes do eco (o eco tinha forma de inserção sob célula de substituição); a **banda** morde antes
+das duas (`aiFraction` 0,24 fora de 0,15 a 0,20); e num pai curto os shingles de **fronteira** baixam a
+razão a 0,69, então o eco não cruza o limite. A forma que satisfaz as três foi **procurada** e não
+adivinhada: pai de 200 palavras, 11 removidas contra tolerância 10, enxerto de 35 palavras copiadas —
+`aiFraction` 0,1563, jaccard 0,8873.
+
+E uma coisa que a busca ensinou de graça: `insercao` no nível **15** com pai de 200 palavras **ecoa por
+construção**, porque a assíntota é 0,85 contra o limite de 0,82. Isso é o fato que sustenta
+`MIX_CELL_EXCLUDED`, encontrado por outro caminho.
+
+**Bateria final:** 10 mutantes, 12 asserções, zero sobreviventes.

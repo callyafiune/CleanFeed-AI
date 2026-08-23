@@ -2805,6 +2805,147 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         # E o teto de material nao e o vinculo: os pais admissiveis passam da cota.
         self.assertGreater(2_578, cota)
 
+    def test_a_GEOMETRIA_devolvida_e_aferida_e_nao_so_a_fracao(self):
+        """`aiFraction` e recomputada e a banda e conferida; a GEOMETRIA nao era.
+
+        A consequencia e uma celula excluida a voltar pela porta de trás: uma `substituicao`
+        que so INSERE satisfaz a banda -- o trecho novo continua a fracao pedida do texto final
+        -- e degenera em `insercao`. No nivel mais baixo essa e exactamente a celula que
+        `MIX_CELL_EXCLUDED` exclui, e no modelo o par cruza a poda a partir de 218 palavras: o
+        que cai e o PAI humano, com a ponte da ilha.
+
+        O que discrimina as tres operacoes e quanto do PAI sobrevive, que o diff por palavra de
+        `mixture_spans` ja calcula:
+
+          * `insercao` preserva o pai INTEIRO -- nenhuma palavra removida;
+          * `substituicao` remove uma secao do MEIO -- ha palavra removida, e sobra palavra do
+            pai DEPOIS do enxerto;
+          * `concatenacao` descarta o resto -- ha palavra removida, e nao sobra palavra do pai
+            depois do enxerto.
+        """
+        import make_mixed
+
+        pai = " ".join(f"p{i}" for i in range(40))
+        enxerto = " ".join(f"z{i}" for i in range(10))
+        palavras = pai.split()
+
+        # As tres formas BOAS passam, cada uma na sua operacao.
+        insercao = " ".join(palavras[:20] + enxerto.split() + palavras[20:])
+        make_mixed.assert_the_geometry_matches("insercao", pai, insercao)
+        substituicao = " ".join(palavras[:15] + enxerto.split() + palavras[25:])
+        make_mixed.assert_the_geometry_matches("substituicao", pai, substituicao)
+        concatenacao = " ".join(palavras[:15] + enxerto.split())
+        make_mixed.assert_the_geometry_matches("concatenacao", pai, concatenacao)
+
+        # E a degeneracao que motiva a guarda: `substituicao` que so insere.
+        with self.assertRaises(make_mixed.GeometryNotRealized) as erro:
+            make_mixed.assert_the_geometry_matches("substituicao", pai, insercao)
+        mensagem = str(erro.exception)
+        self.assertIn("substituicao", mensagem)
+        self.assertIn("insercao", mensagem)
+
+        # A degeneracao SIMETRICA, que a guarda tambem tem de pegar: `substituicao` que
+        # descarta o resto e concatenacao com outro nome, e ela muda a celula tanto quanto.
+        with self.assertRaises(make_mixed.GeometryNotRealized) as erro:
+            make_mixed.assert_the_geometry_matches("substituicao", pai, concatenacao)
+        self.assertIn("concatenacao", str(erro.exception))
+
+        # E `insercao` que removeu algo nao e insercao: o pai tem de ficar inteiro, e e essa
+        # perna que impede a guarda de ser um teste de "removeu > 0" com tres nomes.
+        with self.assertRaises(make_mixed.GeometryNotRealized) as erro:
+            make_mixed.assert_the_geometry_matches("insercao", pai, substituicao)
+        self.assertIn("insercao", str(erro.exception))
+
+        # `concatenacao` que preserva o pai inteiro tambem e recusada.
+        with self.assertRaises(make_mixed.GeometryNotRealized):
+            make_mixed.assert_the_geometry_matches("concatenacao", pai, insercao)
+
+        # Operacao que o slate nao tem e recusada em vez de aceita por omissao, e a MENSAGEM
+        # nomeia as admissiveis. Sem a mensagem, arrancar a recusa por omissao deixa a perna
+        # verde -- o `esperado` fica None, a comparacao falha e a excecao vem pelo caminho
+        # errado. Medido: o mutante sobrevivia.
+        with self.assertRaises(make_mixed.GeometryNotRealized) as erro:
+            make_mixed.assert_the_geometry_matches("inventada", pai, insercao)
+        mensagem = str(erro.exception)
+        self.assertIn("GEOMETRY_SURVIVAL", mensagem)
+        for operacao in assemble_corpus.MIX_OPERATIONS:
+            self.assertIn(operacao, mensagem)
+
+    def test_o_par_que_ECOA_o_pai_e_recusado_no_EMIT_e_nao_na_montagem(self):
+        """O eco do pai nao tem gate proprio, e quem o decide e a poda -- tarde demais.
+
+        `artifact_gate` recusa-se por escrito a julgar eco da REFERENCIA: as sondas derivam so
+        a parte da receita antes de `{reference}`, porque "uma linha que a repete e uma
+        quase-duplicata de linha humana, que `near_dupes` decide e este gate nao deve contar
+        duas vezes sob outro nome". Entao quem decide e `near_dupes` -- na MONTAGEM, depois de a
+        cota estar gasta, e o que a poda derruba e o PAI humano com a ponte da ilha.
+
+        Esta guarda move a decisao para o `emit`: o par que alcanca o limite de poda contra o
+        proprio pai e recusado antes de ser escrito. Fail-closed, e o valor e o momento.
+        """
+        import make_mixed
+        import near_dupes
+
+        pai = " ".join(f"p{i}" for i in range(400))
+        palavras = pai.split()
+
+        # Um par honesto passa: enxerto de vocabulario proprio, um terco do pai.
+        enxerto = [f"z{i}" for i in range(133)]
+        honesto = " ".join(palavras[:200] + enxerto + palavras[200:])
+        make_mixed.assert_the_pair_is_not_an_echo("pai_0001", pai, honesto)
+
+        # O ECO: o enxerto repete o proprio pai. A razao vai a ~1 em qualquer nivel, e este e o
+        # regime que nenhum outro gate julga.
+        eco = " ".join(palavras[:200] + palavras[:133] + palavras[200:])
+        with self.assertRaises(make_mixed.PairEchoesTheParent) as erro:
+            make_mixed.assert_the_pair_is_not_an_echo("pai_0001", pai, eco)
+        mensagem = str(erro.exception)
+        self.assertIn("pai_0001", mensagem)
+        self.assertIn(str(near_dupes.JACCARD_THRESHOLD), mensagem)
+
+        # E o LIMITE e o de producao e nao um proprio: a guarda le
+        # `near_dupes.JACCARD_THRESHOLD`, entao ela e a mesma condicao que a poda aplicaria --
+        # e nao uma segunda autoridade capaz de discordar dela.
+        import inspect
+
+        self.assertIn(
+            "JACCARD_THRESHOLD",
+            inspect.getsource(make_mixed.assert_the_pair_is_not_an_echo),
+        )
+        # A razao medida do par honesto fica ABAIXO do limite, e a do eco ACIMA -- os dois
+        # lados, sem o que a guarda poderia recusar tudo.
+        def razao(filho: str) -> float:
+            return near_dupes.jaccard(
+                near_dupes.shingles_of(near_dupes.tokens_of(pai)),
+                near_dupes.shingles_of(near_dupes.tokens_of(filho)),
+            )
+
+        self.assertLess(razao(honesto), near_dupes.JACCARD_THRESHOLD)
+        self.assertGreaterEqual(razao(eco), near_dupes.JACCARD_THRESHOLD)
+
+    def test_a_tolerancia_de_remocao_incidental_DERIVA_dos_niveis(self):
+        """Ela nao pode ser digitada, e 0,05 e numericamente igual a `min(15)/100/3`.
+
+        A bateria apanhou isto como mutante EQUIVALENTE: trocar a derivacao pelo literal 0,05
+        nao movia nada, porque sob os niveis vigentes os dois dao o mesmo. O que distingue os
+        dois e uma mudanca de `MIX_LEVELS` -- e e ela que este teste faz.
+        """
+        import make_mixed
+
+        vigente = make_mixed.incidental_removal_tolerance(400)
+        self.assertEqual(vigente, int(400 * min(assemble_corpus.MIX_LEVELS) / 100 / 3))
+
+        # Com um nivel minimo MAIOR a tolerancia cresce; um literal ficaria parado.
+        with mock.patch.object(assemble_corpus, "MIX_LEVELS", (60, 75, 90)):
+            self.assertEqual(
+                make_mixed.incidental_removal_tolerance(400), int(400 * 0.60 / 3)
+            )
+        # E com um menor, encolhe.
+        with mock.patch.object(assemble_corpus, "MIX_LEVELS", (6, 25, 90)):
+            self.assertEqual(
+                make_mixed.incidental_removal_tolerance(400), int(400 * 0.06 / 3)
+            )
+
     def test_a_reserva_e_conferida_em_TODA_classe_e_nao_so_na_ai(self):
         """A recusa vem pela classe `human`, com `ai` e `mixed` cabendo nos seus alvos.
 
@@ -4178,16 +4319,49 @@ class APistaMistaRealizaAsTresOperacoes(unittest.TestCase):
                 )
             )
             saida = temporario / "gerada.jsonl"
+            registrados: list = []
             fila = list(respostas) if respostas is not None else None
-            padrao = " ".join(
-                (f"reescrito{i:02d}" if i < 8 else f"palavra{i:02d}") for i in range(60)
-            )
+            palavras = texto.split()
+
+            def em_banda(prompt: str) -> str:
+                """A resposta HONRA a geometria que o prompt pede, e nao uma so para as tres.
+
+                Antes havia um `padrao` unico -- as oito primeiras palavras trocadas -- servido
+                a `insercao`, `substituicao` e `concatenacao`. Aquilo E geometria de
+                substituicao, entao duas das tres celulas recebiam texto que nao realizava a
+                operacao pedida, e `assert_the_geometry_matches` recusa-o. O fixture nao estava
+                a medir a pista: estava a medir uma resposta que a producao nao aceita.
+                """
+                pedido = re.search(r"aproximadamente (\d+) %", prompt)
+                nivel = int(pedido.group(1)) if pedido else 15
+                fracao = nivel / 100.0
+                meio = len(palavras) // 2
+                if "Copie as primeiras frases" in prompt:
+                    prefixo = max(1, meio)
+                    quantas = max(1, round(prefixo * fracao / (1 - fracao)))
+                    enxerto = [f"reescrito{i:02d}" for i in range(quantas)]
+                    return " ".join(palavras[:prefixo] + enxerto)
+                if "Acrescente UMA secao" in prompt:
+                    quantas = max(
+                        1, round(len(palavras) * fracao / (1 - fracao))
+                    )
+                    enxerto = [f"reescrito{i:02d}" for i in range(quantas)]
+                    return " ".join(palavras[:meio] + enxerto + palavras[meio:])
+                # substituicao, e tambem a receita legada sem operacao declarada.
+                quantas = max(1, round(len(palavras) * fracao))
+                enxerto = [f"reescrito{i:02d}" for i in range(quantas)]
+                inicio = max(1, (len(palavras) - quantas) // 2)
+                return " ".join(
+                    palavras[:inicio] + enxerto + palavras[inicio + quantas :]
+                )
 
             def provedor(*a, **k):
-                enviados.extend(x for x in a if isinstance(x, str))
+                textos = [x for x in a if isinstance(x, str)]
+                enviados.extend(textos)
+                prompt = " ".join(textos)
                 if fila is None:
-                    return padrao
-                return fila.pop(0) if fila else padrao
+                    return em_banda(prompt)
+                return fila.pop(0) if fila else em_banda(prompt)
 
             for alvo in passos or [target]:
                 argv = [
@@ -4209,6 +4383,7 @@ class APistaMistaRealizaAsTresOperacoes(unittest.TestCase):
                 registrado = io.TextIOWrapper(
                     io.BytesIO(), encoding="utf-8", newline="\n"
                 )
+                registrados.append(registrado)
                 with mock.patch.object(
                     generate_ai, "call_with_retries", side_effect=provedor
                 ):
@@ -4223,6 +4398,13 @@ class APistaMistaRealizaAsTresOperacoes(unittest.TestCase):
                 for l in saida.read_bytes().decode("utf-8").splitlines()
                 if l.strip()
             ]
+        # A saida fica em `self` e nao no retorno: os chamadores desempacotam um par, e
+        # um terceiro elemento mudaria todos eles por uma perna de um teste.
+        capturada = ""
+        for fluxo in registrados:
+            fluxo.flush()
+            capturada += fluxo.buffer.getvalue().decode("utf-8")
+        self._ultima_saida = capturada
         return linhas, prompts_de(enviados)
 
     def test_o_slate_misto_compoe_as_TRES_coordenadas_e_os_digestos_sao_DISTINTOS(self):
@@ -4507,6 +4689,105 @@ class APistaMistaRealizaAsTresOperacoes(unittest.TestCase):
         self.assertEqual(
             alta / assemble_corpus.ISLAND_PLAN_CLASS_LINES["mixed"], 0.60
         )
+
+    def test_as_guardas_de_admissao_DESCARTAM_no_laco_e_publicam_o_denominador(self):
+        """A corrida descarta e conta; `emit` recusa. As duas coisas, e a bateria exigiu as duas.
+
+        Sem a perna do LACO, remover as chamadas do laco deixa tudo verde -- o fixture honra a
+        geometria e nunca dispara guarda nenhuma. Sem a perna do `emit`, remover a chamada de
+        la tambem deixa tudo verde. Medido nas duas direcoes: os dois mutantes sobreviviam.
+
+        E a forma e DESCARTE e nao aborto, como o veredito de banda: uma linha que o provedor
+        devolveu errada custa a linha e nao a corrida. O contador e o denominador -- sem ele,
+        uma corrida que descartou metade publica os sobreviventes como se fossem a amostra.
+        """
+        import contextlib
+        import io
+        import tempfile
+
+        import make_mixed
+
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        pai = " ".join(f"palavra{i:03d}" for i in range(200))
+
+        # Uma resposta que ECOA o pai E realiza a geometria pedida pela primeira celula
+        # (`substituicao`): remove 11 palavras -- acima da tolerancia de 10 para 200 palavras
+        # -- e o enxerto e uma COPIA de 60 palavras do proprio pai. Sem realizar a geometria a
+        # guarda de geometria morde primeiro e a de eco nunca e exercitada, e medido era isso
+        # que acontecia. E a forma tem de satisfazer TRES condicoes ao mesmo tempo, porque ha
+        # duas peneiras antes da guarda: a banda de `aiFraction` do nivel 15 e [0,1500, 0,2000]
+        # e o veredito de banda descarta antes; num pai curto os shingles de FRONTEIRA baixam a
+        # razao a 0,69 e o eco nao cruza o limite. Medido nesta forma: aiFraction 0,1563,
+        # jaccard 0,8873, 11 palavras removidas contra tolerancia 10.
+        palavras = pai.split()
+        eco = " ".join(palavras[:66] + palavras[:35] + palavras[77:])
+
+        linhas, _prompts = self._gerar(
+            ilha=ilha, target=1, respostas=[eco] * 8, texto_do_pai=pai
+        )
+        saida = self._ultima_saida
+        # O DENOMINADOR nomeia a guarda que mordeu. A asserção e sobre ele e nao sobre a
+        # arvore vazia: a fila de respostas esgota e a corrida acaba por escrever uma linha
+        # boa, que e o comportamento certo -- descarte custa a linha, nao a corrida.
+        self.assertIn("descartados por guarda", saida)
+        self.assertIn("PairEchoesTheParent", saida)
+        # E a linha escrita, se houver, NAO e o eco.
+        for linha in linhas:
+            self.assertNotEqual(linha["text"], eco)
+
+        # E o `emit` recusa por si, que e a invariante da casa: um chamador novo -- ou um
+        # teste -- nao pode escrever uma linha cuja geometria nao foi conferida.
+        with tempfile.TemporaryDirectory() as raw:
+            destino = Path(raw) / "saida.jsonl"
+            with destino.open("w", encoding="utf-8") as handle:
+                # Nivel 25 e nao 15: `insercao` no nivel MAIS BAIXO ecoa por construcao num
+                # pai deste tamanho -- e exactamente o fato que sustenta `MIX_CELL_EXCLUDED`,
+                # cuja assintota e 0,85 contra o limite de 0,82. Usar 15 aqui faria a guarda de
+                # eco morder a perna que existe para exercitar a de geometria.
+                inserido = " ".join(
+                    palavras[:100] + [f"z{i}" for i in range(67)] + palavras[100:]
+                )
+                # A geometria de `insercao` passa por `emit` sob a identidade de insercao...
+                identidade = ilha["mixingTemplates"]["insercao"]
+                make_mixed.emit(
+                    handle,
+                    {"id": "pai_0001", "text": pai, "family": "ptwiki_lead"},
+                    inserido,
+                    provider="gemini",
+                    model="modelo",
+                    template_id=identidade,
+                    mix_operation="insercao",
+                    mix_level=25,
+                )
+                # ...e o MESMO texto sob a identidade de substituicao e recusado por `emit`.
+                with self.assertRaises(make_mixed.GeometryNotRealized):
+                    make_mixed.emit(
+                        handle,
+                        {"id": "pai_0002", "text": pai, "family": "ptwiki_lead"},
+                        inserido,
+                        provider="gemini",
+                        model="modelo",
+                        template_id=ilha["mixingTemplates"]["substituicao"],
+                        mix_operation="substituicao",
+                        mix_level=25,
+                    )
+                # E o eco e recusado por `emit` -- com forma de INSERCAO, porque a geometria
+                # e conferida antes e o `eco` do laco acima tem forma de substituicao. Sem
+                # esta troca a perna mediria a guarda de geometria outra vez.
+                eco_inserido = " ".join(
+                    palavras[:100] + palavras[:35] + palavras[100:]
+                )
+                with self.assertRaises(make_mixed.PairEchoesTheParent):
+                    make_mixed.emit(
+                        handle,
+                        {"id": "pai_0003", "text": pai, "family": "ptwiki_lead"},
+                        eco_inserido,
+                        provider="gemini",
+                        model="modelo",
+                        template_id=identidade,
+                        mix_operation="insercao",
+                        mix_level=25,
+                    )
 
     def test_a_pista_mista_realiza_as_VINTE_celulas_da_ilha(self):
         """O laco itera as CELULAS, e o que se mede e a linha escrita — nao a intencao.
