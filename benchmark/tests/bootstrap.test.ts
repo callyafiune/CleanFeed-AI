@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   clusteredPercentileBootstrap,
+  clusteredPercentileBootstrapAll,
+  DESCRIPTIVE_ALPHA,
   resolveResampling,
   ResamplingUnitError,
   type ResamplingDesign,
@@ -714,5 +716,143 @@ describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", ()
     const media = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
     expect(media(tres) / media(dois)).toBeGreaterThan(0.99);
     expect(media(tres) / media(dois)).toBeLessThan(1.01);
+  });
+});
+
+describe("o teto da fracao DESCARTADA, derivado e nao pre-inscrito", () => {
+  // A divida da § 7 era "a fracao descartada nao tem teto". Dois pareceres discordaram sobre a
+  // natureza dela e a reconciliacao ficou aqui.
+  //
+  // O QUE ESTA REGRA E: um criterio derivado de ADMISSIBILIDADE do avaliador. O lema e
+  // |P(X<=x) - P(X<=x | finito)| <= p, com p a massa descartada, entao o quantil lido dos
+  // sobreviventes tem cauda verdadeira em [q-p, q+p].
+  //
+  // O QUE ELA NAO E, e a distincao foi o objecto da discordancia: `p < alpha` NAO devolve o
+  // nivel nominal. Com p logo abaixo de alpha a cauda do pior caso chega a `alpha + p -
+  // alpha*p`, que e ~2x o nominal (medido: 0,0499 contra 0,025). Logo isto limita a
+  // DEGRADACAO a menos de um fator dois; nao prova cobertura. Uma garantia incondicional
+  // exigiria ranks ajustados, e essa decisao fica de fora desta unidade.
+  //
+  // Os dois niveis vem congelados e nao digitados: o descritivo e
+  // `(1 - multiplicity.descriptiveConfidence)/2`, e o simultaneo e o que o chamador passa.
+  const DESCRITIVO =
+    (1 - PREREGISTRATION_V4.multiplicity.descriptiveConfidence) / 2;
+
+  /** Uma estatistica que devolve NaN nas primeiras `quantas` replicas e 1 no resto. */
+  function comDescartes(
+    quantas: number,
+  ): (weights: readonly number[]) => number {
+    let vistas = 0;
+    return () => {
+      vistas += 1;
+      return vistas <= quantas ? Number.NaN : 1;
+    };
+  }
+
+  const design = multiway("e", [chain(PARENT), chain(OPERATION)]);
+  const linhas: Row[] = Array.from({ length: 40 }, (_unused, i) => ({
+    parent: `p${i}`,
+    operation: `t${i % 8}`,
+  }));
+
+  function corre(quantas: number, alpha?: number) {
+    const resolucao = resolveResampling(linhas, design);
+    const [intervalo] = clusteredPercentileBootstrapAll(resolucao, {
+      iterations: 10_000,
+      seed: SEED,
+      statistics: [comDescartes(quantas)],
+      ...(alpha === undefined ? {} : { simultaneousAlpha: alpha }),
+    });
+    return intervalo;
+  }
+
+  it("o nivel descritivo e DERIVADO da confianca congelada", () => {
+    expect(DESCRITIVO).toBe(DESCRIPTIVE_ALPHA);
+    expect(PREREGISTRATION_V4.multiplicity.descriptiveConfidence).toBe(0.95);
+    // E NAO e o literal decimal: `(1 - 0.95) / 2` da 0.025000000000000022 em binario, entao
+    // trocar a derivacao por `0.025` e uma mudanca observavel. Sem esta assercao o mutante do
+    // literal sobrevive, porque as duas formas dao o mesmo limiar INTEIRO -- medido.
+    expect(DESCRIPTIVE_ALPHA).not.toBe(0.025);
+    expect(DESCRIPTIVE_ALPHA).toBeCloseTo(0.025, 12);
+  });
+
+  it("recusa o intervalo acima do teto INTEIRO, e as tres fronteiras sao distintas", () => {
+    // O teto e `floor(nivel * pedidas)` e nao a fracao, e a razao e esta perna: o nivel
+    // derivado vezes 10.000 da 250.00000000000023, entao NENHUMA contagem faz a fracao
+    // IGUALAR o nivel e `>=` contra `>` coincidiriam em todo input que um teste consiga
+    // escrever -- medido, o mutante sobrevivia. Com o teto inteiro as tres posicoes sao
+    // inputs distintos.
+    const teto = Math.floor(DESCRIPTIVE_ALPHA * 10_000);
+    expect(teto).toBe(250);
+    // uma abaixo: admissivel
+    expect(corre(teto - 1)).not.toBeNull();
+    // NO teto: admissivel, e e esta que morre se a comparacao virar `>=`
+    const noTeto = corre(teto);
+    expect(noTeto).not.toBeNull();
+    expect(noTeto?.discardedReplicates).toBe(teto);
+    // uma acima: recusado
+    expect(corre(teto + 1)).toBeNull();
+    expect(corre(teto + 500)).toBeNull();
+  });
+
+  it("o piso de FINITAS fica SUBSUMIDO pelo teto, e isso e dito e nao escondido", () => {
+    // A perna anterior dizia "as duas recusam", e era falso: sob a confianca congelada o
+    // teto de descarte torna o piso de finitas INALCANCAVEL. Com no maximo 250 descartes
+    // sobram 9.750 finitas, muito acima de 1.000 -- entao nenhum input admissivel chega ao
+    // piso, e um mutante que o arranque sobrevive. Medido, e agora afirmado como relacao em
+    // vez de fingido como segunda recusa.
+    const teto = Math.floor(DESCRIPTIVE_ALPHA * 10_000);
+    const finitasNoPior = 10_000 - teto;
+    expect(finitasNoPior).toBe(9_750);
+    expect(finitasNoPior).toBeGreaterThan(1_000);
+    // O que fica alcancavel e so o caminho ACIMA do teto, e ali as duas condicoes valem --
+    // o que o teste pode afirmar e que a recusa acontece, nao qual das duas a produziu.
+    expect(corre(9_500)).toBeNull();
+    expect(corre(teto + 10)).toBeNull();
+  });
+
+  it("OMITE apenas o simultaneo quando a massa alcanca o alpha simultaneo", () => {
+    // O alpha simultaneo e MENOR que o descritivo sob Bonferroni com m >= 2, entao ha uma
+    // faixa em que o intervalo de 95 % e admissivel e o simultaneo nao. Nessa faixa o
+    // intervalo existe SEM o simultaneo, e um estimando gateado reprova por evidencia
+    // ausente em vez de ler um limite condicionado.
+    const simultaneo = PREREGISTRATION_V4.multiplicity.perHypothesisAlpha;
+    expect(simultaneo).toBeLessThan(DESCRITIVO);
+    const naFaixa = Math.ceil(simultaneo * 10_000) + 1;
+    expect(naFaixa / 10_000).toBeLessThan(DESCRITIVO);
+    const intervalo = corre(naFaixa, simultaneo);
+    expect(intervalo).not.toBeNull();
+    expect(intervalo?.simultaneous).toBeUndefined();
+    // E abaixo do alpha simultaneo o limite simultaneo E publicado, sem o que a perna
+    // acima passaria por o simultaneo nunca existir.
+    const abaixo = corre(Math.floor(simultaneo * 10_000) - 1, simultaneo);
+    expect(abaixo?.simultaneous).toBeDefined();
+  });
+
+  it("as DUAS estatisticas sao julgadas por si, e nao pela pior", () => {
+    // Um teto aplicado sobre o total, e nao por estatistica, derrubaria a boa junto com a
+    // ma. `discarded` e por estatistica e a admissibilidade tambem tem de ser.
+    const resolucao = resolveResampling(linhas, design);
+    const intervalos = clusteredPercentileBootstrapAll(resolucao, {
+      iterations: 10_000,
+      seed: SEED,
+      statistics: [comDescartes(0), comDescartes(1_000)],
+    });
+    expect(intervalos[0]).not.toBeNull();
+    expect(intervalos[1]).toBeNull();
+  });
+
+  it("a mensagem do envelope de UMA estatistica nomeia as duas causas", () => {
+    // Ela nomeava so o piso de mil finitas, e com o teto novo passaria a mentir sobre a
+    // causa do `null`. O caminho em lote nao levanta -- devolve `null` --, e isso fica
+    // dito na propria mensagem em vez de suposto por quem le.
+    const resolucao = resolveResampling(linhas, design);
+    expect(() =>
+      clusteredPercentileBootstrap(resolucao, {
+        iterations: 10_000,
+        seed: SEED,
+        statistic: comDescartes(9_500),
+      }),
+    ).toThrow(/descartada|discarded/u);
   });
 });

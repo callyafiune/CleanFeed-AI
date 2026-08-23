@@ -412,6 +412,49 @@ const MINIMUM_TAIL_REPLICATES = 1;
 // anything. Unchanged from the single-axis estimator this module replaced.
 const MINIMUM_VALID_REPLICATES = 1_000;
 
+/**
+ * The share of REQUESTED replicates that may be discarded as non-finite before the
+ * percentile stops being admissible. Derived from the frozen descriptive confidence, so
+ * it moves with the policy instead of being typed here.
+ *
+ * WHAT IT BUYS. A discarded replicate is not missing at random: the percentile is read
+ * from the survivors, so it estimates the conditional distribution. With `p` the
+ * discarded share, `|P(X<=x) - P(X<=x | finite)| <= p` for every x, so the level of the
+ * quantile read at `q` lies in `[q - p, q + p]`.
+ *
+ * WHAT IT DOES NOT BUY, and this is the distinction the two reviews disagreed on: `p <
+ * alpha` does NOT restore the nominal level. With `p` just under `alpha` the worst-case
+ * tail reaches `alpha + p - alpha*p`, which is ~2x nominal (0.0499 against 0.025). This
+ * is therefore a bound on DEGRADATION — under a factor of two — and an admissibility
+ * criterion of the evaluator, not a coverage proof. An unconditional guarantee would need
+ * rank-adjusted quantiles, and that decision is deliberately not taken here.
+ *
+ * It is also NOT the floor above: `MINIMUM_VALID_REPLICATES` asks whether enough order
+ * statistics survived, and this asks whether what survived still describes the population
+ * the estimand names. A run can pass either and fail the other.
+ */
+export const DESCRIPTIVE_ALPHA =
+  (1 - PREREGISTRATION_V4.multiplicity.descriptiveConfidence) / 2;
+
+/**
+ * The largest discarded COUNT still admissible at `level`, over `requested` replicates.
+ *
+ * An integer and not a fraction comparison, and the reason is testable boundaries: the
+ * derived level times the replicate count is not an integer (0.025000000000000022 * 10000
+ * = 250.00000000000023), so no reachable count makes the fraction EQUAL the level, and
+ * `>=` and `>` would coincide on every input a test could write. Naming the integer puts
+ * the boundary where "at the limit" and "one past it" are distinct inputs.
+ *
+ * The `Math.floor` is BEHAVIOURALLY INERT for the strict comparison that uses it, and that
+ * is said rather than implied: for an integer `d`, `d > Math.floor(x)` holds exactly when
+ * `d > x`, because any integer above the floor is also above the raw product. A mutation
+ * that drops the floor therefore survives every test, and it survives correctly. What the
+ * floor buys is the NAME — the boundary a message and a test can quote — not the verdict.
+ */
+function maximumAdmissibleDiscards(level: number, requested: number): number {
+  return Math.floor(level * requested);
+}
+
 // The pre-registered pilot count. Read from the frozen contract, never written
 // down here: 10.000 in the pilot and 100.000 in the release are frozen values.
 const MINIMUM_REPLICATES = PREREGISTRATION_V4.bootstrapReplicates.pilot;
@@ -685,8 +728,12 @@ export function clusteredPercentileBootstrap(
   });
   if (interval === null) {
     throw new RangeError(
-      `clusteredPercentileBootstrap produced fewer than ${MINIMUM_VALID_REPLICATES} ` +
-        "finite replicates; never fall back to a per-record bootstrap",
+      "clusteredPercentileBootstrap produced no admissible interval: either fewer than " +
+        `${MINIMUM_VALID_REPLICATES} finite replicates, or a discarded share at or above ` +
+        `${DESCRIPTIVE_ALPHA} of the requested replicates. Never fall back to a ` +
+        "per-record bootstrap. This wrapper serves ONE statistic and can name both " +
+        "causes without saying which; the batch path returns null per statistic instead " +
+        "of throwing, so a caller there reads the absence and not a message",
     );
   }
   return interval;
@@ -787,6 +834,20 @@ export function clusteredPercentileBootstrapAll(
     const sample = replicates[which];
     const validReplicates = sample.length;
     if (validReplicates < MINIMUM_VALID_REPLICATES) return null;
+    // The ADMISSIBILITY criterion on conditioning mass, per statistic and before any
+    // percentile is read. See DESCRIPTIVE_ALPHA for what it does and does not buy.
+    //
+    // It SUBSUMES the floor above under the frozen confidence, and that is stated rather
+    // than hidden: at most `floor(0.025 * n)` discards leaves `0.975 * n` finite, which for
+    // any n at or above the pilot count is far past MINIMUM_VALID_REPLICATES. The floor
+    // stays because it answers a different question — enough order statistics — and would
+    // bind again under a confidence low enough to admit more discards than n - 1000.
+    if (
+      discarded[which] >
+      maximumAdmissibleDiscards(DESCRIPTIVE_ALPHA, iterations)
+    ) {
+      return null;
+    }
     const { lower, upper } = percentileInterval(sample, 0.025, 0.975);
     const interval: BootstrapInterval = {
       lower95: lower,
@@ -805,7 +866,16 @@ export function clusteredPercentileBootstrapAll(
       const tailReplicates = Math.floor(
         simultaneousAlpha * (validReplicates - 1),
       );
-      if (tailReplicates >= MINIMUM_TAIL_REPLICATES) {
+      // The same criterion at the SIMULTANEOUS level, and it is stricter: under
+      // Bonferroni with m >= 2 the per-hypothesis alpha is below the descriptive one, so
+      // there is a band where the 95 % interval is admissible and the simultaneous bound
+      // is not. In that band the interval is published WITHOUT the simultaneous bound, and
+      // a gate that needs one fails for missing evidence — which is the same shape as the
+      // empty-tail case immediately below.
+      const simultaneousAdmissible =
+        discarded[which] <=
+        maximumAdmissibleDiscards(simultaneousAlpha, iterations);
+      if (tailReplicates >= MINIMUM_TAIL_REPLICATES && simultaneousAdmissible) {
         const wide = percentileInterval(
           sample,
           simultaneousAlpha,

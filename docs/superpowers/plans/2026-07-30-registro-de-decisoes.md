@@ -11220,3 +11220,92 @@ construção**, porque a assíntota é 0,85 contra o limite de 0,82. Isso é o f
 `MIX_CELL_EXCLUDED`, encontrado por outro caminho.
 
 **Bateria final:** 10 mutantes, 12 asserções, zero sobreviventes.
+
+## Unidade 3: o teto de admissibilidade, e dois pareceres que discordaram (2026-08-23)
+
+A dívida da § 7 dizia "a fração descartada de replicados não tem teto". Pedi parecer ao **codex** e,
+independentemente e sem lhe mostrar o do codex, ao **Fable**. Eles discordaram, e a discordância valeu
+mais do que qualquer um dos dois pareceres isolado.
+
+### Os dois pareceres
+
+**Codex:** é **política** — pertence à pré-inscrição e é conferida pelo gate. Escopo: teto pré-inscrito,
+aplicação por intervalo, **publicação da fração**, testes de fronteira.
+
+**Fable:** é **piso de definição** — pertence a `bootstrap.ts`, ao lado de `MINIMUM_VALID_REPLICATES`.
+Escopo: **só** `bootstrap.ts` mais o teste dele. O teto **deriva** de valores já congelados
+(`(1 − descriptiveConfidence)/2` e `familyAlpha/m`), sem literal novo e **sem emendar o JSON**. E
+publicar a fração **não é o que fecha a dívida**: o teto aplicado no módulo faz o intervalo condicionado
+acima do nível simplesmente **não existir**.
+
+### O que eu verifiquei, e um dos dois errou um fato
+
+**O Fable acertou** que `validReplicates` sai do módulo (`bootstrap.ts:818` → `metrics.ts:3857`, com o
+comentário "The effort travels with the bound; the gate reads it" → `gates.ts:1535-1551`); que
+`mixed.warning.recall` é **medido mas não reamostrado** e o limite ao lado do coorte misto é Wilson
+analítico; e que o lema dele é álgebra correta.
+
+**O Fable errou** ao dizer que as três contagens de bytes de `test_backbone_policy.py` não existem —
+existem, linhas 275, 276 e 279, e eu editei-as nesta mesma sessão. O que salva o argumento dele é a
+forma derivada **não tocar o JSON de nenhuma maneira**, não a inexistência das contagens.
+
+**E eu errei duas vezes.** Disse que a fração descartada "não chega a gate nem a relatório" — metade é
+falso, `validReplicates` chega e é conferido; só `discardedReplicates` fica retido. E publiquei a minha
+medição do regime esparso (4 em 10.000) sem dizer que **nenhum sorteio que a pipeline faça hoje** tem
+essa forma, porque a classe mista não é reamostrada.
+
+### A reconciliação, e o codex refutou o Fable no ponto que decide
+
+Pus a posição do Fable ao codex e exigi concessão ou refutação. Ele **concedeu** que a publicação não
+fecha a dívida, e **refutou a classificação**:
+
+> o lema limita a diferença entre CDFs por `p`, mas não implica que `p < alpha` preserve o nível
+> nominal; o quantil não ajustado continua condicionado para todo `p > 0`, podendo ter erro de cauda
+> `alpha + p − alpha·p`.
+
+Conferi a álgebra: com `p` logo abaixo de `alpha`, a cauda do pior caso chega a **2× o nominal** (0,0499
+contra 0,025). Então o Fable exagerou ao dizer que o número "mede o nível que nomeia" — ele mede um
+nível até duas vezes maior. A regra é **cota de degradação** e **critério de admissibilidade**, não
+prova de cobertura, e está escrita assim no sítio. Garantia incondicional exigiria ranks ajustados, e
+essa decisão fica **de fora** desta unidade, declarada.
+
+**Decisão: o desenho do Fable com a justificação do codex.** Escopo: `bootstrap.ts` + o teste dele.
+Nenhuma emenda ao JSON. Moveu **um** digesto.
+
+### O achado que reformulou a dívida, e nenhum de nós dois o tinha visto
+
+**Já existe um teto — acidental e incoerente por fase.** `simultaneousEffortFailure` compara réplicas
+**finitas** com `MINIMUM_DECLARED_REPLICATES = bootstrapReplicates.pilot`, sem ramo por fase. Conferido
+no código: à escala piloto (10.000 pedidas) **uma** réplica não finita reprova o gate por esforço
+insuficiente — tolerância **0 %**; à escala release (100.000 pedidas contra o mesmo piso de 10.000) a
+tolerância é **90 %**. Ninguém escolheu nenhum dos dois.
+
+Logo a dívida não era "falta um teto": era "**o teto que há tem a forma errada**" — função-degrau por
+fase, resultado de comparar uma quantidade (finitas) com outra (tentativas pré-inscritas). O teto do
+`bootstrap.ts` **acrescenta** a condição correta e **não substitui** essa; a § 7 passou a dizer isso, com
+os cinco itens que ficam para depois nomeados um a um.
+
+E a pergunta que eu fiz ao codex sobre regressão tem resposta limpa: com o gate intacto, **o piloto
+decisor não fica mais frouxo** — o teto novo é estritamente adicional.
+
+### A bateria, e um mutante que sobrevive com razão
+
+Três sobreviventes na primeira passagem, os três defeito meu de teste:
+
+- **a fronteira de igualdade não existia.** `Math.ceil(alpha × 10.000)` dá **251**, não 250, porque o
+  alpha derivado é `0.025000000000000022`. Então eu nunca testei o limite, e `>=` contra `>` coincidia.
+  O teto passou a ser **inteiro** (`floor(nível × pedidas)`), onde "no limite" e "uma acima" são inputs
+  distintos;
+- **a derivação era mutante equivalente** contra o literal `0.025` — os dois dão o mesmo limiar inteiro.
+  Mata-se asserindo que o valor derivado **não é** o literal decimal, o que é verdade em binário;
+- **o piso de finitas ficou SUBSUMIDO** e eu escrevia "as duas recusam", que é falso: com no máximo 250
+  descartes sobram 9.750 finitas contra um piso de 1.000, então nenhum input admissível chega ao piso. A
+  perna passou a afirmar a **relação de subsunção** em vez de fingir uma segunda recusa, e o piso fica
+  porque responde outra pergunta.
+
+E um mutante **sobrevive com razão**, declarado no sítio: arrancar o `Math.floor` não muda comportamento
+nenhum, porque para `d` inteiro `d > floor(x)` vale exactamente quando `d > x`. O floor compra o **nome**
+da fronteira — o número que a mensagem e o teste citam —, não o veredito. Dizer isso é mais honesto que
+inventar uma perna que o mate.
+
+**Bateria:** 8 mutantes, 8 asserções, **um sobrevivente equivalente declarado**.
