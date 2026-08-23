@@ -10996,3 +10996,51 @@ dela afirmava mais forte do que a asserção. Corrigido no sítio e no ESTADO.
 medi e o que eu escrevi ao lado do número. É a mesma família de defeito da unidade anterior desta
 sessão, onde quatro tabelas minhas estavam erradas pela mesma razão — a frase respondia uma pergunta
 mais larga do que a medição.
+
+### A rodada 3 do codex: REPROVA, e ela retrata um número que eu tinha publicado duas vezes
+
+**O fixture da rodada 2 tinha dois defeitos que o meu conserto introduziu**, e os dois eram meus:
+
+1. `Math.floor(i / famílias) % templates` realiza **60, 50 e 25** templates para 2, 4 e 8 famílias, então
+   as duas pernas comparavam populações de **cardinalidade de template diferente** — exactamente o
+   confundimento que eu tinha nomeado na minha própria pergunta ao codex e não fui verificar;
+2. **com oito famílias a perna "colinear" não era colinear**, porque 60 não é múltiplo de 8. O rótulo era
+   falso e nada acusava.
+
+Fixture refeito com **20** templates em todas as condições e colinearidade construída como
+`família = f(template)`, que é colinear para qualquer número de famílias. As duas propriedades passaram a
+ser **aferidas por asserção** — perna própria, porque um fixture que promete uma propriedade e não a tem
+mede outra coisa em silêncio.
+
+**E aí um número meu virou falso.** Eu publiquei duas vezes que "a colinearidade não é a causa: a razão se
+move menos de 20 %". Com o fixture honesto a colinearidade **atenua** o alargamento em até **43 %** — e a
+atenuação faz sentido: quando a família é função do template, o fator de template já absorve parte da
+dependência familiar e o novo acrescenta menos. A direção da conclusão não muda (o fator nunca estreita,
+doze de doze), mas a frase estava errada e vinha do fixture quebrado.
+
+**Os outros dois achados:**
+
+- **o ESTADO publicava faixas exactas que nenhuma asserção prendia** (2,68 a 2,97 e afins, e "médias
+  coincidem a 0,06 %"). As faixas encolheram para o que o pino prende — 1,55 a 3,25 com dependência,
+  1,30 a 1,70 sem — e as asserções passaram a ser essas faixas, porque número publicado sem asserção
+  envelhece em silêncio;
+- **"não alarga nem estreita de forma estatística" é erro de tipo.** Sobreposição de amplitudes e razão de
+  médias dentro de 1 % são **ausência de evidência** de diferença em seis sementes, não evidência de
+  ausência de efeito. Um teste de equivalência exigiria margem declarada e poder para a recusar, e nenhuma
+  foi pré-inscrita. Está escrito no pino e no ESTADO como o que é.
+
+### O argumento da decisão, e o codex articulou-o melhor do que eu
+
+Ele deu o veredito **SIM** para a decisão em si, com o argumento: *se a alegação generaliza entre famílias
+geradoras, o fator compra robustez contra dependência familiar e pseudorreplicação, e a largura estrutural
+é o preço dessa proteção, não evidência da dependência.* E com o limite: *para um conjunto de modelos
+estritamente fixo, esse argumento não foi estabelecido.*
+
+Adotei os dois, o argumento e o limite, no ESTADO § 5.11. O limite importa porque decide de que lado a
+emenda cai, e quem o decide é o plano de cobertura de modelo × effort, que está **aberto** na § 3.9 —
+então a emenda está certa sob a leitura que o plano ainda vai fixar, e isso fica dito em vez de suposto.
+
+**O padrão das três rodadas.** Nove achados, **zero** contra a decisão e nove contra a distância entre o
+que eu medi e o que escrevi ao lado do número. Duas vezes o defeito estava no conserto do defeito
+anterior. O que isso mede não é a decisão: é que eu publico prosa mais forte que a medição, e que a
+correção de um fixture precisa da mesma bateria que a correção de uma guarda.

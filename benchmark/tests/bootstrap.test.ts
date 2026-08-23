@@ -482,27 +482,33 @@ describe("frozen replicate counts, seeds and effort", () => {
 
 describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", () => {
   // A emenda que pos `groups.generatorFamily` em `mixed.levels` alega que o fator ALARGA o
-  // intervalo, e a alegacao foi atacada duas vezes. Primeiro: percentis de uma estatistica de
-  // RAZAO nao sao monotonicos sob a multiplicacao por um vetor de pesos novo, entao o fator
-  // poderia ESTREITAR -- e limite mais estreito compra passe, que e o oposto do que a emenda
-  // diz fazer. Depois: o alargamento medido podia vir de a familia ser COLINEAR com o template
-  // no fixture, e nao da dependencia que o fator existe para carregar. As duas objecoes sao
-  // medidas aqui, e a segunda muda o que a emenda pode alegar.
+  // intervalo, e a alegacao foi atacada tres vezes. (i) Percentis de uma estatistica de RAZAO
+  // nao sao monotonicos sob a multiplicacao por um vetor de pesos novo, entao o fator poderia
+  // ESTREITAR -- e limite mais estreito compra passe. (ii) O alargamento podia vir de a familia
+  // ser COLINEAR com o template no fixture. (iii) O fixture que respondia (ii) comparava
+  // populacoes de CARDINALIDADE DE TEMPLATE diferente, e a sua perna "colinear" nao era
+  // colinear para oito familias, porque 60 nao e multiplo de 8.
+  //
+  // Este fixture fecha as tres: os templates sao SEMPRE 20, e a colinearidade e construida
+  // como `familia = f(template)`, que e colinear para qualquer numero de familias. As duas
+  // propriedades sao AFERIDAS abaixo em vez de prometidas.
   interface Linha extends Row {
     hit: number;
   }
 
+  const LINHAS = 200;
+  const TEMPLATES = 20;
+
   /**
    * `dependeDaFamilia` liga ou desliga o efeito de familia no acerto, e e o contrafactual que
-   * separa "o fator captura dependencia" de "acrescentar fator grosseiro alarga". `colinear`
-   * decide se a familia varia DENTRO de um template: com `i % templates` e `templates`
-   * multiplo de `familias` a familia fica constante por template, e o fixture nao distingue as
-   * duas causas. O bloco de `familias` linhas consecutivas partilhando template poe todas as
-   * familias em todo template.
+   * separa "o fator captura dependencia" de "acrescentar fator grosseiro alarga".
+   *
+   * `colinear` decide se a familia e FUNCAO do template (`template % familias`) ou se varia
+   * dentro dele (`floor(i / TEMPLATES) % familias`). Nas duas formas o template e
+   * `i % TEMPLATES`, entao a cardinalidade nao se move com o numero de familias -- que era o
+   * confundimento da versao anterior deste fixture.
    */
   function populacao(
-    n: number,
-    templates: number,
     familias: number,
     dependeDaFamilia: boolean,
     colinear: boolean,
@@ -516,11 +522,11 @@ describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", ()
       s >>>= 0;
       return s / 0x1_0000_0000;
     };
-    return Array.from({ length: n }, (_unused, i) => {
-      const fam = i % familias;
-      const tpl = colinear
-        ? i % templates
-        : Math.floor(i / familias) % templates;
+    return Array.from({ length: LINHAS }, (_unused, i) => {
+      const tpl = i % TEMPLATES;
+      const fam = colinear
+        ? tpl % familias
+        : Math.floor(i / TEMPLATES) % familias;
       const base = dependeDaFamilia
         ? 0.5 + 0.25 * ((fam / Math.max(1, familias - 1)) * 2 - 1)
         : 0.5;
@@ -574,9 +580,34 @@ describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", ()
     dependeDaFamilia: boolean,
     colinear: boolean,
   ): number => {
-    const linhas = populacao(200, 60, familias, dependeDaFamilia, colinear);
+    const linhas = populacao(familias, dependeDaFamilia, colinear);
     return largura(linhas, true, SEED) / largura(linhas, false, SEED);
   };
+
+  it("o FIXTURE tem as duas propriedades que as pernas abaixo supoem", () => {
+    // Sem isto as pernas medem outra coisa e nada acusa. As duas propriedades: a cardinalidade
+    // de template nao se move com as familias, e "colinear" e colinear DE FACTO.
+    for (const familias of [2, 4, 8]) {
+      for (const colinear of [true, false]) {
+        const linhas = populacao(familias, true, colinear);
+        const porTemplate = new Map<string, Set<string>>();
+        for (const linha of linhas) {
+          const chave = linha.operation ?? "";
+          if (!porTemplate.has(chave)) porTemplate.set(chave, new Set());
+          porTemplate.get(chave)?.add(linha.family ?? "");
+        }
+        const maximo = Math.max(
+          ...[...porTemplate.values()].map((conjunto) => conjunto.size),
+        );
+        expect(porTemplate.size, `templates familias=${familias}`).toBe(
+          TEMPLATES,
+        );
+        expect(maximo, `familias por template familias=${familias}`).toBe(
+          colinear ? 1 : familias,
+        );
+      }
+    }
+  });
 
   it("nunca ESTREITA, nas doze configuracoes varridas", () => {
     // O que a emenda precisa e so isto: a razao nao cai abaixo de 1. As doze incluem o caso
@@ -593,57 +624,68 @@ describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", ()
     }
   });
 
-  it("ALARGA por DUAS causas, e a decomposicao e o que a emenda pode alegar", () => {
-    // Com dependencia de familia a razao passa de 1,7; SEM ela o fator ainda alarga, entre 1,2
-    // e 1,6. Logo o alargamento NAO e todo evidencia de dependencia capturada: parte e
-    // estrutural -- um fator grosseiro reamostrado por si acrescenta variancia, tenha ou nao
-    // efeito real. Essa parte e o PRECO do fator, e e paga mesmo quando o conjunto de modelos
-    // nao importa. Alegar "alarga porque captura a dependencia" sem esta perna atribuiria a
-    // decomposicao inteira a uma das duas causas.
+  it("ALARGA por DUAS causas, e sao estas as faixas que o ESTADO publica", () => {
+    // Sem nenhuma dependencia de familia o fator ainda alarga: parte do alargamento e
+    // ESTRUTURAL, porque um fator grosseiro reamostrado por si acrescenta variancia, tenha ou
+    // nao efeito real. Essa parte e o PRECO do fator e e paga mesmo quando o conjunto de
+    // modelos nao importa. As faixas ficam presas aqui porque sao elas que o ESTADO § 5.11
+    // publica, e numero publicado que nenhuma assercao sustenta envelhece em silencio.
     for (const familias of [2, 4, 8]) {
-      const comDep = razao(familias, true, false);
-      const semDep = razao(familias, false, false);
-      expect(comDep, `familias=${familias} com dependencia`).toBeGreaterThan(
-        1.7,
-      );
-      expect(semDep, `familias=${familias} sem dependencia`).toBeGreaterThan(
-        1.2,
-      );
-      expect(semDep, `familias=${familias} sem dependencia`).toBeLessThan(1.6);
-      // E a dependencia acrescenta ACIMA da parte estrutural, que e o que a torna visivel.
-      expect(comDep).toBeGreaterThan(semDep);
+      for (const colinear of [true, false]) {
+        const semDep = razao(familias, false, colinear);
+        expect(
+          semDep,
+          `estrutural familias=${familias} col=${colinear}`,
+        ).toBeGreaterThan(1.3);
+        expect(
+          semDep,
+          `estrutural familias=${familias} col=${colinear}`,
+        ).toBeLessThan(1.7);
+        const comDep = razao(familias, true, colinear);
+        expect(
+          comDep,
+          `com dependencia familias=${familias} col=${colinear}`,
+        ).toBeGreaterThan(1.55);
+        expect(
+          comDep,
+          `com dependencia familias=${familias} col=${colinear}`,
+        ).toBeLessThan(3.25);
+        // E a dependencia acrescenta ACIMA da parte estrutural, que e o que a torna visivel.
+        expect(comDep).toBeGreaterThan(semDep);
+      }
     }
   });
 
-  it("a COLINEARIDADE com o template nao e o que produz o alargamento", () => {
-    // O fixture antigo punha a familia como funcao do template (`i % 60`, com 60 multiplo de 2
-    // e de 4), e assim ele nao distinguia as duas causas. Medido nas duas formas a razao quase
-    // nao se move, logo a colinearidade nao e a causa e a perna acima nao esta a medir o
-    // template outra vez.
+  it("a COLINEARIDADE com o template ATENUA o alargamento, e nao o produz", () => {
+    // Quando a familia e funcao do template, o fator de template ja absorve parte da
+    // dependencia familiar e o fator novo acrescenta MENOS. Medido, a atenuacao chega a 43 %,
+    // o que REFUTA a leitura anterior de que a colinearidade movia a razao menos de 20 %:
+    // aquela leitura vinha de um fixture cuja perna "colinear" nao era colinear para oito
+    // familias e cuja cardinalidade de template mudava com as familias.
     for (const familias of [2, 4, 8]) {
       const col = razao(familias, true, true);
       const naoCol = razao(familias, true, false);
-      expect(
-        Math.abs(col - naoCol) / naoCol,
-        `familias=${familias}`,
-      ).toBeLessThan(0.2);
+      expect(naoCol, `familias=${familias}`).toBeGreaterThan(col);
     }
   });
 
-  it("nao ESTREITA quando o fator e degenerado: a diferenca e do fluxo do PRNG", () => {
+  it("com o fator DEGENERADO nao ha diferenca detectavel em seis sementes", () => {
     // Com um nivel so, `drawMultiway` faz `min(levels - 1, ...)` = 0 e a contagem do fator e
     // sempre 1, entao o multiplicador do peso e constante. O que muda e a POSICAO no fluxo,
-    // porque o laco consome um sorteio a mais por replicado -- e uma semente que andou nao e
-    // variancia. Logo a comparacao correta e de FAIXAS e nao de pontos: medido, ponto contra
-    // ponto na semente pre-inscrita da 0,972, que leria como estreitamento.
+    // porque o laco consome um sorteio a mais por replicado. Ponto contra ponto na semente
+    // pre-inscrita isso leria como estreitamento; faixa contra faixa as duas se sobrepoem.
+    //
+    // O QUE ESTA PERNA NAO E: teste de equivalencia. Sobreposicao de amplitudes e razao de
+    // medias dentro de um por cento sao AUSENCIA DE EVIDENCIA de diferenca em seis sementes,
+    // e nao evidencia de ausencia de efeito. Um teste de equivalencia exigiria uma margem
+    // declarada e poder para a recusar, e nenhuma foi pre-inscrita.
     //
     // A razao de fundo, achada por MUTANTE EQUIVALENTE: um fator de um nivel contribui um
     // multiplicador CONSTANTE ao peso de toda celula, e a DISTRIBUICAO-ALVO de uma estatistica
     // de razao e invariante a escala uniforme. Isso vale para o alvo e NAO para a execucao
-    // finita: com o fluxo deslocado, um replicado individual e portanto o percentil amostral
-    // podem mover-se nos dois sentidos. E por isso que esta perna afirma sobreposicao de
-    // faixas e media a menos de um por cento, e nao igualdade.
-    const linhas = populacao(200, 60, 1, false, false);
+    // finita: com o fluxo deslocado, um replicado e portanto o percentil amostral podem
+    // mover-se nos dois sentidos.
+    const linhas = populacao(1, false, false);
     const sementes = [
       SEED,
       SEED + 6,

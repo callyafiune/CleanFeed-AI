@@ -23,7 +23,7 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 172 arquivos / 3.120 testes (vitest) + 767 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| suíte | 172 arquivos / 3.121 testes (vitest) + 767 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
 | dos quais, o avaliador | 2.500 — 1.739 em 46 arquivos de `benchmark/tests`, 761 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
@@ -1117,44 +1117,53 @@ vale — o que vale é que toda pista que este repositório roda passa por `mixe
 uma dependência que não existe.
 
 **O efeito na LARGURA, medido com a função de produção** (`bootstrap.test.ts`, "o terceiro fator
-cruzado da classe mista"), porque a alegação foi atacada duas vezes: percentis de uma estatística de
-razão não são monotônicos sob um vetor de pesos novo, então o fator poderia **estreitar**; e o
-alargamento medido podia vir de a família ser **colinear** com o template no fixture. Razão da largura
-(com fator / sem), 200 linhas e 60 templates, e as doze configurações estão pinadas:
+cruzado da classe mista"), porque a alegação foi atacada três vezes: percentis de razão não são
+monotônicos sob um vetor de pesos novo, então o fator poderia **estreitar**; o alargamento podia vir de a
+família ser **colinear** com o template no fixture; e o fixture que respondia a isso comparava populações
+de **cardinalidade de template diferente** e a sua perna "colinear" não era colinear para oito famílias.
+O fixture vigente tem sempre **20** templates e constrói a colinearidade como `família = f(template)`, e
+as **duas propriedades são aferidas por asserção** em vez de prometidas.
 
-| famílias | com dependência de família | **sem** dependência |
-|---:|---|---|
-| 2 | 2,68 a 2,97 | 1,31 a 1,32 |
-| 4 | 2,13 a 2,29 | 1,31 a 1,37 |
-| 8 | 1,71 a 1,81 | 1,42 a 1,48 |
+Razão da largura (com fator / sem), 200 linhas, 20 templates. As faixas são as que o pino prende:
 
-**O fator nunca estreita — e o alargamento tem DUAS causas.** Sem nenhuma dependência de família ele
-ainda alarga 1,31 a 1,48: parte é **estrutural**, porque um fator grosseiro reamostrado por si
-acrescenta variância, tenha ou não efeito real. Essa parte é o **preço** do fator e é paga mesmo quando
-o conjunto de modelos não importa; a dependência acrescenta acima dela. Dizer "alarga porque captura a
-dependência" atribuiria a decomposição inteira a uma das duas causas.
+| | com dependência de família | **sem** dependência |
+|---|---|---|
+| todas as configurações | **1,55 a 3,25** | **1,30 a 1,70** |
 
-**A colinearidade não é a causa:** com a família constante por template ou variando dentro dele, a razão
-se move menos de 20 % — pinado como perna própria, porque o fixture anterior punha `i % 60` com 60
-múltiplo de 2 e de 4 e por isso não distinguia as duas causas.
+**O fator nunca estreita** — doze configurações, nenhuma abaixo de 1 — e o alargamento tem **duas
+causas**. Sem nenhuma dependência de família ele ainda alarga: parte é **estrutural**, porque um fator
+grosseiro reamostrado por si acrescenta variância, tenha ou não efeito real. Essa parte é o **preço** do
+fator e é paga mesmo quando o conjunto de modelos não importa.
 
-**No caso degenerado (uma família) o fator não alarga nem estreita de forma estatística.** `drawMultiway`
-faz `min(níveis − 1, …) = 0`, o multiplicador é sempre 1, e o que muda é a **posição no fluxo do PRNG**
-— o laço consome um sorteio a mais por replicado. Ponto contra ponto na semente pré-inscrita isso lê
-como 0,972; faixa contra faixa em 12 sementes as duas se sobrepõem e as médias coincidem a 0,06 %.
+**A colinearidade ATENUA o alargamento, e não o produz.** Quando a família é função do template, o fator
+de template já absorve parte da dependência familiar e o novo acrescenta menos — atenuação medida de até
+**43 %**. Isto **retrata** o que esta seção publicou antes, que era "a colinearidade move a razão menos
+de 20 %": aquele número vinha do fixture com a perna "colinear" falsa para oito famílias e cardinalidade
+de template variável.
 
-**A razão de fundo, e ela vale para o ALVO e não para a corrida.** Um fator de um nível contribui um
-multiplicador constante ao peso de toda célula, e a **distribuição-alvo** de uma estatística de razão é
-invariante a escala uniforme — foi isso que fez três mutantes de magnitude sobreviverem, e o que mata a
-perna é quebrar a estrutura de produto (`weight *= …` para `weight += …`). Na **execução finita** a
-invariância não vale: com o fluxo deslocado, um replicado e portanto o percentil amostral podem mover-se
-nos dois sentidos. É por isso que a asserção é de sobreposição de faixas e não de igualdade.
+**No caso degenerado (uma família) não há diferença detectável em seis sementes.** `drawMultiway` faz
+`min(níveis − 1, …) = 0`, o multiplicador é sempre 1, e o que muda é a **posição no fluxo do PRNG**.
+Ponto contra ponto na semente pré-inscrita isso leria como estreitamento; faixa contra faixa as duas se
+sobrepõem e as médias ficam a menos de 1 %.
 
-**Por que o fator entra.** O vão de IA de uma linha mista é escrito por um modelo, e linhas do mesmo
-modelo estão correlacionadas por ele. `drawMultiway` sorteia os níveis de cada fator com reposição e o
-peso da célula é o produto, então um fator ausente é tratado como sem variação: o limite publicado sai
-mais **estreito**, e R3 proíbe comprar passe com menos evidência. `ai-recall` já aninha a família no
-topo; o silêncio da tabela sobre a mista estava registrado como **aberto**, não como decidido.
+**E isso é ausência de evidência, não evidência de ausência.** Sobreposição de amplitudes e razão de
+médias dentro de 1 % não constituem teste de equivalência: um teste de equivalência exigiria margem
+declarada e poder para a recusar, e nenhuma foi pré-inscrita. A razão de fundo — um fator de um nível
+contribui multiplicador constante, e a **distribuição-alvo** de uma estatística de razão é invariante a
+escala uniforme — vale para o **alvo** e não para a execução finita, onde o fluxo deslocado move um
+replicado e portanto o percentil amostral nos dois sentidos.
+
+**Por que o fator entra, e o argumento é este.** Se a alegação **generaliza entre famílias
+geradoras**, o fator compra robustez contra dependência familiar e contra pseudorreplicação, e a largura
+estrutural é o **preço dessa proteção** — não evidência da dependência. `drawMultiway` sorteia os níveis
+de cada fator com reposição e o peso da célula é o produto, então um fator ausente é tratado como sem
+variação e o limite sai mais estreito; R3 proíbe comprar passe com menos evidência, e `ai-recall` já
+aninha a família no topo pela mesma razão.
+
+**O limite do argumento, e ele fica escrito:** para um conjunto de modelos **estritamente fixo** — em que
+a alegação é condicional àqueles modelos e não generaliza para outros — a proteção não foi estabelecida,
+e ali o fator custa largura sem comprar propriedade demonstrada. O que decide qual dos dois casos vale é
+o plano de cobertura de modelo × effort (§ 3.9), que está aberto.
 
 **A contagem de níveis é da corrida, e é isso que a declara.** O conjunto de modelos é argumento por
 corrida (§ 7, "nada cruza modelo e effort com template"), então o fator pode ser degenerado numa corrida
