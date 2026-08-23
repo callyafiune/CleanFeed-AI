@@ -23,7 +23,7 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 172 arquivos / 3.118 testes (vitest) + 767 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| suíte | 172 arquivos / 3.120 testes (vitest) + 767 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
 | dos quais, o avaliador | 2.500 — 1.739 em 46 arquivos de `benchmark/tests`, 761 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
@@ -1117,30 +1117,38 @@ vale — o que vale é que toda pista que este repositório roda passa por `mixe
 uma dependência que não existe.
 
 **O efeito na LARGURA, medido com a função de produção** (`bootstrap.test.ts`, "o terceiro fator
-cruzado da classe mista"), porque a alegação foi atacada: percentis de uma estatística de razão não são
-monotônicos sob um vetor de pesos novo, então acrescentar fator poderia **estreitar** — e limite mais
-estreito compra passe. Medido sobre populações sintéticas de 100 a 2.000 linhas, 20 a 60 templates:
+cruzado da classe mista"), porque a alegação foi atacada duas vezes: percentis de uma estatística de
+razão não são monotônicos sob um vetor de pesos novo, então o fator poderia **estreitar**; e o
+alargamento medido podia vir de a família ser **colinear** com o template no fixture. Razão da largura
+(com fator / sem), 200 linhas e 60 templates, e as doze configurações estão pinadas:
 
-| famílias | razão da largura (com fator / sem) |
-|---:|---|
-| 1 (degenerado) | **1,000 a 1,006** nas médias de 12 sementes, e as duas faixas **se sobrepõem** |
-| 2 | 2,05 a 3,91 |
-| 3 | 1,81 a 3,81 |
-| 4 | 1,70 a 3,38 |
-| 8 | 1,79 a 3,10 |
+| famílias | com dependência de família | **sem** dependência |
+|---:|---|---|
+| 2 | 2,68 a 2,97 | 1,31 a 1,32 |
+| 4 | 2,13 a 2,29 | 1,31 a 1,37 |
+| 8 | 1,71 a 1,81 | 1,42 a 1,48 |
 
-Com mais de um nível o fator **alarga**, em todo regime medido. Com um nível o ataque é certo em espécie
-e nulo em magnitude: `drawMultiway` faz `min(levels − 1, …) = 0`, o multiplicador do fator é sempre 1, e
-o que muda é a **posição no fluxo do PRNG** — o laço consome um sorteio a mais por replicado. Ponto
-contra ponto na semente pré-inscrita isso lê como 0,972, que é estreitamento aparente; faixa contra
-faixa em 12 sementes as duas se sobrepõem. Semente que andou não é variância.
+**O fator nunca estreita — e o alargamento tem DUAS causas.** Sem nenhuma dependência de família ele
+ainda alarga 1,31 a 1,48: parte é **estrutural**, porque um fator grosseiro reamostrado por si
+acrescenta variância, tenha ou não efeito real. Essa parte é o **preço** do fator e é paga mesmo quando
+o conjunto de modelos não importa; a dependência acrescenta acima dela. Dizer "alarga porque captura a
+dependência" atribuiria a decomposição inteira a uma das duas causas.
 
-**E há razão mais forte que a medição, achada por mutante equivalente:** um fator de um nível
-contribui um multiplicador **constante** ao peso de toda célula, e o intervalo de uma estatística
-de **razão** é invariante a escala uniforme. Logo nenhuma mutação que só mexa na magnitude desse
-multiplicador pode mover a perna degenerada — três sobrevivem —, e o que a move é quebrar a
-estrutura de produto (`weight *= …` para `weight += …`). A degeneração deste fator não pode
-estreitar um intervalo de razão **por construção**, e não só nos regimes medidos.
+**A colinearidade não é a causa:** com a família constante por template ou variando dentro dele, a razão
+se move menos de 20 % — pinado como perna própria, porque o fixture anterior punha `i % 60` com 60
+múltiplo de 2 e de 4 e por isso não distinguia as duas causas.
+
+**No caso degenerado (uma família) o fator não alarga nem estreita de forma estatística.** `drawMultiway`
+faz `min(níveis − 1, …) = 0`, o multiplicador é sempre 1, e o que muda é a **posição no fluxo do PRNG**
+— o laço consome um sorteio a mais por replicado. Ponto contra ponto na semente pré-inscrita isso lê
+como 0,972; faixa contra faixa em 12 sementes as duas se sobrepõem e as médias coincidem a 0,06 %.
+
+**A razão de fundo, e ela vale para o ALVO e não para a corrida.** Um fator de um nível contribui um
+multiplicador constante ao peso de toda célula, e a **distribuição-alvo** de uma estatística de razão é
+invariante a escala uniforme — foi isso que fez três mutantes de magnitude sobreviverem, e o que mata a
+perna é quebrar a estrutura de produto (`weight *= …` para `weight += …`). Na **execução finita** a
+invariância não vale: com o fluxo deslocado, um replicado e portanto o percentil amostral podem mover-se
+nos dois sentidos. É por isso que a asserção é de sobreposição de faixas e não de igualdade.
 
 **Por que o fator entra.** O vão de IA de uma linha mista é escrito por um modelo, e linhas do mesmo
 modelo estão correlacionadas por ele. `drawMultiway` sorteia os níveis de cada fator com reposição e o

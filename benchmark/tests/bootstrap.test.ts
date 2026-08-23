@@ -482,16 +482,31 @@ describe("frozen replicate counts, seeds and effort", () => {
 
 describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", () => {
   // A emenda que pos `groups.generatorFamily` em `mixed.levels` alega que o fator ALARGA o
-  // intervalo, e a alegacao foi atacada assim: percentis de uma estatistica de RAZAO nao sao
-  // monotonicos sob a multiplicacao por um vetor de pesos novo, entao acrescentar fator
-  // poderia ESTREITAR — e um limite mais estreito compra passe, que e o oposto do que a
-  // emenda diz fazer. O ataque esta certo em especie e e nulo em magnitude, e a diferenca
-  // entre as duas coisas e esta medicao.
+  // intervalo, e a alegacao foi atacada duas vezes. Primeiro: percentis de uma estatistica de
+  // RAZAO nao sao monotonicos sob a multiplicacao por um vetor de pesos novo, entao o fator
+  // poderia ESTREITAR -- e limite mais estreito compra passe, que e o oposto do que a emenda
+  // diz fazer. Depois: o alargamento medido podia vir de a familia ser COLINEAR com o template
+  // no fixture, e nao da dependencia que o fator existe para carregar. As duas objecoes sao
+  // medidas aqui, e a segunda muda o que a emenda pode alegar.
   interface Linha extends Row {
     hit: number;
   }
 
-  function populacao(n: number, templates: number, familias: number): Linha[] {
+  /**
+   * `dependeDaFamilia` liga ou desliga o efeito de familia no acerto, e e o contrafactual que
+   * separa "o fator captura dependencia" de "acrescentar fator grosseiro alarga". `colinear`
+   * decide se a familia varia DENTRO de um template: com `i % templates` e `templates`
+   * multiplo de `familias` a familia fica constante por template, e o fixture nao distingue as
+   * duas causas. O bloco de `familias` linhas consecutivas partilhando template poe todas as
+   * familias em todo template.
+   */
+  function populacao(
+    n: number,
+    templates: number,
+    familias: number,
+    dependeDaFamilia: boolean,
+    colinear: boolean,
+  ): Linha[] {
     let s = 11;
     const rnd = () => {
       s ^= s << 13;
@@ -503,11 +518,15 @@ describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", ()
     };
     return Array.from({ length: n }, (_unused, i) => {
       const fam = i % familias;
-      // O acerto depende da FAMILIA: e essa a dependencia que o fator existe para carregar.
-      const base = 0.5 + 0.25 * ((fam / Math.max(1, familias - 1)) * 2 - 1);
+      const tpl = colinear
+        ? i % templates
+        : Math.floor(i / familias) % templates;
+      const base = dependeDaFamilia
+        ? 0.5 + 0.25 * ((fam / Math.max(1, familias - 1)) * 2 - 1)
+        : 0.5;
       return {
         parent: `p${i}`,
-        operation: `t${i % templates}`,
+        operation: `t${tpl}`,
         family: `f${fam}`,
         hit: rnd() < base ? 1 : 0,
       };
@@ -550,31 +569,81 @@ describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", ()
     return intervalo.upper95 - intervalo.lower95;
   }
 
-  it("ALARGA quando o fator tem mais de um nivel, e nao por pouco", () => {
-    // Duas familias e quatro, e a razao e sempre bem acima de 1. Sem esta perna a emenda
-    // seria uma afirmacao sobre `drawMultiway` que ninguem mediu.
-    for (const familias of [2, 4]) {
-      const linhas = populacao(200, 60, familias);
-      const sem = largura(linhas, false, SEED);
-      const com = largura(linhas, true, SEED);
-      expect(com, `familias=${familias}`).toBeGreaterThan(sem * 1.5);
+  const razao = (
+    familias: number,
+    dependeDaFamilia: boolean,
+    colinear: boolean,
+  ): number => {
+    const linhas = populacao(200, 60, familias, dependeDaFamilia, colinear);
+    return largura(linhas, true, SEED) / largura(linhas, false, SEED);
+  };
+
+  it("nunca ESTREITA, nas doze configuracoes varridas", () => {
+    // O que a emenda precisa e so isto: a razao nao cai abaixo de 1. As doze incluem o caso
+    // SEM dependencia de familia, que e onde um estreitamento apareceria primeiro.
+    for (const familias of [2, 4, 8]) {
+      for (const depende of [true, false]) {
+        for (const colinear of [true, false]) {
+          expect(
+            razao(familias, depende, colinear),
+            `familias=${familias} depende=${depende} colinear=${colinear}`,
+          ).toBeGreaterThan(1);
+        }
+      }
+    }
+  });
+
+  it("ALARGA por DUAS causas, e a decomposicao e o que a emenda pode alegar", () => {
+    // Com dependencia de familia a razao passa de 1,7; SEM ela o fator ainda alarga, entre 1,2
+    // e 1,6. Logo o alargamento NAO e todo evidencia de dependencia capturada: parte e
+    // estrutural -- um fator grosseiro reamostrado por si acrescenta variancia, tenha ou nao
+    // efeito real. Essa parte e o PRECO do fator, e e paga mesmo quando o conjunto de modelos
+    // nao importa. Alegar "alarga porque captura a dependencia" sem esta perna atribuiria a
+    // decomposicao inteira a uma das duas causas.
+    for (const familias of [2, 4, 8]) {
+      const comDep = razao(familias, true, false);
+      const semDep = razao(familias, false, false);
+      expect(comDep, `familias=${familias} com dependencia`).toBeGreaterThan(
+        1.7,
+      );
+      expect(semDep, `familias=${familias} sem dependencia`).toBeGreaterThan(
+        1.2,
+      );
+      expect(semDep, `familias=${familias} sem dependencia`).toBeLessThan(1.6);
+      // E a dependencia acrescenta ACIMA da parte estrutural, que e o que a torna visivel.
+      expect(comDep).toBeGreaterThan(semDep);
+    }
+  });
+
+  it("a COLINEARIDADE com o template nao e o que produz o alargamento", () => {
+    // O fixture antigo punha a familia como funcao do template (`i % 60`, com 60 multiplo de 2
+    // e de 4), e assim ele nao distinguia as duas causas. Medido nas duas formas a razao quase
+    // nao se move, logo a colinearidade nao e a causa e a perna acima nao esta a medir o
+    // template outra vez.
+    for (const familias of [2, 4, 8]) {
+      const col = razao(familias, true, true);
+      const naoCol = razao(familias, true, false);
+      expect(
+        Math.abs(col - naoCol) / naoCol,
+        `familias=${familias}`,
+      ).toBeLessThan(0.2);
     }
   });
 
   it("nao ESTREITA quando o fator e degenerado: a diferenca e do fluxo do PRNG", () => {
-    // Com um nivel so, `drawMultiway` faz `min(levels - 1, ...)` = 0 e a contagem do fator
-    // e sempre 1, entao o multiplicador do peso e constante. O que muda e a POSICAO no
-    // fluxo, porque o laco consome um sorteio a mais por replicado — e uma semente que
-    // andou nao e variancia. Logo a comparacao correta e de FAIXAS e nao de pontos: medido,
-    // um ponto contra ponto na semente pre-inscrita da 0,972 e leria como estreitamento.
+    // Com um nivel so, `drawMultiway` faz `min(levels - 1, ...)` = 0 e a contagem do fator e
+    // sempre 1, entao o multiplicador do peso e constante. O que muda e a POSICAO no fluxo,
+    // porque o laco consome um sorteio a mais por replicado -- e uma semente que andou nao e
+    // variancia. Logo a comparacao correta e de FAIXAS e nao de pontos: medido, ponto contra
+    // ponto na semente pre-inscrita da 0,972, que leria como estreitamento.
     //
-    // E ha uma razao mais forte que a medicao, achada por MUTANTE EQUIVALENTE: um fator de um
-    // nivel contribui um multiplicador CONSTANTE ao peso de toda celula, e o intervalo de uma
-    // estatistica de RAZAO e invariante a escala uniforme. Logo nenhuma mutacao que so mexa na
-    // magnitude desse multiplicador — curto-circuitar o sorteio, contar 2 em vez de 1, dar
-    // `levels + 1` voltas — pode mover esta perna, e as tres sobrevivem. O que a move e quebrar
-    // a estrutura de PRODUTO (`weight *= …` para `weight += …`), que e o mutante que a mata.
-    const linhas = populacao(200, 60, 1);
+    // A razao de fundo, achada por MUTANTE EQUIVALENTE: um fator de um nivel contribui um
+    // multiplicador CONSTANTE ao peso de toda celula, e a DISTRIBUICAO-ALVO de uma estatistica
+    // de razao e invariante a escala uniforme. Isso vale para o alvo e NAO para a execucao
+    // finita: com o fluxo deslocado, um replicado individual e portanto o percentil amostral
+    // podem mover-se nos dois sentidos. E por isso que esta perna afirma sobreposicao de
+    // faixas e media a menos de um por cento, e nao igualdade.
+    const linhas = populacao(200, 60, 1, false, false);
     const sementes = [
       SEED,
       SEED + 6,
@@ -588,10 +657,7 @@ describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", ()
     const faixa = (a: number[]) => [Math.min(...a), Math.max(...a)] as const;
     const [d0, d1] = faixa(dois);
     const [t0, t1] = faixa(tres);
-    // As duas faixas se sobrepoem...
     expect(d0 <= t1 && t0 <= d1, `[${d0}, ${d1}] vs [${t0}, ${t1}]`).toBe(true);
-    // ...e as MEDIAS coincidem a menos de um por cento, que e o que separa "deslocou o
-    // fluxo" de "mudou a variancia".
     const media = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
     expect(media(tres) / media(dois)).toBeGreaterThan(0.99);
     expect(media(tres) / media(dois)).toBeLessThan(1.01);

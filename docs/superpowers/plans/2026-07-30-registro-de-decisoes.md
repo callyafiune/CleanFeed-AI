@@ -10953,3 +10953,46 @@ passagem por âncora ambígua — o eixo `groups.generatorFamily` aparece TAMBÉ
 sobreviveu por eu ter apontado o teste errado: reverter `SEALED_POLICY_SHA256` não move o teste de
 reserialização, move 46 outros. A acoplagem que a docstring de `sealed_policy.py` promete existe, e foi
 medida rodando a suíte com o pino revertido.
+
+### A rodada 2 do codex, e ela devolveu REPROVA outra vez — sobre a EVIDÊNCIA, não a decisão
+
+Três achados, os três válidos, e o primeiro muda o que a emenda pode alegar.
+
+**1. O pino de largura estava confundido com o template.** A população sintética punha
+`family = i % famílias` e `template = i % 60`, e como 60 é múltiplo de 2 e de 4 a família ficava
+**constante dentro de cada template** — função determinística dele. Logo o fixture não distinguia "o
+fator captura dependência de gerador" de "acrescentar um fator grosseiro alarga".
+
+Medido depois de descolinearizar de verdade (bloco de `famílias` linhas consecutivas partilhando
+template, o que põe todas as famílias em todo template), e com o contrafactual de **desligar** o efeito
+de família:
+
+| famílias | com dependência | **sem** dependência |
+|---:|---|---|
+| 2 | 2,68 a 2,97 | 1,31 a 1,32 |
+| 4 | 2,13 a 2,29 | 1,31 a 1,37 |
+| 8 | 1,71 a 1,81 | 1,42 a 1,48 |
+
+**A decisão sobrevive e a alegação encolhe.** O fator nunca estreita — doze configurações, todas acima
+de 1 —, mas o alargamento tem **duas** causas e a estrutural é a maior parte quando não há efeito de
+família. Eu escrevia "alarga porque captura a dependência", que atribuía a decomposição inteira a uma
+das duas. A parte estrutural é o **preço** do fator, paga mesmo quando o conjunto de modelos não
+importa. E a colinearidade, medida, **não** é a causa: com a família constante por template ou variando
+dentro dele a razão se move menos de 20 %.
+
+**2. O ESTADO declarava regimes que o teste commitado não cobria.** A tabela publicava famílias 1, 2, 3,
+4 e 8 sobre 100 a 2.000 linhas; o pino media duas famílias num regime. Medi aquilo em rascunho e
+publiquei — que é exactamente o defeito de "número medido uma vez, publicado como se a árvore o
+sustentasse". O pino passou a varrer as doze configurações que a tabela agora declara, e a tabela
+encolheu para o que ele mede.
+
+**3. "Não pode estreitar por construção" era exagero.** A invariância a escala uniforme vale para a
+**distribuição-alvo** da estatística de razão, não para a **execução finita**: com o fluxo do PRNG
+deslocado, um replicado individual e portanto o percentil amostral podem mover-se nos dois sentidos. Foi
+por isso que a asserção sempre foi de sobreposição de faixas e não de igualdade — mas a prosa ao lado
+dela afirmava mais forte do que a asserção. Corrigido no sítio e no ESTADO.
+
+**O padrão das três.** Nenhuma delas é sobre a decisão: as três são sobre a distância entre o que eu
+medi e o que eu escrevi ao lado do número. É a mesma família de defeito da unidade anterior desta
+sessão, onde quatro tabelas minhas estavam erradas pela mesma razão — a frase respondia uma pergunta
+mais larga do que a medição.
