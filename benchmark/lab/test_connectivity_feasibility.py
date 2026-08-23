@@ -2715,6 +2715,26 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             assemble_corpus.assert_generation_coverage(inventada)
         self.assertIn("ilha_99", str(erro.exception))
 
+        # E a regra e sobre a FAMILIA CANONICA e nao sobre o modelo cru: duas grafias do
+        # mesmo modelo sao UMA familia, e contar duas aprovaria a cobertura que a regra
+        # recusa -- ou, no sentido em que o codigo errava, RECUSARIA a que a familia tem.
+        duas_grafias = {ilha: [("modelo-a", "low"), ("modelo-b", "low")] for ilha in nucleo}
+        duas_grafias[nucleo[0]] = [
+            ("modelo-a", "low"),
+            ("modelo-b", "low"),
+            ("modelo.c", "low"),
+        ]
+        duas_grafias[nucleo[1]] = [
+            ("modelo-a", "low"),
+            ("modelo-b", "low"),
+            ("modelo_c", "low"),
+        ]
+        duas_grafias.update({ilha: [("modelo-reserva", "low")] for ilha in reservadas})
+        canonica = assemble_corpus.generator_family("modelo.c")
+        self.assertEqual(canonica, assemble_corpus.generator_family("modelo_c"))
+        # As duas grafias sao UMA familia em DUAS ilhas, entao a matriz passa.
+        assemble_corpus.assert_generation_coverage(duas_grafias)
+
         # E o EFFORT entra na identidade da cobertura: o mesmo modelo em dois efforts numa
         # ilha so continua a ser um modelo numa ilha so, e a guarda nao pode contar dois.
         dois_efforts = {ilha: [("modelo-a", "low"), ("modelo-b", "low")] for ilha in nucleo}

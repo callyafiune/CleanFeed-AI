@@ -11109,3 +11109,30 @@ antes de o revisor a cobrar.
 
 **Bateria:** 12 mutantes, 12 asserções, zero sobreviventes. Um sobreviveu na primeira passagem — a
 recusa de ilha desconhecida —, e sobreviveu porque o meu teste nunca passava ilha desconhecida.
+
+### A rodada 4: a pergunta que faltava foi respondida, e sobraram dois achados meus
+
+**`identifica-entre-familias: IDENTIFICA`.** Com o plano de cobertura como premissa, o codex responde
+que `generatorFamily` mais as três ilhas reservadas **identificam** a alegação entre famílias — o que
+é a resposta que faltava nas três rodadas anteriores. E mais: **`fail-open-novo: NENHUM`** e
+**`guarda-nao-invocada: NENHUMA`**, então o plano de `ff5cce6` não abriu porta nem deixou guarda morta.
+
+Dois achados, e os dois são meus:
+
+- **`MINIMUM_ISLANDS_PER_FAMILY` agrupava por MODELO CRU e não pela família canônica.** A regra é sobre
+  a família, porque é `groups.generatorFamily` que a reamostragem declara como fator; duas grafias do
+  mesmo modelo (`modelo.c` e `modelo_c` colidem sob `generator_family`) contariam como dois modelos de
+  uma ilha cada, e a guarda recusaria uma cobertura que a família de facto tem. Era **fail-closed** —
+  recusava o admissível, não admitia o inadmissível — mas divergia da regra que a docstring enuncia.
+  Corrigido, com perna própria que passa as duas grafias e exige que a matriz passe;
+- **a atenuação de 43 % era prosa outra vez.** A asserção provava só a direção `naoCol > col`. Agora a
+  magnitude está presa em duas pernas: passa de 40 % no caso mais colinear, e **decresce** com o número
+  de famílias — 43,0 %, 20,7 %, 12,2 % para duas, quatro e oito. A monotonia tem razão: com mais
+  famílias sobre os mesmos 20 templates a colinearidade é menos completa.
+
+É a segunda vez nesta cadeia que o mesmo número escapa sem asserção depois de eu o corrigir. A primeira
+foi "menos de 20 %", que estava errada; esta é "43 %", que está certa e estava solta. O defeito não é o
+valor, é o reflexo de escrever o número antes de escrever a asserção.
+
+**Bateria:** 14 mutantes, 14 asserções, zero sobreviventes — e ela agora atravessa as duas suítes, com
+o mutante que desfaz a colinearidade do fixture a ficar vermelho no pino de largura.

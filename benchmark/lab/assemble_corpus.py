@@ -703,21 +703,26 @@ def assert_generation_coverage(assignments: dict[str, list[tuple[str, str]]]) ->
             f"as ilhas de nucleo {vazias} nao tem atribuicao: elas nao produzem linha, e a "
             "cota da classe nao fecha -- o que hoje se descobre no fim da corrida"
         )
-    ilhas_por_modelo: dict[str, set[str]] = {}
+    # Agrupado pela FAMILIA CANONICA e nao pelo modelo cru: a regra e sobre a familia, porque
+    # e `groups.generatorFamily` que a reamostragem declara como fator. Duas grafias do mesmo
+    # modelo contariam como dois, cada um numa ilha, e a guarda recusaria uma cobertura que a
+    # familia de facto tem -- fail-CLOSED, mas divergente da regra que a docstring enuncia.
+    ilhas_por_familia: dict[str, set[str]] = {}
     for nome in nucleo:
         for modelo, _effort in assignments.get(nome, []):
-            ilhas_por_modelo.setdefault(modelo, set()).add(nome)
+            ilhas_por_familia.setdefault(generator_family(modelo), set()).add(nome)
     curtos = {
-        modelo: sorted(ilhas)
-        for modelo, ilhas in sorted(ilhas_por_modelo.items())
+        familia: sorted(ilhas)
+        for familia, ilhas in sorted(ilhas_por_familia.items())
         if len(ilhas) < MINIMUM_ISLANDS_PER_FAMILY
     }
     if curtos:
         raise CoverageMatrixRefused(
-            f"cada modelo tem de aparecer em ao menos {MINIMUM_ISLANDS_PER_FAMILY} ilhas de "
-            f"nucleo, e estes nao: {curtos}. Com uma ilha so a familia fica em "
-            "correspondencia um-para-um com os templates dela, e a reamostragem nao separa os "
-            "dois fatores"
+            f"cada FAMILIA geradora tem de aparecer em ao menos "
+            f"{MINIMUM_ISLANDS_PER_FAMILY} ilhas de nucleo, e estas nao: {curtos}. Com uma "
+            "ilha so a familia fica em correspondencia um-para-um com os templates dela, e a "
+            "reamostragem nao separa os dois fatores. Os nomes sao a forma CANONICA de "
+            "`generator_family`, que e a que `groups.generatorFamily` carrega"
         )
 
 

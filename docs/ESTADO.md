@@ -1141,8 +1141,10 @@ grosseiro reamostrado por si acrescenta variância, tenha ou não efeito real. E
 fator e é paga mesmo quando o conjunto de modelos não importa.
 
 **A colinearidade ATENUA o alargamento, e não o produz.** Quando a família é função do template, o fator
-de template já absorve parte da dependência familiar e o novo acrescenta menos — atenuação medida de até
-**43 %**. Isto **retrata** o que esta seção publicou antes, que era "a colinearidade move a razão menos
+de template já absorve parte da dependência familiar e o novo acrescenta menos. A atenuação é **43,0 %**
+com duas famílias, **20,7 %** com quatro e **12,2 %** com oito — decresce porque com mais famílias sobre
+os mesmos 20 templates a colinearidade é menos completa. As duas propriedades — passar de 40 % no caso
+mais colinear, e decrescer — estão **presas por asserção**, e não só a direção. Isto **retrata** o que esta seção publicou antes, que era "a colinearidade move a razão menos
 de 20 %": aquele número vinha do fixture com a perna "colinear" falsa para oito famílias e cardinalidade
 de template variável.
 

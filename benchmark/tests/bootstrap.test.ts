@@ -658,15 +658,26 @@ describe("o terceiro fator cruzado da classe mista, MEDIDO nos dois regimes", ()
 
   it("a COLINEARIDADE com o template ATENUA o alargamento, e nao o produz", () => {
     // Quando a familia e funcao do template, o fator de template ja absorve parte da
-    // dependencia familiar e o fator novo acrescenta MENOS. Medido, a atenuacao chega a 43 %,
-    // o que REFUTA a leitura anterior de que a colinearidade movia a razao menos de 20 %:
-    // aquela leitura vinha de um fixture cuja perna "colinear" nao era colinear para oito
-    // familias e cuja cardinalidade de template mudava com as familias.
+    // dependencia familiar e o fator novo acrescenta MENOS. Isto REFUTA a leitura anterior de
+    // que a colinearidade movia a razao menos de 20 %: aquela vinha de um fixture cuja perna
+    // "colinear" nao era colinear para oito familias e cuja cardinalidade de template mudava
+    // com as familias.
+    //
+    // A MAGNITUDE fica presa e nao declarada, porque um numero em comentario que nenhuma
+    // assercao sustenta envelhece em silencio -- e foi assim que os 20 % sobreviveram a duas
+    // publicacoes. Duas pernas: a atenuacao passa de 40 % na colinearidade mais completa, e
+    // DECRESCE conforme as familias crescem, porque com mais familias sobre os mesmos 20
+    // templates a colinearidade e menos completa.
+    const atenuacao = new Map<number, number>();
     for (const familias of [2, 4, 8]) {
       const col = razao(familias, true, true);
       const naoCol = razao(familias, true, false);
       expect(naoCol, `familias=${familias}`).toBeGreaterThan(col);
+      atenuacao.set(familias, naoCol / col);
     }
+    expect(atenuacao.get(2) ?? 0).toBeGreaterThan(1.4);
+    expect(atenuacao.get(2) ?? 0).toBeGreaterThan(atenuacao.get(4) ?? 0);
+    expect(atenuacao.get(4) ?? 0).toBeGreaterThan(atenuacao.get(8) ?? 0);
   });
 
   it("com o fator DEGENERADO nao ha diferenca detectavel em seis sementes", () => {
