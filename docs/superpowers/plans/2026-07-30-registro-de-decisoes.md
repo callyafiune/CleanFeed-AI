@@ -11044,3 +11044,68 @@ então a emenda está certa sob a leitura que o plano ainda vai fixar, e isso fi
 que eu medi e o que escrevi ao lado do número. Duas vezes o defeito estava no conserto do defeito
 anterior. O que isso mede não é a decisão: é que eu publico prosa mais forte que a medição, e que a
 correção de um fixture precisa da mesma bateria que a correção de uma guarda.
+
+## O plano de cobertura e a razão da cota: a reserva ratificada não cabia (2026-08-23)
+
+Unidade 1 do plano que o codex desenhou para fechar as pendências: **B antes de A**, porque B fixa o
+estimando sob o qual a emenda do nível de gerador (§ 5.11) pode estar certa, e A é registro de um
+valor já ratificado. Juntas porque são o mesmo fecho documental pré-geração e revertem juntas.
+
+### B — o teto da reserva, e o número que a prosa dizia era inviável
+
+**A capacidade do bloco cego tem folga zero.** `test` recebe 800 linhas `ai`, as três ilhas reservadas
+assentam 600, e a guarda exige 200 para uma ilha de núcleo: 600 + 200 = 800, exacto. Cabe **uma** ilha
+de núcleo por classe, e o bloco carrega duas hipóteses.
+
+**A reserva ratificada de 2 × 450 = 900 não cabe** — o teto é 600. E isso vivia **só como prosa num
+comentário** (`assemble_corpus.py:652`), sem constante e sem asserção: um alvo inviável escrito em
+comentário descobre-se quando o corpus não sela, e aí a cota já está gasta. Agora é
+`RESERVE_LINES_PER_FAMILY` com `assert_the_reserve_target_fits`, que recusa por **duas** razões
+independentes — acima do teto, e abaixo de `HELD_OUT_MINIMUM`, onde as linhas da família saem do
+corpus em vez de serem medidas.
+
+**Vigente: 2 × 250.** A escolha é folga em dois eixos: as 100 linhas que sobram dentro das ilhas
+reservadas vão a família de **núcleo** e são o que torna o contraste `generatorExposure` seen/unseen
+**identificável** — sem linha vista sob os templates reservados, os dois níveis não partilham
+identidade de template e a fatia mede o template; e as 50 acima do piso têm consumidor real (recusa,
+poda, descarte de banda).
+
+**Alternativa recusada: 2 × 300.** Ela preserva mais positivos e leva o controle a **zero** — largura
+menor sobre um estimando que não é o alegado. **O valor 450 é do operador; 250 não**, e a mudança é de
+plano, não gasta cota e não apaga material — decidida aqui, ratificada no marco.
+
+**E isto responde à pergunta que o codex disse faltar nas três rodadas da emenda:** `generatorFamily`
+mais a disposição das três ilhas reservadas **não** identifica alegação entre famílias — condiciona o
+resultado aos templates reservados. Com as 100 linhas de controle, identifica. A emenda de `9baaf03`
+estava certa sob a leitura que este plano agora fixa, e não sob a outra.
+
+### B — a regra de cobertura, e o que ela não pode ser
+
+Modelo e effort são argumento **por corrida** e nenhum artefato do plano os carrega, então não há o
+que asserir sobre corrida que não houve. O que a unidade entrega é uma **matriz conferível**: ilha →
+`(modelo, effort)`, recusada antes da primeira chamada por ilha de núcleo sem atribuição, modelo em
+menos de duas ilhas de núcleo, ou ilha que o plano não tem. `MINIMUM_ISLANDS_PER_FAMILY = 2` é o
+**mínimo que quebra a colinearidade** — com uma ilha só a família fica em correspondência
+um-para-um com os templates dela e a reamostragem não separa os dois fatores — e **não** é alegação de
+poder. O effort não conta para a regra: o mesmo modelo em dois efforts na mesma ilha continua a ser um
+modelo numa ilha só, e contar duas atribuições ali aprovaria a forma que a regra existe para recusar.
+
+### A — a razão da cota `mixed = 2000`, com a alternativa recusada
+
+O valor foi ratificado em 2026-08-04; faltava a derivação, e ela é o encontro de duas condições
+independentes. **O piso:** os positivos que a coorte de `aiFraction` ≥ 0,50 põe no bloco cego são
+`cota × 0,60 × 0,20` = `cota × 0,12`, contra `criticalRecallPositives` 200 — mínimo **1.667**. **A
+alocação exacta:** `mix_cell_allocation` põe o resto nas primeiras células, então cota que não divide
+20 ilhas × 20 células entrega células desiguais, o que exige múltiplo de **400**.
+
+**2.000 é a menor cota que fecha as duas**, com 240 positivos e 5 por célula.
+
+**Alternativa recusada: 1.600**, o múltiplo abaixo, com **192** contra o piso de 200. **1.800** passa o
+piso (216) e falha a alocação. **2.400** passa as duas e custa 400 linhas por 48 positivos.
+
+A derivação está **pinada** e não escrita: a perna da alternativa recusada mede 1.600 sob o piso, sem
+o que "2.000 é o menor" seria frase sem contra-exemplo. É a lição das rodadas anteriores aplicada
+antes de o revisor a cobrar.
+
+**Bateria:** 12 mutantes, 12 asserções, zero sobreviventes. Um sobreviveu na primeira passagem — a
+recusa de ilha desconhecida —, e sobreviveu porque o meu teste nunca passava ilha desconhecida.

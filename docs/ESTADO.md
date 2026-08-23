@@ -23,7 +23,7 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 172 arquivos / 3.121 testes (vitest) + 767 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| suíte | 172 arquivos / 3.121 testes (vitest) + 770 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
 | dos quais, o avaliador | 2.500 — 1.739 em 46 arquivos de `benchmark/tests`, 761 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
@@ -266,26 +266,31 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 
 ## 3.9 O PRÓXIMO PASSO
 
-Escrito aqui e não deduzido da § 7, porque quem retoma lê esta seção primeiro. Estado de 2026-08-22,
-depois da janela do pai e da medição de poda em material.
+Escrito aqui e não deduzido da § 7, porque quem retoma lê esta seção primeiro. Estado de 2026-08-23,
+depois do plano de cobertura e da razão da cota.
 
-**A aritmética que barrava a geração está resolvida.** A janela de pais é a do extrator e as quatro
-ilhas curtas foram a zero (§ 7, § 5.4d). O que sobra antes de gastar cota é decisão e prosa, não
-medição.
+**O que barrava a geração está resolvido, e o que sobra dele é ato e não preparação.** A janela de
+pais é a do extrator e as quatro ilhas curtas foram a zero; o nível de gerador está na tabela; o teto
+da reserva está aferido; a razão da cota está derivada. Sobram duas guardas minhas, e as duas são
+código com bateria, não decisão.
 
-**Ordem, e a primeira é minha:**
+**Ordem, e as duas primeiras são dele:**
 
-1. **a razão da cota `mixed = 2000`** escrita no registro, com a coluna "alternativa recusada"
-   preenchida — o valor já foi ratificado em 2026-08-04, falta a prosa;
-2. **o recibo humano do selo `release`** — e ele vence AGORA e não na Fase 6, porque uma política de
+1. **o recibo humano do selo `release`** — e ele vence AGORA e não na Fase 6, porque uma política de
    corpus explícita só é aceita para `scientificUse: infrastructure-only`: 4.000 `ai` + 2.000 mistas é
    o preço de um SELO e não o de um detector. Se R4 e o selo forem exclusivos por construção, gerar
    antes de saber qual dos dois cai é o desperdício máximo. As três saídas mecânicas estão nomeadas;
    o que é dele é a jusante — as horas e a ratificação;
-3. **o plano de cobertura de modelo × effort**, com a fatia da reserva como consumidora conhecida
-   (`generatorExposure` é derivada de `generatorFamily`, e a reserva vive nas três ilhas reservadas);
-4. só então **gastar a cota de geração**, que é botão dele — e a primeira corrida tem de **medir o
-   rendimento de banda**, porque `ilha_08` fecha a cota só com 92,6 % e nenhuma corrida mediu isso.
+2. **gastar a cota de geração**, que é botão dele — e a corrida declara a **matriz de cobertura**
+   (`assert_generation_coverage`) antes da primeira chamada, e tem de **medir o rendimento de banda**,
+   porque `ilha_08` fecha a cota só com 92,6 % e nenhuma corrida mediu isso.
+
+**O que já não está nesta ordem, porque está feito:** a janela do pai (§ 5.4c, § 5.4d), o nível de
+gerador da classe mista (§ 5.11), o plano de cobertura e o teto da reserva (§ 5.12) e a razão da cota
+`mixed = 2000` (§ 5.13). O que resta dessas quatro é **ratificação**, não trabalho.
+
+**Minhas, e vencem antes da corrida:** a geometria da operação conferida no que o gerador devolve, e
+o teto da fração descartada de replicados — as duas na § 7.
 
 **O que NÃO é preparação e por isso não está nesta ordem:** a assinatura de B1, `consume-holdout` e o
 botão de publicação externa — os três dele, os três de fase posterior.
@@ -1186,6 +1191,75 @@ Corrigida, e a linha renderizada passou a ser asserção — é ela que sustenta
 é nulo, 0 tags, nenhum `fit` selado.
 
 **O que fica dele:** a ratificação, no molde `AG · ratificado`.
+
+### 5.12 O plano de cobertura, e a reserva ratificada não cabia (2026-08-23)
+
+**A capacidade do bloco cego, derivada e não digitada** (`reserve_line_ceiling`, a mesma aritmética
+de `assert_island_plan_leaves_core_in_the_blind_block`):
+
+| classe | total | capacidade de `test` | a reserva assenta | sobra | ilhas de núcleo que cabem |
+|---|---:|---:|---:|---:|---:|
+| `human` | 4.000 | 800 | 600 | 200 | **1** |
+| `ai` | 4.000 | 800 | 600 | 200 | **1** |
+| `mixed` | 2.000 | 400 | 300 | 100 | **1** |
+
+Folga **zero**: 600 + 200 = 800 é a capacidade exacta. O bloco cego carrega duas hipóteses — recall
+sobre família vista e a fatia de gerador não visto —, e cabe **uma** ilha de núcleo por classe.
+
+**A reserva ratificada de 2 × 450 = 900 linhas `ai` NÃO CABE**, e isso era prosa num comentário sem
+constante e sem asserção. O teto é **600**. As formas admissíveis, enumeradas:
+
+| forma | reserva | controle `seen` | cabe | folga ao piso | identifica família |
+|---|---:|---:|---|---:|---|
+| 2 × 450 (ratificada) | 900 | — | **não** | 250 | — |
+| 2 × 300 | 600 | **0** | sim | 100 | **não** |
+| **2 × 250 (vigente)** | 500 | **100** | sim | 50 | **sim** |
+| 2 × 200 | 400 | 200 | sim | **0** | sim |
+| 1 × 300 | 300 | 300 | sim | 100 | sim |
+
+**Vigente: 2 × 250** (`RESERVE_LINES_PER_FAMILY`), e a razão é folga em dois eixos ao mesmo tempo.
+As **100** linhas que sobram dentro das ilhas reservadas são para família de **núcleo**, e são elas
+que tornam o contraste `generatorExposure` seen/unseen **identificável**: sem nenhuma linha vista sob
+os templates reservados, os dois níveis da fatia não partilham identidade de template alguma e a
+fatia mede o **template**. As 50 linhas acima de `HELD_OUT_MINIMUM` têm consumidor — recusa de
+provedor, poda de quase-duplicata, descarte de banda —, e uma família sob o piso tem as linhas
+**retiradas** do corpus.
+
+**O que 250 custa, e fica dito:** a fatia `unseen` tem menos positivos e o intervalo dela sai mais
+largo. A forma 2 × 300 preserva mais positivos e leva o controle a zero — largura menor sobre um
+estimando que não é o alegado. **O valor 450 é do operador; 250 não**, e a ratificação é dele.
+
+**Isto responde à pergunta que a emenda de § 5.11 deixou aberta.** Ela declara que o argumento vale
+se a alegação generaliza entre famílias. Sem controle `seen` sob os templates reservados a alegação
+**não é identificável** como entre-famílias — ela condiciona o resultado àqueles templates. Com as
+100 linhas de controle, é.
+
+**A regra de cobertura de modelo × effort** (`MINIMUM_ISLANDS_PER_FAMILY = 2`,
+`assert_generation_coverage`): modelo e effort são argumento **por corrida** e nenhum artefato do
+plano os carrega, então nada se pode aferir sobre corrida que não houve. O que existe é uma **matriz
+conferível** — ilha → `(modelo, effort)` — recusada antes da primeira chamada por três motivos: ilha
+de núcleo sem atribuição, modelo em menos de duas ilhas de núcleo, ilha que o plano não tem. **Dois
+é o mínimo que quebra a colinearidade** e não uma alegação de poder; o effort **não** conta para a
+regra, porque o mesmo modelo em dois efforts na mesma ilha continua a ser um modelo numa ilha só.
+
+### 5.13 A razão da cota `mixed = 2000`, derivada (2026-08-23)
+
+O **valor** foi ratificado em 2026-08-04; o que faltava era a derivação, e ela é o encontro de duas
+condições independentes:
+
+- **o piso.** Os positivos que a coorte de `aiFraction` observada ≥ 0,50 põe no bloco cego são
+  `cota × 0,60 × 0,20` = `cota × 0,12` — 12 das 20 células (níveis 50/60/75/90) e `test` como resto
+  dos quatro blocos. Contra `criticalRecallPositives` **200**, a cota mínima é **1.667**;
+- **a alocação exacta.** `mix_cell_allocation` é total sobre qualquer cota, mas o resto vai para as
+  primeiras células: cota que não divide 20 ilhas × 20 células entrega células desiguais. Isso exige
+  múltiplo de **400**.
+
+**2.000 é a menor cota que fecha as duas**, com 240 positivos e 5 linhas por célula.
+
+**Alternativa recusada: 1.600** — o múltiplo de 400 imediatamente abaixo, que dá **192** positivos
+contra o piso de 200. **1.800** passa o piso (216) e falha a alocação (4,5 por célula). **2.400**
+passa as duas e custa 400 linhas geradas por 48 positivos. O teto de material não é o vínculo: são
+2.578 pais admissíveis contra 2.000 (§ 5.4c).
 
 ## 6. NÃO APLICAR — aparecem no registro e não valem
 

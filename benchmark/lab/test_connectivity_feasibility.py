@@ -2585,6 +2585,206 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             )
         self.assertIn("nao sobra lugar", str(erro.exception))
 
+    def test_o_ALVO_de_geracao_da_reserva_e_conferido_contra_a_capacidade(self):
+        """O alvo da reserva era PROSA num comentario, e o numero que a prosa dizia nao cabia.
+
+        `assert_island_plan_leaves_core_in_the_blind_block` confere as LINHAS QUE O PLANO
+        ASSENTA. Ela nao confere o alvo de GERACAO da reserva, que vivia so como frase — "a
+        reserva e duas familias de 450 linhas cada" — sem constante e sem assercao. Medido:
+        a capacidade de `test` em `ai` e 800, a reserva assenta 600 nas tres ilhas reservadas
+        e a guarda exige 200 para uma ilha de nucleo, entao o teto da reserva e 600 e
+        2 x 450 = 900 NAO CABE. Um alvo inviavel declarado em comentario descobre-se quando o
+        corpus nao sela, e ai a cota ja esta gasta.
+
+        Duas pernas, e a segunda e o que faz desta uma guarda: o alvo vigente passa, e um alvo
+        acima do teto e RECUSADO com o teto na mensagem.
+        """
+        teto = assemble_corpus.reserve_line_ceiling()
+        familias = assemble_corpus.RATIFIED_RESERVE_FAMILY_COUNT
+        alvo = assemble_corpus.RESERVE_LINES_PER_FAMILY
+
+        # O teto e DERIVADO do plano, das fracoes e do piso -- nao digitado.
+        total = assemble_corpus.ISLAND_PLAN_CLASS_LINES["ai"]
+        capacidade = total - sum(
+            round(total * assemble_corpus.CLASS_FRACTIONS[bloco])
+            for bloco in assemble_corpus.CLASS_FRACTIONS
+        )
+        nucleo = min(
+            ilha["lines"]["ai"]
+            for ilha in assemble_corpus.ISLAND_PLAN
+            if not ilha["reserved"]
+        )
+        self.assertEqual(teto, capacidade - nucleo)
+
+        # O alvo vigente CABE, e cabe com o numero de familias ratificado.
+        assemble_corpus.assert_the_reserve_target_fits(alvo, familias)
+        self.assertLessEqual(alvo * familias, teto)
+        # E fica acima do piso por familia, sem o que as linhas SAEM do corpus.
+        self.assertGreaterEqual(alvo, assemble_corpus.HELD_OUT_MINIMUM)
+
+        # O alvo que a prosa declarava e RECUSADO, e a mensagem carrega o teto.
+        with self.assertRaises(assemble_corpus.ReserveTargetInfeasible) as erro:
+            assemble_corpus.assert_the_reserve_target_fits(450, 2)
+        mensagem = str(erro.exception)
+        self.assertIn("450", mensagem)
+        self.assertIn(str(teto), mensagem)
+
+        # E o piso e conferido tambem: duas familias a 150 caberiam no teto e cada uma ficaria
+        # abaixo do piso, e ai `reserved_families_below_the_recall_floor` retira as linhas.
+        with self.assertRaises(assemble_corpus.ReserveTargetInfeasible) as erro:
+            assemble_corpus.assert_the_reserve_target_fits(150, 2)
+        self.assertIn(str(assemble_corpus.HELD_OUT_MINIMUM), str(erro.exception))
+
+        # A FOLGA que o alvo vigente deixa dentro das ilhas reservadas e o que torna o
+        # contraste de familia identificavel: sem linha de familia de NUCLEO sob os templates
+        # reservados, `seen` e `unseen` nao partilham nenhuma identidade de template e a fatia
+        # mede os templates dessas ilhas e nao a familia.
+        assentado = sum(
+            ilha["lines"]["ai"]
+            for ilha in assemble_corpus.ISLAND_PLAN
+            if ilha["reserved"]
+        )
+        controle = assentado - alvo * familias
+        self.assertGreater(
+            controle,
+            0,
+            "sem folga nas ilhas reservadas o contraste seen/unseen fica colinear com o "
+            "template, e a fatia `generatorExposure` mede o template",
+        )
+        self.assertEqual(assemble_corpus.reserve_seen_control_lines(), controle)
+
+    def test_a_cobertura_de_modelo_por_ilha_e_CONFERIVEL_antes_de_gastar_cota(self):
+        """Modelo e effort sao argumento POR CORRIDA, e nada os cruzava com ilha.
+
+        A consequencia da lacuna nao e estetica: uma familia que aparece numa ilha so fica em
+        correspondencia UM-PARA-UM com os templates daquela ilha, e ai `groups.generatorFamily`
+        e `groups.promptTemplate` sao o mesmo fator com dois nomes. A reamostragem nao os
+        separa, e a emenda que pos a familia em `mixed.levels` estaria a nomear um fator que
+        duplica o template.
+
+        Nao se pode ASSERIR nada sobre uma corrida que nao aconteceu, entao o que esta unidade
+        entrega e uma MATRIZ CONFERIVEL: quem for gerar declara ilha -> (modelo, effort), e a
+        guarda recusa antes da primeira chamada. `MINIMUM_ISLANDS_PER_FAMILY` e a regra, e ela
+        e o MINIMO que quebra a colinearidade -- nao uma alegacao de poder.
+        """
+        regra = assemble_corpus.MINIMUM_ISLANDS_PER_FAMILY
+        self.assertGreaterEqual(regra, 2)
+
+        nucleo = [i["island"] for i in assemble_corpus.ISLAND_PLAN if not i["reserved"]]
+        reservadas = [i["island"] for i in assemble_corpus.ISLAND_PLAN if i["reserved"]]
+
+        # Uma matriz que espalha dois modelos por todas as ilhas de nucleo PASSA.
+        boa = {
+            ilha: [("modelo-a", "low"), ("modelo-b", "high")] for ilha in nucleo
+        }
+        boa.update({ilha: [("modelo-reserva", "low")] for ilha in reservadas})
+        assemble_corpus.assert_generation_coverage(boa)
+
+        # Um modelo numa ilha SO e recusado, com o nome dele e a regra na mensagem.
+        ma = {ilha: [("modelo-a", "low")] for ilha in nucleo}
+        ma[nucleo[0]] = [("modelo-a", "low"), ("modelo-solitario", "low")]
+        ma.update({ilha: [("modelo-reserva", "low")] for ilha in reservadas})
+        with self.assertRaises(assemble_corpus.CoverageMatrixRefused) as erro:
+            assemble_corpus.assert_generation_coverage(ma)
+        mensagem = str(erro.exception)
+        self.assertIn("modelo-solitario", mensagem)
+        self.assertIn(str(regra), mensagem)
+
+        # Uma ilha de nucleo SEM atribuicao e recusada: ela nao produziria linha e a cota da
+        # classe nao fecharia, o que hoje se descobre no fim da corrida.
+        vazia = {ilha: [("modelo-a", "low"), ("modelo-b", "low")] for ilha in nucleo[1:]}
+        vazia.update({ilha: [("modelo-reserva", "low")] for ilha in reservadas})
+        with self.assertRaises(assemble_corpus.CoverageMatrixRefused) as erro:
+            assemble_corpus.assert_generation_coverage(vazia)
+        self.assertIn(nucleo[0], str(erro.exception))
+
+        # A ilha RESERVADA e isenta da regra de duas ilhas -- a reserva mede novidade de
+        # familia e vive nas tres reservadas por desenho --, mas ela EXIGE o controle `seen`:
+        # sem uma familia de nucleo sob os templates reservados, a fatia mede o template.
+        sem_controle = {ilha: [("modelo-a", "low"), ("modelo-b", "low")] for ilha in nucleo}
+        sem_controle.update({ilha: [("modelo-reserva", "low")] for ilha in reservadas})
+        assemble_corpus.assert_generation_coverage(sem_controle)
+        self.assertGreater(assemble_corpus.reserve_seen_control_lines(), 0)
+
+        # Uma ilha que o PLANO nao tem e recusada: uma matriz escrita contra um plano de
+        # outra versao aprovaria cobertura que nao existe, e o nome errado e silencioso.
+        inventada = {ilha: [("modelo-a", "low"), ("modelo-b", "low")] for ilha in nucleo}
+        inventada["ilha_99"] = [("modelo-c", "low")]
+        inventada.update({ilha: [("modelo-reserva", "low")] for ilha in reservadas})
+        with self.assertRaises(assemble_corpus.CoverageMatrixRefused) as erro:
+            assemble_corpus.assert_generation_coverage(inventada)
+        self.assertIn("ilha_99", str(erro.exception))
+
+        # E o EFFORT entra na identidade da cobertura: o mesmo modelo em dois efforts numa
+        # ilha so continua a ser um modelo numa ilha so, e a guarda nao pode contar dois.
+        dois_efforts = {ilha: [("modelo-a", "low"), ("modelo-b", "low")] for ilha in nucleo}
+        dois_efforts[nucleo[0]] = [
+            ("modelo-a", "low"),
+            ("modelo-b", "low"),
+            ("modelo-c", "low"),
+            ("modelo-c", "high"),
+        ]
+        dois_efforts.update({ilha: [("modelo-reserva", "low")] for ilha in reservadas})
+        with self.assertRaises(assemble_corpus.CoverageMatrixRefused) as erro:
+            assemble_corpus.assert_generation_coverage(dois_efforts)
+        self.assertIn("modelo-c", str(erro.exception))
+
+    def test_a_cota_mista_de_2000_e_DERIVADA_e_a_alternativa_recusada_e_1600(self):
+        """A razao da cota, e ela era prosa: o VALOR foi ratificado e a derivacao nao estava presa.
+
+        Duas condicoes independentes, e 2.000 e a menor cota que fecha as DUAS:
+
+          * o PISO. Os positivos que a coorte de `aiFraction` observada >= 0,50 poe no bloco
+            cego sao `cota x fracao_da_coorte x fracao_de_test`. A coorte e 12 das 20 celulas
+            (niveis 50/60/75/90 das quatro operacoes menos a excluida), logo 0,60; `test` e o
+            resto depois dos quatro blocos, logo 0,20. O produto e 0,12, e o piso
+            `criticalRecallPositives` e 200 -- entao a cota minima e 1.667;
+          * a ALOCACAO EXACTA. `mix_cell_allocation` e total sobre qualquer cota, mas o resto
+            vai para as primeiras celulas: uma cota que nao divide 20 ilhas x 20 celulas
+            entrega celulas de tamanhos diferentes. Isso exige multiplo de 400.
+
+        O multiplo de 400 imediatamente abaixo e 1.600, e ele da 192 positivos contra o piso de
+        200 -- e essa e a ALTERNATIVA RECUSADA. 1.800 passa o piso com 216 e falha a alocacao
+        (4,5 por celula). 2.400 passa as duas e custa 400 linhas geradas por 48 positivos.
+        """
+        celulas = assemble_corpus.mix_cells()
+        na_coorte = sum(1 for _op, nivel in celulas if nivel >= 50)
+        fracao_coorte = na_coorte / len(celulas)
+        self.assertEqual(len(celulas), 20)
+        self.assertEqual(na_coorte, 12)
+        self.assertAlmostEqual(fracao_coorte, 0.60)
+
+        cota = assemble_corpus.ISLAND_PLAN_CLASS_LINES["mixed"]
+        self.assertEqual(cota, 2_000)
+        fracao_test = 1 - sum(
+            round(cota * assemble_corpus.CLASS_FRACTIONS[bloco]) / cota
+            for bloco in assemble_corpus.CLASS_FRACTIONS
+        )
+        self.assertAlmostEqual(fracao_test, 0.20)
+
+        piso = 200
+        no_cego = cota * fracao_coorte * fracao_test
+        self.assertGreaterEqual(no_cego, piso)
+        self.assertAlmostEqual(no_cego, 240)
+
+        ilhas = len(assemble_corpus.ISLAND_PLAN)
+        passo = ilhas * len(celulas)
+        self.assertEqual(passo, 400)
+        self.assertEqual(cota % passo, 0)
+        por_celula = cota // ilhas // len(celulas)
+        self.assertEqual(por_celula, 5)
+
+        # A ALTERNATIVA RECUSADA, medida e nao afirmada: o multiplo de 400 abaixo fica sob o
+        # piso. Sem esta perna, "2.000 e o menor" e uma frase sem contra-exemplo.
+        abaixo = cota - passo
+        self.assertEqual(abaixo, 1_600)
+        self.assertLess(abaixo * fracao_coorte * fracao_test, piso)
+        # E a que passa o piso mas nao aloca exacto.
+        self.assertGreater(1_800 * fracao_coorte * fracao_test, piso)
+        self.assertNotEqual(1_800 % passo, 0)
+        # E o teto de material nao e o vinculo: os pais admissiveis passam da cota.
+        self.assertGreater(2_578, cota)
+
     def test_a_reserva_e_conferida_em_TODA_classe_e_nao_so_na_ai(self):
         """A recusa vem pela classe `human`, com `ai` e `mixed` cabendo nos seus alvos.
 

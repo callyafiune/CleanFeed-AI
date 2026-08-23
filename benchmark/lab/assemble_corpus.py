@@ -647,10 +647,173 @@ def reserve_family(tag: str, quantization: str) -> str:
     return generator_family(stem)
 
 
+class CoverageMatrixRefused(RuntimeError):
+    """A matriz de geracao declarada nao satisfaz a regra de cobertura por ilha."""
+
+
+# Em quantas ILHAS DE NUCLEO uma familia geradora tem de aparecer.
+#
+# DOIS, e dois e o MINIMO que quebra a colinearidade -- nao uma alegacao de poder. Com uma ilha
+# so, a familia fica em correspondencia um-para-um com os templates daquela ilha, e
+# `groups.generatorFamily` e `groups.promptTemplate` passam a ser o mesmo fator com dois nomes:
+# nenhuma reamostragem os separa, e a familia declarada em `mixed.levels` duplicaria o template
+# em vez de acrescentar dependencia. Com duas, a correspondencia deixa de existir.
+#
+# O que DOIS nao compra: nada sobre a largura do intervalo nem sobre a fatia ter positivos
+# bastantes. O piso de positivos e `criticalRecallPositives` e vive na pre-inscricao, nao aqui.
+MINIMUM_ISLANDS_PER_FAMILY = 2
+
+
+def assert_generation_coverage(assignments: dict[str, list[tuple[str, str]]]) -> None:
+    """Recusa uma matriz de geracao ANTES da primeira chamada de provedor.
+
+    `assignments` e ilha -> lista de `(modelo, effort)`. Modelo e effort sao argumento POR
+    CORRIDA e nenhum artefato do plano os carrega, entao nao ha o que aferir sobre uma corrida
+    que ainda nao houve -- o que esta funcao afere e a DECLARACAO de quem vai gerar, e o valor
+    dela e o momento: uma matriz recusada aqui nao gastou cota.
+
+    Tres recusas:
+
+      * uma ilha de NUCLEO sem atribuicao. Ela nao produziria linha, a cota da classe nao
+        fecharia, e isso hoje aparece no fim da corrida;
+      * uma familia de nucleo em menos de `MINIMUM_ISLANDS_PER_FAMILY` ilhas, que e a
+        colinearidade com o template;
+      * ilha declarada que o plano nao tem.
+
+    O EFFORT nao conta para a regra de ilhas: o mesmo modelo em dois efforts na mesma ilha
+    continua a ser um modelo numa ilha so, e contar duas atribuicoes ali aprovaria exactamente
+    a forma que a regra existe para recusar.
+
+    As ilhas RESERVADAS sao isentas da regra de duas ilhas: a reserva mede novidade de FAMILIA
+    e vive nas tres reservadas por desenho. O que elas exigem em troca e
+    `reserve_seen_control_lines() > 0`, sem o que a fatia `unseen` fica confundida com os
+    templates dessas ilhas -- e isso e propriedade do ALVO da reserva, conferida em
+    `assert_the_reserve_target_fits`, nao da matriz.
+    """
+    do_plano = {ilha["island"]: ilha for ilha in ISLAND_PLAN}
+    desconhecidas = sorted(set(assignments) - set(do_plano))
+    if desconhecidas:
+        raise CoverageMatrixRefused(
+            f"a matriz declara ilha(s) que o plano nao tem: {desconhecidas}"
+        )
+    nucleo = [nome for nome, ilha in do_plano.items() if not ilha["reserved"]]
+    vazias = sorted(nome for nome in nucleo if not assignments.get(nome))
+    if vazias:
+        raise CoverageMatrixRefused(
+            f"as ilhas de nucleo {vazias} nao tem atribuicao: elas nao produzem linha, e a "
+            "cota da classe nao fecha -- o que hoje se descobre no fim da corrida"
+        )
+    ilhas_por_modelo: dict[str, set[str]] = {}
+    for nome in nucleo:
+        for modelo, _effort in assignments.get(nome, []):
+            ilhas_por_modelo.setdefault(modelo, set()).add(nome)
+    curtos = {
+        modelo: sorted(ilhas)
+        for modelo, ilhas in sorted(ilhas_por_modelo.items())
+        if len(ilhas) < MINIMUM_ISLANDS_PER_FAMILY
+    }
+    if curtos:
+        raise CoverageMatrixRefused(
+            f"cada modelo tem de aparecer em ao menos {MINIMUM_ISLANDS_PER_FAMILY} ilhas de "
+            f"nucleo, e estes nao: {curtos}. Com uma ilha so a familia fica em "
+            "correspondencia um-para-um com os templates dela, e a reamostragem nao separa os "
+            "dois fatores"
+        )
+
+
+class ReserveTargetInfeasible(RuntimeError):
+    """O alvo de geracao da reserva nao cabe no bloco cego, ou fica abaixo do piso."""
+
+
+# Quantas familias a reserva declara, e quantas linhas cada uma tem por ALVO DE GERACAO.
+#
+# O operador ratificou DUAS familias. O alvo por familia era prosa num comentario -- "duas
+# familias de 450 linhas cada" -- e o numero que a prosa dizia NAO CABE: medido,
+# `reserve_line_ceiling()` da 600 linhas `ai` e 2 x 450 = 900. Um alvo inviavel escrito em
+# comentario descobre-se quando o corpus nao sela, e ai a cota ja esta gasta.
+#
+# 250 e a escolha, e a razao e a folga em DOIS eixos ao mesmo tempo:
+#
+#   * 2 x 250 = 500 cabe no teto de 600 e deixa 100 linhas dentro das ilhas reservadas para
+#     familia de NUCLEO. Essas 100 sao o que torna o contraste `generatorExposure` seen/unseen
+#     IDENTIFICAVEL: sem nenhuma linha vista sob os templates reservados, os dois niveis da
+#     fatia nao partilham identidade de template alguma e a fatia mede o TEMPLATE e nao a
+#     familia. `reserve_seen_control_lines()` publica esse numero;
+#   * 250 fica 50 acima de `HELD_OUT_MINIMUM`, e essa folga tem consumidor: uma recusa do
+#     provedor, uma linha podada por quase-duplicata ou um descarte de banda derruba a
+#     contagem, e uma familia que cai abaixo do piso tem as linhas RETIRADAS do corpus
+#     (`reserved_families_below_the_recall_floor`). No piso exacto (200) a folga e zero.
+#
+# O que 250 CUSTA, e fica dito: a reserva encolhe de 450 para 250 por familia, entao a fatia
+# `unseen` tem menos positivos e o intervalo dela sai mais largo. A alternativa que preserva
+# 300 por familia (2 x 300 = 600) enche as ilhas reservadas e leva o controle a ZERO, e ai a
+# fatia deixa de identificar a familia -- largura menor sobre um estimando que nao e o alegado.
+#
+# O VALOR 450 e do operador; este nao. A mudanca e de plano, nao gasta cota e nao apaga
+# material, entao e decidida aqui e ratificada no marco, no molde `AG - ratificado`.
+RATIFIED_RESERVE_FAMILY_COUNT = 2
+RESERVE_LINES_PER_FAMILY = 250
+
+
+def reserve_line_ceiling() -> int:
+    """Quantas linhas `ai` a reserva pode ter, DERIVADO e nao digitado.
+
+    A MESMA aritmetica de `assert_island_plan_leaves_core_in_the_blind_block`, e por isso as
+    duas nao podem discordar: a capacidade de `test` e o resto depois dos quatro blocos
+    arredondados, e a guarda exige que sobre lugar para a menor ilha de NUCLEO -- sem o que o
+    bloco cego fica inteiramente de reserva e a hipotese de recall sobre familia vista nao tem
+    denominador.
+    """
+    total = ISLAND_PLAN_CLASS_LINES["ai"]
+    capacidade = total - sum(
+        round(total * CLASS_FRACTIONS[bloco]) for bloco in CLASS_FRACTIONS
+    )
+    nucleo = min(ilha["lines"]["ai"] for ilha in ISLAND_PLAN if not ilha["reserved"])
+    return capacidade - nucleo
+
+
+def reserve_seen_control_lines() -> int:
+    """As linhas das ilhas reservadas que NAO sao da reserva, e por isso sao o controle `seen`.
+
+    Elas partilham os templates das ilhas reservadas com as linhas da reserva, o que poe os
+    dois niveis de `generatorExposure` sob a MESMA identidade de template. Zero aqui significa
+    que a fatia `unseen` esta confundida com aqueles templates, e nenhuma reamostragem os
+    separa.
+    """
+    assentado = sum(ilha["lines"]["ai"] for ilha in ISLAND_PLAN if ilha["reserved"])
+    return assentado - RESERVE_LINES_PER_FAMILY * RATIFIED_RESERVE_FAMILY_COUNT
+
+
+def assert_the_reserve_target_fits(lines_per_family: int, families: int) -> None:
+    """Recusa um alvo de reserva que nao cabe no bloco cego, ou que fica abaixo do piso.
+
+    Duas recusas e nao uma, porque as duas formas de o alvo ser inviavel sao independentes: um
+    alvo grande estoura a capacidade de `test`, e um alvo pequeno passa pela capacidade e cai
+    sob `HELD_OUT_MINIMUM`, onde as linhas da familia sao retiradas do corpus em vez de
+    medidas.
+    """
+    teto = reserve_line_ceiling()
+    total = lines_per_family * families
+    if total > teto:
+        raise ReserveTargetInfeasible(
+            f"a reserva declara {families} familia(s) x {lines_per_family} = {total} linhas "
+            f"`ai`, e o teto do bloco cego e {teto}: a capacidade de `test` menos o lugar que "
+            "uma ilha de nucleo precisa. Um alvo acima disto nao sela, e descobre-se depois "
+            "de a cota estar gasta"
+        )
+    if lines_per_family < HELD_OUT_MINIMUM:
+        raise ReserveTargetInfeasible(
+            f"a reserva declara {lines_per_family} linhas por familia, abaixo do piso "
+            f"{HELD_OUT_MINIMUM} que `validate` exige: uma familia sob o piso tem as linhas "
+            "RETIRADAS do corpus, entao o alvo cabe na capacidade e nao produz fatia"
+        )
+
+
 # ONE ENTRY, and the second ratified lineage is in RATIFIED_PENDING_RESERVE below rather
 # than here: a role is a claim about material, and the llama has no line on disk. The
-# reserve is two families of 450 lines each (`qwen2.5:7b` and
-# `llama3:8b-instruct-q4_K_M`, both Q4_K_M so lineage is the only variable).
+# reserve is two families (`qwen2.5:7b` and `llama3:8b-instruct-q4_K_M`, both Q4_K_M so
+# lineage is the only variable); how many lines each is `RESERVE_LINES_PER_FAMILY`, which is
+# ASSERTED against the blind block instead of written here.
 OOD_RESERVED_FAMILIES = {
     reserve_family("qwen2.5:7b", "Q4_K_M"): (
         "Alibaba open weights at Q4_K_M, generated by the local `ollama` runtime; the "
