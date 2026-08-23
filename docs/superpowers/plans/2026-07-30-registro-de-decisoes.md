@@ -11309,3 +11309,48 @@ da fronteira — o número que a mensagem e o teste citam —, não o veredito. 
 inventar uma perna que o mate.
 
 **Bateria:** 8 mutantes, 8 asserções, **um sobrevivente equivalente declarado**.
+## A rodada consolidada: as seis decisões passam, e o T3 achou a interação (2026-08-23)
+
+Seis rodadas de veredito nesta sessão, seis **REPROVA** — e nenhuma delas sobre o estado final, porque
+em cada caso eu consertei os achados e a rodada seguinte julgou um estado que os consertos já tinham
+superado. Duas unidades nunca receberam rodada nenhuma: `cb1b9b0` (não selado, exigia uma) e `03c2915`
+(caminho **selado**, exigia cross-review adversarial). Isso é lacuna de processo pela § 3.7, e eu tinha
+dito "o plano está executado" sem a dizer.
+
+A rodada consolidada corrigiu isso: veredito **por decisão**, sobre o HEAD corrigido, com os diffs das
+duas unidades não revistas e da cadeia de consertos de D2 inline.
+
+| decisão | veredito |
+|---|---|
+| D1 janela do pai | **APROVA** |
+| D2 nível de gerador | **APROVA** |
+| D3 teto da reserva (2 × 250) | **APROVA** |
+| D4 razão da cota | **APROVA** |
+| D5 guardas de admissão | **APROVA** |
+| D6 teto de admissibilidade | **APROVA** |
+
+`divergencia-que-impede-ratificacao: NENHUMA`.
+
+**Sobre a escolha de 250** (a única que altera valor ratificado pelo operador): **defensável**. Existem
+valores intermédios — 275, por exemplo — mas nenhum **domina** 250: trocam controle de template-casado
+por mais positivos OOD. O equilíbrio é escolha e está escrito, não é o único ponto admissível.
+
+**Um falso positivo potencial descartado por ele:** `GEOMETRY_SURVIVAL["insercao"] = (False, True)`
+está correto, porque `MIX_GEOMETRIES["insercao"]` exige explicitamente o enxerto **no meio** e sem
+remover nada.
+
+### O achado transversal, e nenhuma revisão por unidade o alcançava
+
+**As guardas de D5 descartam por linha, e o descarte não é uniforme entre células.** Pai mais longo —
+que é o que D1 admite — desloca a probabilidade de descarte por **comprimento, operação e família**,
+então os níveis **realizados** que `mixed.levels` reamostra podem não ser os que
+`mix_cell_allocation` alocou.
+
+Consequência, e ela é de alegação e não de código: o estimando é **explicitamente pós-guarda** — o
+denominador publicado é o que o sustenta — e daí **não** se extrapola para candidatos brutos, nem se
+afirma que a cobertura planeada sobreviveu. Provar que sobreviveu exige **conferir os níveis realizados
+contra a alocação** depois da corrida, e nada em código o faz hoje. Virou linha da § 7, com prazo na
+primeira corrida, ao lado do rendimento de banda.
+
+É a interação de três decisões que cada uma isolada aprovava, e é exactamente o tipo de coisa que a
+revisão por unidade não vê.
