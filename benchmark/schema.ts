@@ -1379,7 +1379,7 @@ export const REVIEW_STATES: readonly ReviewStateName[] = [
  *
  * It lives here and NOT in `benchmark/preregistration-v4.json` on purpose: the
  * frozen policy is the authority for decisions (budgets, seeds, thresholds), and
- * these three are facts about which of OUR scripts saw the row. A filter added to
+ * these four are facts about which of OUR scripts saw the row. A filter added to
  * the lab is a change to this list in the same commit, and the point of the list
  * being closed is that a record cannot name a screen nobody can find.
  */
@@ -1387,6 +1387,7 @@ export const AUTOMATED_FILTERS = [
   "pii-pattern-scan",
   "license-by-source",
   "length-floor",
+  "llm-pii-screen",
 ] as const;
 export type AutomatedFilterName = (typeof AUTOMATED_FILTERS)[number];
 
@@ -1678,6 +1679,27 @@ export type ReviewClaimSupport =
         | "reviewer-saw-candidate-class"
         | "label-disputed";
     };
+
+/**
+ * Does this record name `filter` as a screen that ran over it?
+ *
+ * The two branches of the review union record a filter run in different places, and
+ * neither is a superset of the other: an `automated/unreviewed` row carries a LIST of
+ * runs, and a human receipt carries the ONE automated stage that produced the
+ * candidates it read. Asking only the list would report every reviewed row as
+ * unscreened.
+ */
+export function namesAutomatedFilter(
+  recordOrReview: BenchmarkRecord | RecordReview,
+  filter: AutomatedFilterName,
+): boolean {
+  const review =
+    "state" in recordOrReview ? recordOrReview : reviewOf(recordOrReview);
+  if (review.state === AUTOMATED_UNREVIEWED) {
+    return review.automatedFilters.some((run) => run.filter === filter);
+  }
+  return review.pii.automatedStage.filter === filter;
+}
 
 export function reviewClaimSupport(
   recordOrReview: BenchmarkRecord | RecordReview,

@@ -461,6 +461,7 @@ const PTWIKI_AUDIT = auditBlockedSplit(
 const PTWIKI_MANIFEST: DatasetManifest = {
   ...MANIFEST,
   scientificUse: "release",
+  assuranceProfile: "full-human-review-v1",
 };
 
 /**
@@ -650,6 +651,7 @@ async function writeSplitInputs(
   const auditInput: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: manifest.datasetId,
     scientificUse: manifest.scientificUse,
+    assuranceProfile: manifest.assuranceProfile ?? null,
     releaseEligible: manifest.scientificUse === "release",
     recordCount: records.length,
     counts,
@@ -1433,6 +1435,7 @@ describe("validateSplitArtifact reproduces the sealed audit", () => {
   const RELEASE_MANIFEST = {
     ...MANIFEST,
     scientificUse: "release" as const,
+    assuranceProfile: "full-human-review-v1" as const,
   };
 
   async function buildForRelease(): Promise<SplitArtifact> {

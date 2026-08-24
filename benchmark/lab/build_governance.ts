@@ -184,6 +184,13 @@ export function datasetManifestTemplateOf(
     datasetId: inputs.datasetId,
     version: "1.0.0",
     scientificUse: "release",
+    // MOVES WITH `scientificUse`, and the pair is why it is written here rather than
+    // left to whoever edits the template: `validateDatasetManifest` requires a profile
+    // on a release corpus and REFUSES one on an infrastructure-only corpus, so
+    // switching one of the two lines without the other produces a manifest no seal
+    // will parse. Pre-registered and not active, so a seal under it is refused by name
+    // until an execution passes the gates.
+    assuranceProfile: "census-pii-screen-v1",
     intendedLanguage: "pt-BR",
     intendedDomain: PREREGISTRATION_V4.dataset.intendedDomain,
     createdAt: "2026-07-24T00:00:00.000Z",

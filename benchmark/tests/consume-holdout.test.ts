@@ -257,6 +257,12 @@ function datasetManifest(
     datasetId: "cleanfeed-ptbr-cells-v1",
     version: "1.0.0",
     scientificUse,
+    // A release manifest must name the level of robustness its claim is made under, and
+    // an infrastructure-only one must not: the same builder therefore cannot write the
+    // key unconditionally.
+    ...(scientificUse === "release"
+      ? { assuranceProfile: "full-human-review-v1" as const }
+      : {}),
     intendedLanguage: "pt-BR",
     intendedDomain: "scoped-cells",
     createdAt: FIXED_TIME,

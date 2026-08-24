@@ -74,6 +74,21 @@ export function piiPatternScan(): Record<string, unknown> {
   };
 }
 
+/**
+ * The census PII screen, on a row that survived it.
+ *
+ * `outcome` can only be `passed` here: the schema refuses `excluded` on a record that
+ * is in the corpus, and the screen drops every flagged row before assembly, so a
+ * present row carrying this run passed it by construction.
+ */
+export function llmPiiScreen(): Record<string, unknown> {
+  return {
+    filter: "llm-pii-screen",
+    implementation: "benchmark/lab/pii_screen.py:screen",
+    outcome: "passed",
+  };
+}
+
 /** The honest state of every record this project has: filtered, never audited. */
 export function automatedUnreviewed(
   overrides: Record<string, unknown> = {},

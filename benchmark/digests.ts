@@ -88,6 +88,10 @@ export const EVALUATOR_FILES = [
   // called positive at all, so its bytes belong to the evaluator's identity exactly
   // as much as the policy that pins the quantile.
   "benchmark/provisional-threshold.ts",
+  // The closed registry of assurance profiles. Its bytes decide which corpus may
+  // be sealed as `release` at all, and under what claim, so they belong to the
+  // evaluator identity exactly as much as the manifest logic that reads them.
+  "benchmark/assurance-profile.ts",
   "benchmark/dataset-manifest.ts",
   "benchmark/prediction-schema.ts",
   "benchmark/near-duplicates.ts",

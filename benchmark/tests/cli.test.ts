@@ -744,6 +744,12 @@ function datasetManifest(
     datasetId: "cleanfeed-ptbr-cells-v1",
     version: "1.0.0",
     scientificUse,
+    // A release manifest must name the level of robustness its claim is made under, and
+    // an infrastructure-only one must not: the same builder therefore cannot write the
+    // key unconditionally.
+    ...(scientificUse === "release"
+      ? { assuranceProfile: "full-human-review-v1" as const }
+      : {}),
     intendedLanguage: "pt-BR",
     intendedDomain: "scoped-cells",
     createdAt: "2026-07-19T00:00:00.000Z",
@@ -1678,6 +1684,7 @@ async function buildFitScenario(
   const auditBase: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: "cleanfeed-ptbr-cells-v1",
     scientificUse: "infrastructure-only",
+    assuranceProfile: null,
     releaseEligible: false,
     recordCount: allRecords.length,
     counts: { human: humanCount, ai: aiCount, mixed: 0 },

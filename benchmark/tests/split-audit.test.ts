@@ -2315,12 +2315,12 @@ const SWEPT_SKIPPED_DIRECTORIES: readonly string[] = [
  * phrasing" is satisfied by reaching no modules at all, and every leg below inherits that
  * hole. Split by extension because losing one extension halves the sweep in silence — the
  * `.py` site of the four-cell arithmetic is under benchmark/lab, and a walk that kept only
- * `.ts` would still report 103 files and read none of it.
+ * `.ts` would still report 106 files and read none of it.
  *
  * A new module under `benchmark/` turns this red. That is the intended price: the number
  * moving is then a decision someone writes down.
  */
-const SWEPT_REACH = { total: 142, typescript: 103, python: 39 } as const;
+const SWEPT_REACH = { total: 145, typescript: 106, python: 39 } as const;
 
 /** A line break inside a comment, as a single space. */
 const COMMENT_BREAK = /\r?\n[ \t]*(?:\/\/+|\*)?[ \t]*/gu;

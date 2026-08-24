@@ -13,6 +13,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { AssuranceProfileName } from "../assurance-profile.ts";
+
 import {
   CorpusImportError,
   corpusContentDigest,
@@ -94,10 +96,11 @@ interface TemplateLike {
   annotationProtocolVersion: "annotation-v1";
   heldOutGeneratorFamilies: [string, ...string[]];
   licenses: DatasetManifest["licenses"];
+  assuranceProfile?: AssuranceProfileName;
 }
 
 function template(overrides: Partial<TemplateLike> = {}): TemplateLike {
-  return {
+  const merged: TemplateLike = {
     schemaVersion: 1,
     datasetId: "cleanfeed-ptbr-cells-v1",
     version: "1.0.0",
@@ -128,6 +131,16 @@ function template(overrides: Partial<TemplateLike> = {}): TemplateLike {
     ],
     ...overrides,
   };
+  // The pair, derived rather than restated at every call: a release manifest is refused
+  // without a profile and an infrastructure-only one is refused with one, so a caller
+  // that flips only `scientificUse` would build a manifest no seal can parse.
+  if (
+    merged.scientificUse === "release" &&
+    merged.assuranceProfile === undefined
+  ) {
+    return { ...merged, assuranceProfile: "full-human-review-v1" };
+  }
+  return merged;
 }
 
 async function sealedManifest(
@@ -1227,6 +1240,7 @@ describe("ingest -> validate -> split integration (10k)", () => {
       JSON.stringify({
         ...JSON.parse(releaseJson),
         scientificUse: "release",
+        assuranceProfile: "full-human-review-v1",
       }),
       "utf8",
     );

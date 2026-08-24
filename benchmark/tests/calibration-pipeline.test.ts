@@ -81,6 +81,7 @@ const datasetManifest: DatasetManifest = {
   datasetId: DATASET_ID,
   version: "1.0.0",
   scientificUse: "release",
+  assuranceProfile: "full-human-review-v1",
   intendedLanguage: "pt-BR",
   intendedDomain: "scoped-cells",
   createdAt: "2026-07-19T00:00:00.000Z",
@@ -113,6 +114,10 @@ async function buildAudit(overrides: {
   const base: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: overrides.datasetId ?? DATASET_ID,
     scientificUse: overrides.scientificUse ?? "release",
+    assuranceProfile:
+      (overrides.scientificUse ?? "release") === "release"
+        ? "full-human-review-v1"
+        : null,
     releaseEligible: overrides.releaseEligible ?? true,
     recordCount: 10_000,
     counts: { human: 4_000, ai: 4_000, mixed: 2_000 },

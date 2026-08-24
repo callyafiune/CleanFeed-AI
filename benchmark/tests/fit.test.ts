@@ -407,6 +407,7 @@ async function buildAudit(): Promise<DatasetAudit> {
   const base: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: DATASET_ID,
     scientificUse: "infrastructure-only",
+    assuranceProfile: null,
     // Coupled to `scientificUse` by the manifest contract: this is an infrastructure
     // corpus, so it is not release eligible. It never was — it carries no `mixed` class.
     releaseEligible: false,

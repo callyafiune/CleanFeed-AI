@@ -11656,3 +11656,138 @@ Corrigido no commit desta emenda, com o valor recontado pela própria guarda: **
 com a § V.3. E a § V.3 declara a novidade com o literal exato "Sem precedente encontrado" em vez de
 uma paráfrase — uma declaração que a contagem não vê é uma declaração que envelhece em silêncio pela
 mesma razão.
+
+## A metade de contrato do `llm-pii-screen`: sete decisões que o desenho aprovado deixou abertas (2026-08-24)
+
+O desenho está aprovado e não se reabre. O que ele não fixa é **onde** cada peça mora na árvore, e a
+etapa 1 desta unidade — verificação de desenho antes do código — encontrou sete pontos em que o
+contrato precisava de uma escolha para virar código. As sete estão decididas, com razão e custo de
+reversão, e nenhuma delas é da lista de nunca-delegado (§ 3.7).
+
+### D-A1 — o registro tem DOIS perfis, e o segundo existe para o primeiro não poder disfarçar-se
+
+`ASSURANCE_PROFILE_NAMES` nomeia `full-human-review-v1` **e** `census-pii-screen-v1`. O primeiro é a
+semântica que `sealDataset` já impunha — todo registro sustenta alegação de revisão — e não é peça
+nova: é o nome que essa semântica não tinha. **Razão:** a condição de defensabilidade do veredito é
+"impossível de confundir com um perfil de revisão humana integral", e um registro de um só membro não
+a satisfaz — sem o outro nome, `census-pii-screen-v1` seria simplesmente *o* perfil, e a comparação
+que o operador precisa fazer não teria os dois lados. O veredito chegou a nomear
+`full-human-review-v1` na própria resposta T3. O eixo é declarado e não derivado:
+`humanReviewPerRecord` é campo de todo perfil. **Custo de reversão:** apagar um membro da união e a
+ramificação que o lê — barato, e visível no digesto.
+
+### D-A2 — obrigatório em `release`, RECUSADO em `infrastructure-only`
+
+As duas direções são recusa, com o mesmo código (`DATASET_ASSURANCE_INVALID`). **Razão:** um corpus
+`release` sem perfil deixa o leitor supor o mais forte, que é exactamente o recuo disfarçado que o
+veredito proíbe; e um perfil num corpus que não faz alegação de `release` publicaria uma qualificação
+que gate nenhum impôs. A chave é **permitida** e não **exigida** no nível de `assertExactObject`,
+porque exigi-la faria todo manifesto `infrastructure-only` carregar um campo que ele não pode usar.
+**Custo de reversão:** nenhum manifesto rastreado muda — `benchmark/data` tem um único arquivo no
+índice (`.gitkeep`) — e a migração real foi de fixture: 12 sítios de auditoria e nove de manifesto.
+
+### D-A3 — a ativação é literal versionado, e o registro só é injetável como costura de teste
+
+`activation` é `{ state: "pre-registered", activationRequires: [...] }` hoje, e ativar é editá-lo para
+`{ state: "active", qualifyingRun: { receiptDigest, ratifiedBy, ratifiedAt } }`. **Razão:** o módulo
+está em `EVALUATOR_FILES`, então o giro move o `evaluatorDigest` — ativar o perfil é ato auditável e
+não configuração, e é o marco que § 4 reserva ao operador. O ramo `active` precisa de estado
+alcançável para ser testado, senão nasce como a dívida da § 7 que diz "guarda que não tem entrada que
+a alcance": por isso `sealDataset` recebe o registro como **quinto parâmetro com default**, e uma
+guarda lê os sítios de chamada dos cinco módulos que selam e recusa um quinto argumento em qualquer um
+deles. **Custo de reversão:** remover o parâmetro deixa o ramo `active` sem entrada — o que se perde
+é teste, não produção.
+
+### D-A4 — a alegação de censo é conferida por marcador POR REGISTRO, nas duas metades da união
+
+`sealDataset` sob perfil cujo `requiredAutomatedFilter` não é nulo exige que **todo** registro nomeie
+aquela corrida, e recusa com contagem e primeiros ids. A leitura passa por
+`schema.ts::namesAutomatedFilter`, que sabe que as duas metades da união guardam a corrida em lugares
+diferentes: `automated/unreviewed` tem a **lista** `automatedFilters`, e o recibo humano tem a **única**
+`pii.automatedStage`. **Razão:** perguntar só a lista reportaria todo registro revisto como não
+triado, o que é falso e recusaria por engano um corpus que tem mais evidência, não menos. O
+`outcome: "excluded"` não precisa de guarda nova: `schema.ts` já o recusa num registro presente, então
+toda corrida gravada aqui passou — que é D-12 já mecânico. **Custo de reversão:** uma função e uma
+ramificação.
+
+### D-A5 — a auditoria publica o NOME do perfil, não a prosa das ressalvas
+
+`dataset-audit.json` carrega `assuranceProfile` (o nome, ou `null`), e não as listas `asserts` /
+`doesNotAssert` / `declaredRisks`. **Razão:** o nome é versionado e resolve para o texto por código que
+está dentro da identidade do avaliador, então a prosa não pode divergir do nome; copiá-la para dentro
+do artefato a duplicaria e engordaria `auditDigest` sem acrescentar autoridade. **A dívida que isto
+deixa está escrita:** quem lê só o JSON da auditoria não vê as ressalvas, e o sítio delas é o relatório
+e o model card (R7) — é da unidade que produzir o primeiro corpus `release`, e não desta.
+
+### D-A6 — `build_governance.ts` mantém `scientificUse: "release"` e acrescenta o perfil
+
+O template continua declarando `release` e passa a declarar `census-pii-screen-v1`. **Razão:** hoje
+esse template já produz um corpus que o selo recusa (`DATASET_REVIEW_INVALID`), então acrescentar o
+perfil não muda o desfecho — muda a **mensagem**, que passa a nomear a ativação. Trocar o `release` do
+template por `infrastructure-only` faria a montagem da Fase 3 **selar**, o que é mudança de
+comportamento maior do que esta unidade tem mandato para fazer sozinha, e interage com o ramo de
+política de corpus de `commands/validate.ts`. O par move junto e o comentário do sítio diz porquê:
+mexer numa das duas linhas sem a outra produz manifesto que selo nenhum parseia. **Custo de reversão:**
+duas linhas do template, e nenhum artefato rastreado.
+
+### D-A7 — o digesto do recibo NÃO entra no manifesto nesta unidade
+
+`sealDataset` confere a alegação de censo pelo que ele **vê**: manifesto e registros. Amarrar o
+`pii-screening-receipt.json` ao manifesto por digesto exigiria um campo novo no trio de digestos
+observados e nos quatro sítios que o computam. **Razão:** a autoridade do selo é o corpus, a do recibo
+é a corrida, e o que liga as duas hoje é o `qualifyingRun` da ativação — que é ratificação do operador
+e não campo de manifesto. O valor da amarração é zero enquanto nenhum recibo real existe, e o custo é
+tocar quatro sítios de digesto. **Fica como dívida declarada**, da unidade que produzir o primeiro
+corpus `release`. **Custo de reversão:** um campo de manifesto e um digesto no trio observado.
+
+### O que esta entrada NÃO fecha
+
+A metade do lab: a triagem no funil único, o ledger de disposições por `(id, sha256)`, os controles com
+`S_control` por estrato e pisos por subtipo, os gates adversariais por pares com sham pareado, o
+preflight de sobreviventes e o recibo. Os números do protocolo — taxonomia, `n` por subtipo, pisos,
+margem de equivalência, teto de sham e `m` — são pré-inscrição do lab e entram com ele. A **R4 continua
+não satisfeita** e não há recibo humano por registro: os dois estão declarados no próprio perfil
+(`satisfiesR4: false`, `doesNotAssert`).
+
+### A bateria de mutação: 17 mutantes, 17 mortos, nenhum sobrevivente
+
+Linha de base verde nas duas suítes antes de mutar (vitest 174/174 · 3.154; pytest 774 + 970
+subtests). Cada mutação foi aplicada a arquivo de **produção**, a suíte nomeada correu, o arquivo foi
+restaurado e o `sha256` conferido contra o de antes — as 17 restaurações fecharam byte a byte.
+
+| # | mutação | caso que ficou VERMELHO |
+|---|---|---|
+| M1 | `release` sem perfil deixa de recusar | *is obligatory: a release manifest with no profile is refused…* |
+| M2 | `infrastructure-only` com perfil deixa de recusar | *is refused on an infrastructure-only corpus…* |
+| M3 | `isAssuranceProfileName` aceita qualquer string | *refuses a name outside the closed registry…* (3 casos) |
+| M4 | selo sob perfil pré-inscrito deixa de recusar | *…while the profile is only PRE-REGISTERED* (2 casos) |
+| M5 | alegação de revisão volta a ser incondicional | *seals a screened corpus once the census profile is ACTIVE…* (4 casos) |
+| M6 | alegação de revisão nunca dispara | *keeps the review-claim refusal under the human-review profile, byte for byte* (4 casos) |
+| M7 | censo não encontra registro sem triagem | *…when one record was not screened* (3 casos) |
+| M8 | metade não-revista de `namesAutomatedFilter` responde sempre sim | *…when one record was not screened* (2 casos) |
+| M9 | metade revista responde sempre não | *reads the census marker off a human receipt's automated STAGE…* |
+| M10 | auditoria publica `null` em vez do perfil | *seals a screened corpus…* (4 casos) |
+| M11 | parser da auditoria aceita nome fora do registro | *refuses a profile name the registry does not hold* |
+| M12 | parser da auditoria solta o acoplamento com `release` | *refuses a release audit whose profile was lost in transit* (2 casos) |
+| M13 | o registro sai de `EVALUATOR_FILES` | *is part of the evaluator's identity…* + o caso do digesto no ESTADO |
+| M14 | `llm-pii-screen` sai da união fechada | *names the census profile's required filter…* |
+| M15 | o template do `build_governance` deixa de declarar o perfil | *mints a template whose release claim carries the assurance profile…* |
+| M16 | o perfil do censo nasce ATIVO | *keeps the census profile PRE-REGISTERED…* (3 casos) |
+| M17 | o perfil do censo afirma leitura humana por registro | *makes the two impossible to confuse on the one axis that matters* (3 casos mais) |
+
+**Nenhum mutante equivalente a declarar.** As duas mutações que mereciam atenção são M5 e M6, porque
+são as duas direções da MESMA linha: M5 (incondicional) derruba o selo sob censo, M6 (nunca dispara)
+derruba a recusa sob revisão humana — inclusive dois casos antigos de `dataset-manifest.test.ts` que
+já existiam. Uma condição errada só sobrevive se um dos dois lados não tiver caso, e os dois têm.
+
+**Dois ramos foram cobertos por causa desta etapa e não antes dela:** a metade humana de
+`namesAutomatedFilter` (M9) e as duas recusas novas de `parseDatasetAudit` (M11, M12) não tinham
+entrada nenhuma quando a implementação ficou verde. Guarda sem entrada que a alcance é a forma que a
+§ 7 já nomeia; achá-la aqui é o que a bateria compra.
+
+### Referências
+
+`references.md` § V.4, no mesmo commit: a âncora verificada é o modelo de duas etapas dos Registered
+Reports do COS — *in-principle acceptance* antes de existirem resultados, aceitação final condicionada
+à aderência ao protocolo —, e as duas declarações de novidade usam o literal exacto: o mecanismo do
+gate desligado por literal de ativação versionado, e a regra do censo que uma única lacuna falsifica.

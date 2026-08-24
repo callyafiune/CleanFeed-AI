@@ -27,6 +27,13 @@
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import {
+  ASSURANCE_PROFILE_NAMES,
+  ASSURANCE_PROFILES,
+  isAssuranceProfileName,
+  type AssuranceProfileName,
+  type AssuranceProfileRegistry,
+} from "./assurance-profile.ts";
+import {
   GeneratorFamilyError,
   asGeneratorFamily,
   generatorFamilyOf,
@@ -40,6 +47,7 @@ import {
   groupAxisIdentity,
   LABEL_DISPUTE_UNRESOLVED,
   recordEligibility,
+  namesAutomatedFilter,
   recordGroupAxes,
   reviewClaimSupport,
   validateBenchmarkRecord,
@@ -58,6 +66,14 @@ export interface DatasetManifest {
   datasetId: string;
   version: string;
   scientificUse: "release" | "infrastructure-only";
+  /**
+   * Under what ROBUSTNESS the `release` claim is made. Required on a release
+   * manifest and refused on an `infrastructure-only` one: a profile qualifies a
+   * release claim, and a profile on a corpus that makes none would be a claim with
+   * no gate behind it. Optional in the TYPE and not in the contract — the contract
+   * is `validateDatasetManifest`, which refuses the absence on a release corpus.
+   */
+  assuranceProfile?: AssuranceProfileName;
   intendedLanguage: "pt-BR";
   /**
    * The FRAME the corpus draws from, and never "any pt-BR text": the claim is
@@ -175,6 +191,13 @@ export interface LabelBasisPublication {
 export interface DatasetAudit {
   datasetId: string;
   scientificUse: DatasetManifest["scientificUse"];
+  /**
+   * The profile the seal enforced, or `null` where there was no release claim to
+   * qualify. Published rather than left to the manifest, because this artifact is
+   * what every downstream consumer reads: a `releaseEligible: true` with no visible
+   * profile is exactly the ambiguity the registry exists to remove.
+   */
+  assuranceProfile: AssuranceProfileName | null;
   releaseEligible: boolean;
   recordCount: number;
   counts: Record<"human" | "ai" | "mixed", number>;
@@ -230,6 +253,11 @@ const MANIFEST_KEYS = [
   "heldOutGeneratorFamilies",
   "licenses",
 ] as const;
+// `assuranceProfile` is ALLOWED but not REQUIRED at the key level, and the asymmetry
+// is the point: requiring the key would make every `infrastructure-only` manifest
+// carry a field it must not use, and allowing it silently would let a release corpus
+// omit it. Which of the two applies is decided by `scientificUse`, below.
+const MANIFEST_ALLOWED_KEYS = [...MANIFEST_KEYS, "assuranceProfile"] as const;
 const LICENSE_KEYS = [
   "id",
   "name",
@@ -241,6 +269,7 @@ const LICENSE_KEYS = [
 const AUDIT_KEYS = [
   "datasetId",
   "scientificUse",
+  "assuranceProfile",
   "releaseEligible",
   "recordCount",
   "counts",
@@ -287,6 +316,47 @@ function assertExactObject(
   return value;
 }
 
+/**
+ * The profile a manifest declares, judged against what its `scientificUse` allows.
+ *
+ * OBLIGATORY on release and FORBIDDEN otherwise, and both directions are refusals
+ * rather than coercions: a release corpus with no profile would leave a reader to
+ * assume the strongest one, and an `infrastructure-only` corpus with a profile would
+ * publish a qualified claim no gate ever enforced.
+ */
+function declaredAssuranceProfile(
+  value: unknown,
+  scientificUse: DatasetManifest["scientificUse"],
+): AssuranceProfileName | undefined {
+  if (scientificUse === "release") {
+    if (value === undefined) {
+      fail(
+        "DATASET_ASSURANCE_INVALID",
+        "a release corpus must declare an assuranceProfile: the claim is made under a " +
+          `named and versioned level of robustness (${ASSURANCE_PROFILE_NAMES.join(", ")}), ` +
+          "and an absent one would be read as the strongest",
+      );
+    }
+    if (!isAssuranceProfileName(value)) {
+      fail(
+        "DATASET_ASSURANCE_INVALID",
+        `assuranceProfile ${JSON.stringify(value)} is not in the closed registry ` +
+          `(${ASSURANCE_PROFILE_NAMES.join(", ")}): a profile nobody can look up ` +
+          "qualifies nothing",
+      );
+    }
+    return value;
+  }
+  if (value !== undefined) {
+    fail(
+      "DATASET_ASSURANCE_INVALID",
+      `an infrastructure-only corpus declares no assuranceProfile, and this one declares ${JSON.stringify(value)}: ` +
+        "a profile qualifies a release claim, and there is no release claim here to qualify",
+    );
+  }
+  return undefined;
+}
+
 function nonEmptyString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.length === 0) {
     fail("DATASET_FIELD_INVALID", `${name} must be a non-empty string`);
@@ -327,7 +397,7 @@ export function validateDatasetManifest(value: unknown): DatasetManifest {
   const root = assertExactObject(
     value,
     "dataset manifest",
-    MANIFEST_KEYS,
+    MANIFEST_ALLOWED_KEYS,
     MANIFEST_KEYS,
   );
 
@@ -346,6 +416,10 @@ export function validateDatasetManifest(value: unknown): DatasetManifest {
     );
   }
   const scientificUse = root.scientificUse;
+  const assuranceProfile = declaredAssuranceProfile(
+    root.assuranceProfile,
+    scientificUse,
+  );
   literal(root.intendedLanguage, "intendedLanguage", "pt-BR");
   literal(
     root.intendedDomain,
@@ -470,6 +544,10 @@ export function validateDatasetManifest(value: unknown): DatasetManifest {
     datasetId,
     version,
     scientificUse,
+    // Spread and not `assuranceProfile: undefined`: the KEY's presence is what
+    // `assertExactObject` reads on the way back in, so an explicit undefined would
+    // make a re-parsed infrastructure-only manifest declare a profile it refuses.
+    ...(assuranceProfile === undefined ? {} : { assuranceProfile }),
     intendedLanguage: "pt-BR",
     intendedDomain: PREREGISTRATION_V4.dataset.intendedDomain,
     createdAt,
@@ -870,6 +948,14 @@ export async function sealDataset(
   records: BenchmarkRecord[],
   policy: CorpusPolicy,
   observedFiles: DatasetFileDigests,
+  /**
+   * The registry the profile is resolved against. A parameter ONLY so the active
+   * branch of a pre-registered profile has a reachable state to be tested from: the
+   * activation itself is a versioned literal in `benchmark/assurance-profile.ts`, and
+   * no production caller passes this. A test in `assurance-profile.test.ts` reads the
+   * call sites and refuses a fifth argument in any of them.
+   */
+  profiles: AssuranceProfileRegistry = ASSURANCE_PROFILES,
 ): Promise<DatasetAudit> {
   const m = validateDatasetManifest(manifest);
 
@@ -1033,7 +1119,24 @@ export async function sealDataset(
   }
 
   const releaseEligible = m.scientificUse === "release";
+  const profile =
+    m.assuranceProfile === undefined ? null : profiles[m.assuranceProfile];
   if (releaseEligible) {
+    // ACTIVATION BEFORE COMPOSITION, and that order is not the usual one. Every other
+    // release refusal below points at material to fix — a cell with no lines, a family
+    // under its floor. This one says the profile cannot seal ANYTHING yet, so fixing
+    // composition would not bring the corpus closer, and an operator reading a
+    // composition refusal would be sent to the wrong work.
+    if (profile !== null && profile.activation.state === "pre-registered") {
+      fail(
+        "DATASET_ASSURANCE_INACTIVE",
+        `assurance profile "${profile.name}" is pre-registered and not active, so no ` +
+          "corpus may be sealed under it yet. Activation requires: " +
+          profile.activation.activationRequires
+            .map((requirement, index) => `(${index + 1}) ${requirement}`)
+            .join("; "),
+      );
+    }
     // THE FRAME IS A PARTITION OF THE HUMAN CLASS, and these two guards are its two
     // halves. The release claim is published as a table with one row per declared
     // cell, and the denominator of each row is that cell — so a human row that
@@ -1157,21 +1260,56 @@ export async function sealDataset(
     // narrow an array to a non-empty tuple from its length: this is what lets
     // `reviewClaimShortfall` DEMAND a first element instead of rendering `undefined`
     // into a refusal if this guard is ever moved or lost.
-    const [firstUnsustained, ...restUnsustained] = unsustained;
-    if (firstUnsustained !== undefined) {
-      fail(
-        "DATASET_REVIEW_INVALID",
-        reviewClaimShortfall(
-          [firstUnsustained, ...restUnsustained],
-          normalized.length,
-        ),
+    //
+    // ASKED ONLY UNDER A PROFILE THAT CLAIMS A PERSON READ EVERY RECORD. Under
+    // `census-pii-screen-v1` the corpus asserts a census over digested bytes and
+    // nothing about a human reader, so refusing it for `automated-filter-only` rows
+    // would refuse it for being exactly what it says it is. The claim it does have to
+    // support is the census, checked immediately after.
+    if (profile === null || profile.humanReviewPerRecord) {
+      const [firstUnsustained, ...restUnsustained] = unsustained;
+      if (firstUnsustained !== undefined) {
+        fail(
+          "DATASET_REVIEW_INVALID",
+          reviewClaimShortfall(
+            [firstUnsustained, ...restUnsustained],
+            normalized.length,
+          ),
+        );
+      }
+    }
+
+    // THE CENSUS CLAIM. `censo sobre bytes digestados` is a statement about EVERY
+    // record, so one record the screen never saw falsifies it for the whole corpus —
+    // there is no fraction of a census. The filter run is the corpus-side evidence
+    // the seal can actually see: `validateAutomatedFilterRun` already refuses
+    // `outcome: "excluded"` on a present record, so a run recorded here passed.
+    const requiredFilter = profile?.requiredAutomatedFilter ?? null;
+    if (requiredFilter !== null) {
+      const unscreened = normalized.filter(
+        (record) => !namesAutomatedFilter(record, requiredFilter),
       );
+      const [firstUnscreened, ...restUnscreened] = unscreened;
+      if (firstUnscreened !== undefined) {
+        fail(
+          "DATASET_ASSURANCE_UNSUPPORTED",
+          `assurance profile "${profile?.name}" asserts a census, and ` +
+            `${unscreened.length} of ${normalized.length} records carry no ` +
+            `"${requiredFilter}" run: ${[firstUnscreened, ...restUnscreened]
+              .slice(0, 5)
+              .map((record) => record.id)
+              .join(", ")}` +
+            (unscreened.length > 5 ? ", …" : "") +
+            ". A census with a gap is not a census, and the gap is not a fraction of one",
+        );
+      }
     }
   }
 
   const auditInput: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: m.datasetId,
     scientificUse: m.scientificUse,
+    assuranceProfile: m.assuranceProfile ?? null,
     releaseEligible,
     recordCount: normalized.length,
     counts,
@@ -1221,6 +1359,25 @@ export async function parseDatasetAudit(value: unknown): Promise<DatasetAudit> {
     );
   }
   const scientificUse = root.scientificUse;
+  // `null` is a VALUE here and not an absence: an infrastructure-only audit qualifies
+  // nothing, and reading a missing key as null would let a release audit lose its
+  // profile in transit and still parse.
+  if (
+    root.assuranceProfile !== null &&
+    !isAssuranceProfileName(root.assuranceProfile)
+  ) {
+    fail(
+      "DATASET_ASSURANCE_INVALID",
+      `assuranceProfile must be null or one of ${ASSURANCE_PROFILE_NAMES.join(", ")}`,
+    );
+  }
+  const assuranceProfile = root.assuranceProfile;
+  if ((assuranceProfile === null) === (scientificUse === "release")) {
+    fail(
+      "DATASET_ASSURANCE_INVALID",
+      "an audit names an assuranceProfile exactly when it is release-eligible",
+    );
+  }
   if (typeof root.releaseEligible !== "boolean") {
     fail("DATASET_FIELD_INVALID", "releaseEligible must be a boolean");
   }
@@ -1277,6 +1434,7 @@ export async function parseDatasetAudit(value: unknown): Promise<DatasetAudit> {
   const auditInput: Omit<DatasetAudit, "auditDigest"> = {
     datasetId,
     scientificUse,
+    assuranceProfile,
     releaseEligible,
     recordCount,
     counts,

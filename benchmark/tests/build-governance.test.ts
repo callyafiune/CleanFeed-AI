@@ -128,6 +128,19 @@ describe("the governance writer, driven as the documented command", () => {
     expect(run.stdout).toContain(manifest.sourceManifestDigest.slice(0, 12));
     expect(run.stdout).toContain("1 lote(s) de material");
   });
+
+  it("mints a template whose release claim carries the assurance profile it is made under", async () => {
+    await writeGovernance(inputs(), root, DECLARED_MATERIAL_BATCHES);
+
+    const template = JSON.parse(
+      await readFile(join(root, "manifest-template.json"), "utf8"),
+    ) as { scientificUse: string; assuranceProfile?: string };
+    // The two together, because either alone is a manifest the seal cannot parse: a
+    // release corpus with no profile is refused, and a profile on a corpus that is not
+    // release is refused too.
+    expect(template.scientificUse).toBe("release");
+    expect(template.assuranceProfile).toBe("census-pii-screen-v1");
+  });
 });
 
 describe("the governance writer refuses an inventory a v4 corpus cannot resolve against", () => {

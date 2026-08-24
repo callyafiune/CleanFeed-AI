@@ -403,6 +403,7 @@ export function readThresholdEvidence(
 
 const DATASET_AUDIT_IDENTITY: Record<keyof DatasetAudit, boolean> = {
   datasetId: true,
+  assuranceProfile: true,
   scientificUse: true,
   releaseEligible: true,
   recordCount: true,

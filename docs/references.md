@@ -5474,3 +5474,32 @@ sensibilidade **não medida** da revisão humana de 10.000 registros e (b) a **d
 humano ao longo dela —; ficam declarados como raciocínio desta casa, com o contra-argumento que os
 limita escrito ao lado deles em ESTADO § 5.14 (*consistência não prova validade*; o LLM é
 não-determinístico entre execuções; humanos podem ser calibrados, se alguém o fizer).
+
+
+### V.4 — o perfil pré-inscrito RECUSA até que uma execução o ative, e o censo não admite lacuna
+
+_Âncora:_ Registered Reports, do Center for Open Science, é o modelo de **duas etapas** em que o
+protocolo passa por revisão **antes de existirem resultados** e recebe *in-principle acceptance* —
+*"the journal virtually guarantees publication if the authors conduct the experiment in accordance*
+*with their approved protocol"* —, e a aceitação final depende de o protocolo **ter sido seguido**,
+nunca do resultado obtido. _Onde no projeto:_ `census-pii-screen-v1` é inscrito com
+`activation.state: "pre-registered"`, e `sealDataset` recusa por nome
+(`DATASET_ASSURANCE_INACTIVE`) todo corpus que tente selar sob ele, listando o que a ativação exige.
+_Fato citado:_ aprovar um protocolo antes do resultado e condicionar a publicação à aderência a ele
+é prática estabelecida, e não invenção desta casa.
+[link](https://www.cos.io/initiatives/registered-reports)
+
+**Declaração de novidade, exigida pela regra da casa. Sem precedente encontrado (2026-08-24)** para
+o MECANISMO: um gate de selo **escrito e desligado** por um literal de ativação versionado, cujo giro
+move o `evaluatorDigest` porque o módulo do registro está em `EVALUATOR_FILES` — de modo que ativar o
+perfil é ato auditável, e não configuração. O que a âncora acima sustenta é a forma de duas etapas;
+que o desligamento seja imposto pelo próprio gate, e que ligá-lo mova a identidade do avaliador, é
+escolha de desenho desta casa.
+
+**Sem precedente encontrado (2026-08-24)** também para a regra do censo tal como este selo a impõe:
+a alegação de censo é sobre **todo** registro, então um único registro sem a corrida `llm-pii-screen`
+a falsifica **para o corpus inteiro** — não a enfraquece por uma fração. A recusa publica a contagem
+e os primeiros ids em vez de parar no primeiro, porque o número é o que diz se o buraco é um defeito
+de uma linha ou da corrida. A distinção censo/amostra é padrão em auditoria; o que não foi localizado
+é precedente para ela ser imposta por marcador **por registro** dentro do artefato selado, com a
+ausência do marcador a recusar o selo.

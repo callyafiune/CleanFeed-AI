@@ -111,6 +111,7 @@ function lightDatasetAudit(report: BenchmarkReport): DatasetAudit {
   return {
     datasetId: report.dataset.id,
     scientificUse: "release",
+    assuranceProfile: "full-human-review-v1",
     releaseEligible: true,
     recordCount: 10_000,
     counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
@@ -743,6 +744,7 @@ export async function buildRejectScenario(
   const auditBase: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: "cleanfeed-ptbr-cells-v1",
     scientificUse: "release",
+    assuranceProfile: "full-human-review-v1",
     releaseEligible: true,
     recordCount: 10_000,
     counts: { human: 4_000, ai: 4_000, mixed: 2_000 },

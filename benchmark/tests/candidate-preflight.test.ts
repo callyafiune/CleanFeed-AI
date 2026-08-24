@@ -80,6 +80,7 @@ const datasetManifest: DatasetManifest = {
   datasetId: DATASET_ID,
   version: "1.0.0",
   scientificUse: "release",
+  assuranceProfile: "full-human-review-v1",
   intendedLanguage: "pt-BR",
   intendedDomain: "scoped-cells",
   createdAt: "2026-07-19T00:00:00.000Z",
@@ -110,6 +111,7 @@ async function buildAudit(
   const base: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: DATASET_ID,
     scientificUse: "release",
+    assuranceProfile: "full-human-review-v1",
     releaseEligible: true,
     recordCount: 10_000,
     counts: { human: 4_000, ai: 4_000, mixed: 2_000 },

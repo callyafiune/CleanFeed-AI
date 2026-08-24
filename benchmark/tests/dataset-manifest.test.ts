@@ -316,6 +316,7 @@ describe("dataset manifest", () => {
         datasetId: "cleanfeed-ptbr-cells-v1",
         version: "1.0.0",
         scientificUse: "release",
+        assuranceProfile: "full-human-review-v1",
         intendedLanguage: "pt-BR",
         intendedDomain: "scoped-cells",
         createdAt: "2026-07-19T00:00:00.000Z",
@@ -541,6 +542,7 @@ describe("dataset manifest", () => {
       await computeDatasetAuditDigest({
         datasetId: audit.datasetId,
         scientificUse: audit.scientificUse,
+        assuranceProfile: audit.assuranceProfile,
         releaseEligible: audit.releaseEligible,
         recordCount: audit.recordCount,
         counts: audit.counts,
@@ -798,6 +800,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
   const releaseManifest: DatasetManifest = {
     ...validManifest,
     scientificUse: "release",
+    assuranceProfile: "full-human-review-v1",
     heldOutGeneratorFamilies: [HELD_OUT],
     licenses: [
       {
@@ -1092,7 +1095,11 @@ describe("held-out generator-family coverage on a release corpus", () => {
       });
     }
     const attempt = sealDataset(
-      { ...validManifest, scientificUse: "release" },
+      {
+        ...validManifest,
+        scientificUse: "release",
+        assuranceProfile: "full-human-review-v1",
+      },
       [human, ...v2Positives],
       {
         counts: { human: 1, ai: 200, mixed: 0 },
@@ -1164,7 +1171,11 @@ describe("held-out generator-family coverage on a release corpus", () => {
       });
     }
     const attempt = sealDataset(
-      { ...validManifest, scientificUse: "release" },
+      {
+        ...validManifest,
+        scientificUse: "release",
+        assuranceProfile: "full-human-review-v1",
+      },
       [human, ...thin],
       {
         counts: { human: 1, ai: 5, mixed: 0 },
@@ -1233,7 +1244,13 @@ describe("held-out generator-family coverage on a release corpus", () => {
     for (const scientificUse of ["release", "infrastructure-only"] as const) {
       await expect(
         sealDataset(
-          { ...validManifest, scientificUse },
+          {
+            ...validManifest,
+            scientificUse,
+            ...(scientificUse === "release"
+              ? { assuranceProfile: "full-human-review-v1" as const }
+              : {}),
+          },
           [leaked, ai, mixed],
           {
             counts: { human: 1, ai: 1, mixed: 1 },
@@ -1308,6 +1325,7 @@ describe("the sealed audit judges a v4 corpus by the axes v4 declares", () => {
   const v4ReleaseManifest: DatasetManifest = {
     ...validManifest,
     scientificUse: "release",
+    assuranceProfile: "full-human-review-v1",
     heldOutGeneratorFamilies: [HELD_OUT_V4],
     licenses: twoLicenses,
   };
@@ -1926,6 +1944,7 @@ describe("the declared frame partitions the human class of a release corpus", ()
   const frameReleaseManifest: DatasetManifest = {
     ...validManifest,
     scientificUse: "release",
+    assuranceProfile: "full-human-review-v1",
     heldOutGeneratorFamilies: [HELD_OUT],
     licenses: frameLicenses,
   };
