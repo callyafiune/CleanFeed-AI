@@ -11354,3 +11354,36 @@ primeira corrida, ao lado do rendimento de banda.
 
 É a interação de três decisões que cada uma isolada aprovava, e é exactamente o tipo de coisa que a
 revisão por unidade não vê.
+## Ratificação das seis decisões da sessão (2026-08-23)
+
+O operador ratificou as **seis**, no molde `AG · ratificado`, depois de a rodada consolidada devolver
+APROVA em cada uma e `divergencia-que-impede-ratificacao: NENHUMA`.
+
+| # | decisão | commit |
+|---|---|---|
+| D1 | a janela de pais da pista mista é a do extrator, não o literal 450 | `964b53f` |
+| D2 | `groups.generatorFamily` como terceiro fator cruzado em `mixed.levels` | `b91846a` + 3 |
+| D3 | o alvo da reserva passa de 2 × 450 para **2 × 250** | `ff5cce6` |
+| D4 | a razão da cota `mixed = 2000`, com alternativa recusada 1.600 | `ff5cce6` |
+| D5 | as duas guardas de admissão do `emit` — geometria e eco | `cb1b9b0` |
+| D6 | o teto de admissibilidade do intervalo | `03c2915` |
+
+**A D3 é a que mudou de mão.** O valor 450 por família era ratificado pelo operador desde 2026-08-04, e
+eu medi que 2 × 450 = 900 não cabe num teto de 600. Ele ratificou 250 depois de a rodada consolidada
+julgar a escolha **defensável** — há valores intermédios, 275 entre eles, mas nenhum **domina** 250,
+porque trocam controle de template-casado por mais positivos OOD. O equilíbrio é escolha declarada, não
+o único ponto admissível.
+
+**A D6 entrou por pedido dele.** Eu tinha proposto cinco, porque a D6 nasceu de reconciliação entre dois
+revisores e não de decisão minha isolada; ele mandou incluí-la, e o molde é o mesmo.
+
+### O que a ratificação NÃO cobre, e isso fica escrito
+
+A qualificação do T3 — **as guardas descartam de forma não uniforme entre células, então a composição
+realizada não demonstra a cobertura planeada** — ficou como dívida da § 7 com prazo na primeira corrida.
+Ela **não** foi ratificada como resolvida. O estimando é explicitamente pós-guarda, o denominador
+publicado é o que o sustenta, e provar que a cobertura sobreviveu exige conferir os níveis realizados
+contra a alocação depois da corrida.
+
+Também não cobre nada da lista fechada: gastar a cota, o recibo humano do selo, a permutação de tarefas
+das ilhas reservadas, a assinatura de B1, `consume-holdout` e a publicação.

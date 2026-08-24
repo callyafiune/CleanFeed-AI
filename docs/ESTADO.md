@@ -75,7 +75,7 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | | "texto em pt-BR em geral" **não é alegável** — sem moldura amostral não há estimando | OP |
 | | a pré-inscrição vigente é **`benchmark/preregistration-v4.{json,ts}`** (`PREREGISTRATION_V4`, `policyVersion: "preregistration-v4-v1"`) | código |
 | | a família certificadora é **por célula**, `m=4`: `calibration-global`, `fpr-ptwiki`, `integrity`, `recall-at-threshold`. α familiar 0,05; α por hipótese **0,0125**; correção de Bonferroni | OP |
-| | a unidade de reamostragem da classe **mista** é `groups.humanSeed` × `groups.promptTemplate` (proxy da operação) × **`groups.generatorFamily`**, `multiway`. A família e não a versão: medido, `mixed_record` escreve o MESMO token nos dois eixos, e dois fatores de níveis idênticos contariam a mesma dependência duas vezes. A contagem de níveis do fator é do conjunto de modelos da corrida, e o que a declara é o número publicado no relatório (§ 5.11) | AG |
+| | a unidade de reamostragem da classe **mista** é `groups.humanSeed` × `groups.promptTemplate` (proxy da operação) × **`groups.generatorFamily`**, `multiway`. A família e não a versão: medido, `mixed_record` escreve o MESMO token nos dois eixos, e dois fatores de níveis idênticos contariam a mesma dependência duas vezes. A contagem de níveis do fator é do conjunto de modelos da corrida, e o que a declara é o número publicado no relatório (§ 5.11) | AG · ratificado |
 | Regime 2 | cada release certifica **só a própria hipótese versionada**; erro familiar ao longo da história do produto **não é alegado**. Toda execução certificadora é publicada, passe ou reprove | OP |
 | | pisos de poder: **300** negativos humanos por célula em `test` (`criticalFprHumanNegatives`), **300** unidades de amostragem (`samplingUnits`), **200** positivos para recall (`criticalRecallPositives`) | código |
 | | coleta: alvo de **4.000** linhas humanas na célula, piso de **1.500**, total de **4.000**, **1** linha por documento de origem (`collection`) | OP |
@@ -242,6 +242,7 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | | **três etapas por unidade** no caminho selado: verificação de desenho antes do código · implementação contra o contrato · cross-review adversarial. Fora do selado, uma rodada | OP |
 | | a etapa 3 é do **Fable** enquanto a janela de cota do codex estiver **fechada**, e rodada do Fable **não** fecha dívida de codex. A cota é janela **recorrente**, não um evento único: ela abriu em 8 de agosto, foi gasta em 9 de agosto (dez chamadas, **3.102.744** tokens, oito vereditos com `EXIT=0`) e fechou de novo no meio da própria rodada, com retorno impresso para 16 de agosto. Então "o crédito voltou" **não** quita nada por si: quem quita é a corrida que roda, unidade por unidade, e o livro-caixa de qual unidade caiu em qual janela é o que § 4 nomeia | OP |
 | A5 | revisão adversarial em caminho selado, uma rodada no resto | OP |
+| | **as SEIS decisões da sessão de 2026-08-23 estão ratificadas**, no molde `AG · ratificado`: a janela de pais da pista mista (`964b53f`), o nível de gerador da classe mista (`b91846a`+3), o teto da reserva em 2 × 250 (`ff5cce6`), a razão da cota `mixed = 2000` (`ff5cce6`), as duas guardas de admissão do `emit` (`cb1b9b0`) e o teto de admissibilidade do intervalo (`03c2915`). A rodada consolidada devolveu **APROVA nas seis** e `divergencia-que-impede-ratificacao: NENHUMA`; a qualificação do T3 — a composição realizada não demonstra a cobertura planeada — ficou como dívida da § 7 e **não** foi ratificada como resolvida | OP |
 | | guarda nova exige **prova por mutação**: linha de base verde, mutação, vermelho no teste nomeado, restauração e conferência byte a byte | OP |
 | | toda decisão metodológica entra em `references.md` no mesmo commit, com link; sem precedente na literatura, a declaração explícita entra no lugar | OP |
 | A6 | Colab Pro até R$60/mês | OP |
@@ -287,7 +288,7 @@ código com bateria, não decisão.
 
 **O que já não está nesta ordem, porque está feito:** a janela do pai (§ 5.4c, § 5.4d), o nível de
 gerador da classe mista (§ 5.11), o plano de cobertura e o teto da reserva (§ 5.12) e a razão da cota
-`mixed = 2000` (§ 5.13). O que resta dessas quatro é **ratificação**, não trabalho.
+`mixed = 2000` (§ 5.13). As quatro estão **ratificadas em 2026-08-23** (§ 3.7), junto com as duas guardas de admissão e o teto de admissibilidade do intervalo — seis no total.
 
 **Nada meu vence antes da geração.** A geometria da operação e o eco do pai estão fechados — as duas
 guardas correm como descarte no laço, com o denominador publicado — e o teto de admissibilidade do
@@ -1194,7 +1195,7 @@ Corrigida, e a linha renderizada passou a ser asserção — é ela que sustenta
 `test_backbone_policy.py`. A emenda é legítima por § 3.4 — estrutura dos grupos, não resultados: `issuedAt`
 é nulo, 0 tags, nenhum `fit` selado.
 
-**O que fica dele:** a ratificação, no molde `AG · ratificado`.
+**Ratificado pelo operador em 2026-08-23**, no molde `AG · ratificado`, depois da rodada consolidada que devolveu APROVA nas seis decisões da sessão.
 
 ### 5.12 O plano de cobertura, e a reserva ratificada não cabia (2026-08-23)
 
@@ -1231,7 +1232,7 @@ provedor, poda de quase-duplicata, descarte de banda —, e uma família sob o p
 
 **O que 250 custa, e fica dito:** a fatia `unseen` tem menos positivos e o intervalo dela sai mais
 largo. A forma 2 × 300 preserva mais positivos e leva o controle a zero — largura menor sobre um
-estimando que não é o alegado. **O valor 450 é do operador; 250 não**, e a ratificação é dele.
+estimando que não é o alegado. **O valor 450 é do operador; 250 não** — e ele **ratificou 250 em 2026-08-23**, depois de a rodada consolidada julgar a escolha DEFENSÁVEL: há valores intermédios (275) mas nenhum DOMINA 250, porque trocam controle de template-casado por mais positivos OOD.
 
 **Isto responde à pergunta que a emenda de § 5.11 deixou aberta.** Ela declara que o argumento vale
 se a alegação generaliza entre famílias. Sem controle `seen` sob os templates reservados a alegação
