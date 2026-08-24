@@ -11433,3 +11433,107 @@ A frase estava ao lado do número errado. Não era o número que estava errado �
 era a **implicação** de que trocá-los custa algo. É a mesma família de defeito das quatro tabelas e dos
 dois "43 %": a prosa respondia uma pergunta mais larga do que a medição, e ninguém a cobrava porque
 soava plausível.
+
+## O desenho da triagem de PII por censo (`llm-pii-screen`), aprovado em quatro rodadas (2026-08-24)
+
+O operador escolheu explorar a camada de triagem por IA — sobre os 10.000, com critérios
+pré-estabelecidos — como alternativa honesta entre selar `infrastructure-only` sem mais e a revisão
+humana integral. O desenho abaixo passou por **quatro rodadas de codex**: viabilidade (VALE CONSTRUIR,
+com condições), v1 (REPROVA, 4 achados), v2 (REPROVA, 4 sobras de rastreabilidade), v3 (REPROVA, 1
+sobra de operacionalização), v4 (**APROVA**). A implementação é unidade futura, com TDD e bateria
+própria; este registro é a decisão de desenho.
+
+### A natureza, e o vocabulário já existia
+
+`llm-pii-screen` é um **filtro automático**, não um estado de revisão. `AutomatedFilterRun`
+(`schema.ts:1398`) já carrega `filter`, `implementation: "path:symbol"` re-derivável e `outcome`, e o
+comentário do tipo já diz a filosofia: *"NOT a review… it names code, never a person"*. Então:
+
+- `llm-pii-screen` entra como membro novo de `AUTOMATED_FILTERS` (união fechada) — **um nome numa
+  união, não um `ReviewStateName` novo**: `automated/unreviewed` continua a verdade de todo registro,
+  `reviewClaimSupport` não muda, o selo continua `infrastructure-only`;
+- cada registro presente carrega o run pelo mecanismo existente (`meta.automatedFilters` →
+  `review_state`); para os gerados, cuja docstring hoje diz que nenhum filtro nosso os viu, a verdade
+  muda com o mecanismo;
+- um artefato de corpus, `pii-screening-receipt.json`, com digesto, carrega protocolo, identidade do
+  triador (modelo + prompt digest + parâmetros + data), controles, `S_control` por estrato, o censo,
+  o ledger de disposições e as declarações de limite.
+
+Custo de contrato: mover `AUTOMATED_FILTERS` move o `evaluatorDigest` **uma vez, na implementação**.
+Nenhum valor novo de `scientificUse`, nenhum gate de selo tocado.
+
+### A posição, e ela resolve cota e cegueira de uma vez
+
+A triagem corre sobre o **funil único** de `assemble_corpus.main()` — medido: `load_humans`/`load_ai`/
+`load_mixed` convergem nas linhas 4349–4351 e `near_dupes.prune` já corre ali — **antes** da seleção,
+da cota e do split. Consequências: drop nunca quebra a cota exacta (4.000/4.000/2.000 fecham sobre
+linhas já triadas); a barreira das duas cegas não é tocada (pré-split não há partição); re-triagens
+pós-selo ficam proibidas de tocar `test`/`cal-B`.
+
+### As decisões que as rodadas forjaram, numeradas como no desenho
+
+- **D-12 — todo sinalizado é dropado, confirmado ou não.** Fecha dois achados de uma vez: nenhum
+  "sinalizado-limpo" existe no corpus (todo `outcome: "passed"` é verdadeiro por construção, e a
+  contradição com `excluded`-em-registro-presente nunca se forma), e **nenhuma linha lida por humano
+  entra no corpus** — a rota de exposição das cegas fecha mecanicamente. A leitura humana dirigida é
+  opcional e post-hoc, sobre material já removido, e serve só para caracterizar o triador. O preço
+  declarado: falsos positivos custam material bom; o teto de sham-FPR limita o preço antes da corrida.
+- **D-13 + D-19 — cobertura por bytes, com dono e momento.** A guarda da montagem exige, por registro
+  selecionado, `disposition == "passed"` no ledger — presença do par não basta, porque presença inclui
+  os sinalizados. O snapshot é do **montador**, tirado pós-normalização/pré-triagem.
+- **D-18 — ledger de disposições digestado.** Uma linha por `(id, sha256 do texto)` com
+  `passed | flagged-dropped`; nenhum par sem disposição; o digesto L entra na alegação. A revisão
+  post-hoc parcial conta **três** categorias — `c` confirmados, `r − c` falsos positivos, `k − r` não
+  revisados — nunca `k − c`, que colapsaria não-revisados em falsos positivos.
+- **D-3/D-4 — cegueira mecânica e o triador.** Projeção só-texto (o campo não existe no que o triador
+  vê); prompt versionado por digesto; triador fora das famílias reservadas OOD; logs sob
+  `benchmark/data/` (contêm PII real), nunca git; não-determinismo declarado — reprodutibilidade
+  estatística, não byte a byte.
+- **D-5/D-6 — controles e estratos.** Taxonomia pré-inscrita em dois grupos (regex-visível como sanity
+  check — as cinco `PII_PATTERNS` já pegam —, prosa-só onde vive o valor novo); injeções **in situ**
+  em cópias, nunca no corpus; pares limpo/injetado e edições-sham; gerador de injeções de família
+  **diferente** do triador, mais fração escrita à mão pelo operador; indistinguibilidade testada por
+  **equivalência pré-definida** (margem e n pré-inscritos) com discriminador terceiro + amostra humana;
+  `S_control` por estrato com Wilson unilateral e pisos por **subtipo**; estrato sob o piso **aborta**.
+- **D-20 + D-23 — o adversarial, operacional.** Gates separados por vetor (prompt-injection, ofuscação
+  por espaçamento, homoglifo, quebra de linha), cada um com **sham pareado de instrução idêntica**, e o
+  gate é sobre a **taxa de pares corretos** — controle sinalizado E sham aprovado na mesma unidade —,
+  com teto de falso positivo nos shams com nome próprio. Um triador que sinalizasse tudo que contém
+  instrução passaria a sensibilidade marginal e falha o par. Lista de gates fechada, `m` declarado.
+- **D-15 + D-21 — preflight pós-drop sobre SOBREVIVENTES.** Depois da última poda determinística,
+  contam-se os sobreviventes reais por família/cota/ilha — `assert_the_reserve_target_fits` prova que o
+  alvo cabe; o preflight novo prova que os sobreviventes bastam. A cascata pai-dropado → mistas
+  derivadas caem é categoria própria na contagem.
+
+### A alegação, verbatim (a reescrita do revisor, estendida)
+
+> "Uma projeção de entrada com P pares (id pseudonimizado, digest do texto), digesto I, foi triada sem
+> rótulo, grupos ou score; k foram sinalizados e TODOS removidos da elegibilidade, dos quais c
+> confirmados por leitura post-hoc de material já removido. A montagem verificou que cada um dos N
+> registros finais, digesto D, corresponde a um par com disposition `passed` no ledger de disposições,
+> digesto L. S_control e seus limites de Wilson caracterizam apenas esta execução nos controles
+> pré-inscritos; não estimam ausência ou prevalência de PII real, não limitam o corpus, não validam
+> transporte controles→real, não certificam o corpus e não satisfazem R4. prevalenceBound: null."
+
+### O que isto NÃO fecha, verbatim no artefato
+
+Prevalência/ausência de PII real; transporte sintético→real; R4 ou selo `release`; deriva e variância
+entre execuções do triador; governança de retenção/transferência do provedor do modelo; mutação do pool
+depois do snapshot; exposição humana fora deste protocolo; suficiência pós-drop além do que o preflight
+confere.
+
+### Relações declaradas
+
+**Com a R4:** não a satisfaz e não a substitui — coexiste como camada por baixo, e a auditoria humana
+amostral do operador pode usar a mesma infra de sorteio com semente publicada. **Com o selo:** continua
+`infrastructure-only`; promover o screening a algo que um gate de selo leia é emenda futura, explícita e
+versionada, fora deste desenho. **Com as seis ratificadas de 2026-08-23:** a interação é o atrito — por
+isso o preflight de sobreviventes — e nenhuma quebra directa.
+
+### Referências e novidade
+
+`references.md` § V, no mesmo commit: SPY (NAACL SRW 2025) e o estudo de avaliação multilíngue com PII
+injetada por especialistas, os dois com link verificado; a citação "Truong et al." da consulta de
+viabilidade **não foi localizada** e não entra; a NIST SP 1800-39 existe mas a âncora é classificação de
+dados, não medição de detectores — fora também. A extrapolação `S_control`→corpus fica declarada
+**nova e não validada**, e o desenho não a faz.

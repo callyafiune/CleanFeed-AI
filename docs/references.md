@@ -5399,3 +5399,47 @@ selada, e é a mesma família de § T.5: uma razão escrita numa política selad
 desenho que torna a razão **falsa** obriga a emendá-la ainda que o desenho seja uma melhoria. A regra derivada
 é a da casa, com o sinal invertido: **o comentário não pode prometer mais do que o mecanismo impõe, e também
 não pode declarar uma limitação que o mecanismo deixou de ter.**
+
+
+## § V — a triagem de PII por LLM em censo, com sensibilidade medida por controles semeados (2026-08-24)
+
+A decisão de desenho está no registro (`2026-07-30-registro-de-decisoes.md`, entrada de 2026-08-24):
+todo candidato do funil de montagem é triado por um LLM cego a rótulo/grupos/score, todo sinalizado é
+removido, e a sensibilidade do triador é medida contra controles de PII semeada — nunca convertida em
+limite de prevalência sobre o corpus (`prevalenceBound: null` é campo do artefato).
+
+### V.1 — dados sintéticos para medir detectores de PII têm precedente; a extrapolação para o corpus não
+
+- Savkin, Ionov & Konovalov, *SPY: Enhancing Privacy with Synthetic PII Detection Dataset*, NAACL SRW
+  2025. _Âncora:_ conjunto sintético gerado por LLM para avaliar detecção de PII, com validação da
+  qualidade do sintético — é o precedente directo de medir um triador contra positivos fabricados.
+  _Onde no projeto:_ o protocolo de controles do desenho (injeções in situ, `S_control` por estrato).
+  _Fato citado:_ o conjunto é sintético por construção e serve de referência de avaliação, não de
+  alegação sobre corpora reais.
+  [link](https://aclanthology.org/2025.naacl-srw.23/)
+- *An Evaluation Study of Hybrid Methods for Multilingual PII Detection*, 2025. _Âncora:_ avaliação em
+  que especialistas **autoraram amostras e injetaram PII sintética com controle de tipos e
+  distribuições** — o precedente da nossa fração manual de injeções e da taxonomia pré-inscrita por
+  estrato. _Onde no projeto:_ D-5/D-6 do desenho (controles com fração escrita à mão pelo operador,
+  estratos com pisos).
+  [link](https://arxiv.org/html/2510.07551v1)
+
+**Declaração de novidade, exigida pela regra da casa:** não foi localizado precedente para sustentar
+alegação sobre um **corpus real** a partir da sensibilidade medida em controles sintéticos
+(`S_control`). O desenho **não faz** essa extrapolação — a alegação publicável é sobre a execução do
+triador e a cobertura nos controles, com `prevalenceBound: null` explícito — e qualquer promoção futura
+dessa cobertura a limite de prevalência fica declarada **nova e não validada**. Nota de honestidade: a
+consulta de viabilidade citou também "NIST SP 1800-39" e "Truong et al."; a primeira existe
+([Data Classification Practices](https://csrc.nist.gov/pubs/sp/1800/39/ipd)) mas a âncora dela é
+classificação de dados e não medição de detectores, e a segunda **não foi localizada** — nenhuma das
+duas entra como sustentação.
+
+### V.2 — todo sinalizado é removido, e a leitura humana acontece só sobre material já fora do corpus
+
+_Âncora:_ a regra de que a revisão dirigida do operador corre **post-hoc sobre material removido**, de
+modo que nenhuma linha lida por humano permanece no corpus e a rota de exposição das partições cegas
+fecha por construção. _Onde no projeto:_ D-12 do desenho; a barreira das duas cegas (ESTADO § 3.4).
+**Sem precedente encontrado (2026-08-24)** para esta regra específica de composição — remoção
+incondicional do sinalizado como mecanismo de cegueira, com a caracterização do triador contada como
+`c` confirmados / `r − c` falsos positivos / `k − r` não revisados — e ela fica declarada como escolha
+de desenho desta casa.
