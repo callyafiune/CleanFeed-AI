@@ -270,21 +270,27 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 Escrito aqui e não deduzido da § 7, porque quem retoma lê esta seção primeiro. Estado de 2026-08-23,
 depois do plano de cobertura e da razão da cota.
 
-**O que barrava a geração está resolvido, e o que sobra dele é ato e não preparação.** A janela de
-pais é a do extrator e as quatro ilhas curtas foram a zero; o nível de gerador está na tabela; o teto
-da reserva está aferido; a razão da cota está derivada. Sobram duas guardas minhas, e as duas são
-código com bateria, não decisão.
+**O que barrava a geração está resolvido.** A janela de pais é a do extrator e as quatro ilhas
+curtas foram a zero; o nível de gerador está na tabela; o teto da reserva está aferido; a razão da
+cota está derivada; e as três guardas de admissão correm como descarte com denominador publicado.
 
-**Ordem, e as duas primeiras são dele:**
+**O CAMINHO DO RECIBO ESTÁ DECIDIDO (2026-08-24), e é dele:** triagem por IA em **censo sobre os
+10.000**, com o selo em **`infrastructure-only`**. O desenho `llm-pii-screen` está aprovado em
+quatro rodadas e registado (§ 7); ele **não** satisfaz a R4 nem destrava o selo `release`, e
+promovê-lo a algo que um gate de selo leia fica como emenda futura, explícita e versionada. A
+consequência aceita: a família certificadora não decide, porque `integrity.scientific-use` exige
+`release` — a v1 já era `indicator-only` e já não publicava taxa de erro.
 
-1. **o recibo humano do selo `release`** — e ele vence AGORA e não na Fase 6, porque uma política de
-   corpus explícita só é aceita para `scientificUse: infrastructure-only`: 4.000 `ai` + 2.000 mistas é
-   o preço de um SELO e não o de um detector. Se R4 e o selo forem exclusivos por construção, gerar
-   antes de saber qual dos dois cai é o desperdício máximo. As três saídas mecânicas estão nomeadas;
-   o que é dele é a jusante — as horas e a ratificação;
-2. **gastar a cota de geração**, que é botão dele — e a corrida declara a **matriz de cobertura**
-   (`assert_generation_coverage`) antes da primeira chamada, e tem de **medir o rendimento de banda**,
-   porque `ilha_08` fecha a cota só com 92,6 % e nenhuma corrida mediu isso.
+**Ordem:**
+
+1. **implementar o `llm-pii-screen`** — minha, unidade própria com TDD e bateria, e vence antes
+   da montagem da Fase 3. Move o `evaluatorDigest` uma vez (`AUTOMATED_FILTERS`);
+2. **as 400 linhas de qwen** em disco e **as 235 mistas na representação antiga** — dois atos de
+   apagar material, dele, com os snapshots já fora do repositório;
+3. **gastar a cota de geração**, botão dele — e a corrida declara a **matriz de cobertura**
+   (`assert_generation_coverage`) antes da primeira chamada, mede o **rendimento de banda**
+   (`ilha_08` fecha só com 92,6 % e nenhuma corrida mediu) e confere os **níveis realizados**
+   contra a alocação.
 
 **O que já não está nesta ordem, porque está feito:** a janela do pai (§ 5.4c, § 5.4d), o nível de
 gerador da classe mista (§ 5.11), o plano de cobertura e o teto da reserva (§ 5.12) e a razão da cota

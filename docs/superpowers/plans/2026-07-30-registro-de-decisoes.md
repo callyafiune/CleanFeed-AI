@@ -11537,3 +11537,21 @@ injetada por especialistas, os dois com link verificado; a citação "Truong et 
 viabilidade **não foi localizada** e não entra; a NIST SP 1800-39 existe mas a âncora é classificação de
 dados, não medição de detectores — fora também. A extrapolação `S_control`→corpus fica declarada
 **nova e não validada**, e o desenho não a faz.
+## A decisão do recibo: o caminho da triagem por IA, escolhido pelo operador (2026-08-24)
+
+O operador decidiu, nas palavras dele — *"acredito que há uma boa alegação para esse caminho"*,
+seguido de *"faça o desenho detalhado… quando estiver tudo correto, registre"*. O caminho é a
+**triagem por IA em censo sobre os 10.000**, com o selo em **`infrastructure-only`**.
+
+O que a decisão aceita, explicitamente, porque o desenho aprovado o diz: a camada **não** satisfaz a
+R4 e **não** destrava o selo `release`; a família certificadora não decide, porque
+`integrity.scientific-use` exige `release`. O custo real disso é menor do que parece — a v1 já estava
+tetada em `indicator-only` e já não publicava taxa de erro (ESTADO § 3.5) — e a promoção do screening a
+algo que um gate de selo leia fica como emenda futura, explícita e versionada.
+
+**Correção de leitura minha, no mesmo dia.** Depois de registar o desenho, voltei a apresentar o recibo
+como decisão aberta entre quatro caminhos, e a sugerir que implementar o screening seria "trabalho em
+risco" à espera da escolha dele. A escolha estava feita duas mensagens antes, e era justamente o
+desenho que eu tinha acabado de registar; a § 3.9 ficou a dizer que a decisão estava pendente até esta
+entrada. É o mesmo defeito de ler o título em vez do corpo que me fez tratar a dívida da normalização
+como aberta quando ela estava paga — duas vezes no mesmo dia, e as duas apanhadas por ele e não por mim.
