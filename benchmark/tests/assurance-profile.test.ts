@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -109,29 +109,80 @@ describe("the closed registry of assurance profiles", () => {
   });
 
   it("is never handed a registry by production code: the activation seam is for tests only", async () => {
-    const callers = [
-      "benchmark/dataset-manifest.ts",
-      "benchmark/calibration-pipeline.ts",
-      "benchmark/candidate-preflight.ts",
+    // DISCOVERED and not enumerated. A named list of callers answers a question about
+    // the files someone remembered: a module that starts sealing tomorrow is not on it,
+    // and the guard passes by not looking. So the walk finds every production module
+    // that names the function, and the two assertions below are about what it found.
+    const walked = await productionModules();
+    const callers = new Map<string, number[]>();
+    let declarationSeen = false;
+    for (const [path, source] of walked) {
+      if (source.includes("export async function sealDataset(")) {
+        declarationSeen = true;
+      }
+      const arities = sealDatasetCallArities(source);
+      if (arities.length > 0) callers.set(path, arities);
+    }
+    // ANTI-VACUITY, and it is the declaration itself rather than a count of files: a
+    // walk that reached nothing would report no caller and pass, and a total over the
+    // whole bench would move with every unrelated module added.
+    expect(
+      declarationSeen,
+      "the walk did not reach benchmark/dataset-manifest.ts, so it proves nothing",
+    ).toBe(true);
+    // The production callers, by name. ONE, and a second one appearing is a decision
+    // someone has to write down rather than a number that drifts.
+    expect([...callers.keys()].sort()).toEqual([
       "benchmark/commands/validate.ts",
-      "benchmark/commands/evaluate.ts",
-    ];
-    let calls = 0;
-    for (const path of callers) {
-      const source = await readFile(resolve(REPO_ROOT, path), "utf8");
-      for (const arity of sealDatasetCallArities(source)) {
-        calls += 1;
+    ]);
+    for (const [path, arities] of callers) {
+      for (const arity of arities) {
         expect(
           arity,
           `${path} passes a registry to sealDataset; activation is a versioned literal, not a call-site argument`,
         ).toBeLessThanOrEqual(4);
       }
     }
-    // Vacuous otherwise: a renamed caller would leave the loop with nothing to check
-    // and the guard would pass by finding no call at all.
-    expect(calls).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Every production module of the bench and the extension, as (repo-relative path,
+ * source). Test directories are out: they are where the seam is legitimately used.
+ */
+async function productionModules(): Promise<Array<[string, string]>> {
+  const skipped = new Set([
+    "node_modules",
+    "tests",
+    "data",
+    "work",
+    "evidence",
+    "__pycache__",
+    ".pytest_cache",
+    "dist",
+  ]);
+  const wanted = /\.(?:ts|mts|mjs|js)$/u;
+  const out: Array<[string, string]> = [];
+  async function walk(relative: string): Promise<void> {
+    const entries = await readdir(resolve(REPO_ROOT, relative), {
+      withFileTypes: true,
+    });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (skipped.has(entry.name)) continue;
+        await walk(`${relative}/${entry.name}`);
+        continue;
+      }
+      if (!wanted.test(entry.name)) continue;
+      const path = `${relative}/${entry.name}`;
+      out.push([path, await readFile(resolve(REPO_ROOT, path), "utf8")]);
+    }
+  }
+  for (const root of ["benchmark", "src", "scripts", "contracts"]) {
+    await walk(root);
+  }
+  return out;
+}
 
 /**
  * Top-level argument count of every `sealDataset(...)` CALL in a module.

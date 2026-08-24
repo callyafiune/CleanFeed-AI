@@ -11791,3 +11791,85 @@ entrada nenhuma quando a implementação ficou verde. Guarda sem entrada que a a
 Reports do COS — *in-principle acceptance* antes de existirem resultados, aceitação final condicionada
 à aderência ao protocolo —, e as duas declarações de novidade usam o literal exacto: o mecanismo do
 gate desligado por literal de ativação versionado, e a regra do censo que uma única lacuna falsifica.
+
+## O cross-review achou um perfil que não impõe nada, e a guarda que enumerava não via módulo novo (2026-08-24)
+
+A etapa 3 do commit da metade de contrato (`75456b9`). O codex correu com o prompt adversarial e
+**morreu antes do bloco de formato**, cortado por um filtro de conteúdo do provedor (`EXIT=1`,
+`ERROR: This content was flagged for possible cybersecurity risk`) — não por cota. **A rodada NÃO
+fecha a dívida de codex desta unidade:** não houve veredito. Mas produziu dois achados antes de
+morrer, e os dois são reais, verificados por mim na árvore e não aceitos de relato.
+
+### O achado grave — um perfil que não impõe nada sela um corpus não triado
+
+O codex escreveu, e é exacto: *"o quinto parâmetro público aceita um perfil ativo forjado e permite
+combinar `humanReviewPerRecord: false` com `requiredAutomatedFilter: null`, pulando simultaneamente as
+duas recusas"*.
+
+**Medido antes do conserto**, com o teste que ficou vermelho: um corpus de 201 registros
+`automated/unreviewed`, **três deles sem corrida de triagem nenhuma**, sob um perfil activo com esses
+dois campos, **selava como `release`** — `sealDataset` resolvia, não rejeitava. As duas recusas de
+`release` calavam-se pela mesma razão: a da revisão porque `humanReviewPerRecord` é falso, a do censo
+porque `requiredAutomatedFilter` é nulo. Nenhuma delas estava errada isoladamente; o buraco é a
+conjunção, e nada na forma do registro a proibia.
+
+**A minha leitura de desenho errou aqui, e o modo de erro tem nome:** eu tratei o registro como fonte
+de literais sãos, e ele é **parâmetro** da função. Uma pergunta feita ao literal congelado não é a
+mesma pergunta feita ao valor em mão, e foi a costura de teste que eu mesmo abri que tornou as duas
+distintas. A minha guarda de grep protegia o *sítio de chamada*; não protegia o *conteúdo* do
+argumento.
+
+**O conserto:** `sealDataset` recusa com `DATASET_ASSURANCE_UNENFORCEABLE` todo perfil que declare
+**nem** leitura humana por registro **nem** filtro automático exigido — as duas únicas evidências que
+um selo sabe pedir. A pergunta é feita ao perfil em mão. E `assurance-profile.ts` exporta
+`assuranceProfileEnforcesSomething`, que o selo e o invariante do registro leem, para que a regra tenha
+uma autoridade só. Um segundo teste percorre os literais congelados e recusa um membro vazio, para o
+registro não poder **crescer** um.
+
+### O achado de forma — a guarda enumerava cinco módulos, quatro dos quais não chamavam nada
+
+O codex: *"a guarda do quinto parâmetro enumera arquivos por nome e só exige que algum call-site
+exista; ela não descobre importadores novos"*. **Medido:** `sealDataset` tem **um** chamador de
+produção em toda a árvore, `benchmark/commands/validate.ts`. Dos cinco módulos que eu listara, quatro
+não têm chamada nenhuma — a guarda passava lendo um sítio e ignorando a pergunta que importa.
+
+**O conserto:** a guarda **descobre**. Varre `benchmark/`, `src/`, `scripts/` e `contracts/`,
+salta `tests`, `data`, `work`, `evidence`, `dist` e `node_modules`, e afirma duas coisas: que a
+varredura alcançou a **declaração** de `sealDataset` — antivacuidade ancorada no próprio sítio, e não
+num total que se move com todo módulo novo — e que o conjunto de chamadores de produção é exactamente
+`["benchmark/commands/validate.ts"]`. Um chamador novo fica vermelho, e aí é decisão que alguém
+escreve.
+
+É a mesma família de defeito que a § 7 já nomeia em `SWEPT_REACH` — *"uma sweep cujo veredito é 'nenhum
+módulo diz X' é satisfeita por não alcançar módulo nenhum"* —, com a diferença de que ali a defesa é um
+número publicado e aqui é a lista nomeada.
+
+### A bateria dos consertos: 4 mutações, 4 mortas
+
+| # | mutação | caso que ficou VERMELHO |
+|---|---|---|
+| M18 | a recusa do perfil que nada impõe desaparece | *is refused at the seal, so neither release refusal can be skipped by both being silent* |
+| M19 | `assuranceProfileEnforcesSomething` responde sempre sim | o mesmo caso |
+| M20 | o único chamador de produção passa um registro | *is never handed a registry by production code…* |
+| M21 | um módulo de produção **NOVO** com chamada de cinco argumentos | o mesmo caso |
+
+M21 é a prova de que o conserto do segundo achado é conserto e não reescrita: o módulo novo deixava a
+guarda antiga **verde** e derruba a nova. Ele foi criado, medido e removido na mesma corrida, e a
+remoção foi conferida.
+
+### O custo, e ele é honesto
+
+O `evaluatorDigest` moveu uma **segunda** vez — `d1086098…` para `583005d1…` —, e isso **não** é o
+custo do contrato: é o preço de um achado de revisão. A § 5.14 diz isso com essas palavras. Não emendei
+o commit anterior para o digesto ter movido uma só vez: apagar o commit apagaria a evidência de que a
+primeira versão tinha o buraco, e a linha desta casa é publicar a retratação, não a história limpa.
+
+### O que fica em pé para a próxima rodada
+
+A dívida de codex desta unidade **continua aberta** — a rodada não deu veredito. O prompt precisa de
+ser reescrito antes de a repetir: a formulação adversarial pedia "escreve um chamador que escape" e
+"nomeia o caminho e o comando", que é o que o filtro do provedor leu como pedido de exploração. A
+mesma pergunta cabe na forma defensiva — "esta invariante é imposta? por qual linha?" —, e é assim que
+a próxima vai. O que a rodada morta **deixou verificado** e vale registar: ela recomputou por conta
+própria `evaluatorDigest`, a contagem 53 de `EVALUATOR_FILES` e 498/26/71 sobre `references.md`, e os
+quatro casaram com o publicado.

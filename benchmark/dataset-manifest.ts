@@ -29,6 +29,7 @@ import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import {
   ASSURANCE_PROFILE_NAMES,
   ASSURANCE_PROFILES,
+  assuranceProfileEnforcesSomething,
   isAssuranceProfileName,
   type AssuranceProfileName,
   type AssuranceProfileRegistry,
@@ -1135,6 +1136,20 @@ export async function sealDataset(
           profile.activation.activationRequires
             .map((requirement, index) => `(${index + 1}) ${requirement}`)
             .join("; "),
+      );
+    }
+    // A PROFILE THAT ENFORCES NOTHING MAY NOT QUALIFY ANYTHING. The two refusals below
+    // are the only evidence a seal can ask for — a human receipt on every record, or a
+    // named filter on every record — and a profile declaring neither silences both, so
+    // the corpus would seal on the strength of a name. Asked of the profile in HAND and
+    // not of the frozen registry, because the registry is a parameter here: a sound
+    // literal does not make a sound argument.
+    if (profile !== null && !assuranceProfileEnforcesSomething(profile)) {
+      fail(
+        "DATASET_ASSURANCE_UNENFORCEABLE",
+        `assurance profile "${profile.name}" declares neither a human review per record ` +
+          "nor a required automated filter, so no release claim can be checked under it: " +
+          "a level of robustness with no evidence behind it is a name and not a level",
       );
     }
     // THE FRAME IS A PARTITION OF THE HUMAN CLASS, and these two guards are its two

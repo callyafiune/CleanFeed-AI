@@ -105,6 +105,20 @@ const activatedCensus: AssuranceProfileRegistry = {
   },
 };
 
+/**
+ * A profile that is ACTIVE and enforces nothing: no human read per record, and no
+ * automated filter to name. Neither of the two release refusals has anything to ask
+ * of it, so a corpus of unscreened `automated/unreviewed` rows would seal under it.
+ */
+const hollowProfile: AssuranceProfileRegistry = {
+  ...ASSURANCE_PROFILES,
+  "census-pii-screen-v1": {
+    ...ASSURANCE_PROFILES["census-pii-screen-v1"],
+    requiredAutomatedFilter: null,
+    activation: { state: "active", qualifyingRun: null },
+  },
+};
+
 const POSITIVES = 200;
 
 const policy: CorpusPolicy = {
@@ -459,5 +473,46 @@ describe("the audit's own parser holds the profile to the same rule", () => {
     expect(
       await codeOf({ ...audit, assuranceProfile: "census-pii-screen-v1" }),
     ).toBe("DATASET_ASSURANCE_INVALID");
+  });
+});
+
+describe("a profile that enforces nothing may not qualify a release", () => {
+  it("is refused at the seal, so neither release refusal can be skipped by both being silent", async () => {
+    const attempt = sealDataset(
+      releaseUnderCensus,
+      screenedCorpus([1, 2, 3]),
+      policy,
+      observed,
+      hollowProfile,
+    );
+    await expect(attempt).rejects.toThrow(DatasetManifestError);
+    let error: unknown;
+    try {
+      await attempt;
+    } catch (caught) {
+      error = caught;
+    }
+    expect((error as DatasetManifestError).code).toBe(
+      "DATASET_ASSURANCE_UNENFORCEABLE",
+    );
+    expect((error as DatasetManifestError).message).toMatch(
+      /census-pii-screen-v1/u,
+    );
+  });
+
+  it("holds for every profile the real registry declares", () => {
+    // The invariant over the frozen literals, so the registry cannot GROW a hollow
+    // member: a profile qualifies a release claim, and a claim whose evidence nothing
+    // can be asked for is the ambiguity the registry exists to remove.
+    for (const name of Object.keys(ASSURANCE_PROFILES) as Array<
+      keyof typeof ASSURANCE_PROFILES
+    >) {
+      const profile = ASSURANCE_PROFILES[name];
+      expect(
+        profile.humanReviewPerRecord ||
+          profile.requiredAutomatedFilter !== null,
+        `assurance profile "${name}" enforces nothing`,
+      ).toBe(true);
+    }
   });
 });

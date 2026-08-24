@@ -147,6 +147,24 @@ export const ASSURANCE_PROFILES: AssuranceProfileRegistry = Object.freeze({
   }),
 } satisfies AssuranceProfileRegistry);
 
+/**
+ * Does this profile give the seal anything to ASK?
+ *
+ * A profile qualifies a release claim, and the seal can only enforce two kinds of
+ * evidence: a human receipt on every record, or a named automated filter on every
+ * record. A profile that declares neither is a level of robustness with nothing behind
+ * it — both release refusals stay silent and the corpus seals on the strength of a
+ * name. `sealDataset` refuses such a profile rather than trusting the registry to hold
+ * only sound ones, because the registry is a parameter there.
+ */
+export function assuranceProfileEnforcesSomething(
+  profile: AssuranceProfile,
+): boolean {
+  return (
+    profile.humanReviewPerRecord || profile.requiredAutomatedFilter !== null
+  );
+}
+
 export function isAssuranceProfileName(
   value: unknown,
 ): value is AssuranceProfileName {

@@ -5496,6 +5496,14 @@ perfil é ato auditável, e não configuração. O que a âncora acima sustenta 
 que o desligamento seja imposto pelo próprio gate, e que ligá-lo mova a identidade do avaliador, é
 escolha de desenho desta casa.
 
+**O nível precisa nomear a evidência que o sustenta, e isso é a premissa da âncora 2 da § V.3**
+(ISAE 3000: num trabalho de garantia o profissional obtém evidência, e o relatório diz de que nível
+ela é). A consequência mecânica desta casa: `sealDataset` recusa o perfil que declara **nem** leitura
+humana por registro **nem** filtro automático exigido, porque as duas recusas de `release` são as duas
+únicas evidências que um selo sabe pedir — um perfil que não declara nenhuma silencia as duas, e o
+corpus selaria pela força de um nome. A pergunta é feita ao perfil **em mão** e não ao registro
+congelado, já que o registro é parâmetro na função. Sem âncora nova: é aplicação directa da já citada.
+
 **Sem precedente encontrado (2026-08-24)** também para a regra do censo tal como este selo a impõe:
 a alegação de censo é sobre **todo** registro, então um único registro sem a corrida `llm-pii-screen`
 a falsifica **para o corpus inteiro** — não a enfraquece por uma fração. A recusa publica a contagem
