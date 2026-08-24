@@ -11864,12 +11864,31 @@ custo do contrato: é o preço de um achado de revisão. A § 5.14 diz isso com 
 o commit anterior para o digesto ter movido uma só vez: apagar o commit apagaria a evidência de que a
 primeira versão tinha o buraco, e a linha desta casa é publicar a retratação, não a história limpa.
 
+### A segunda rodada, na forma defensiva: APROVA, e a dívida da metade de contrato está paga
+
+Reescrita do prompt e nova corrida no mesmo dia, sobre `d4ad73e`. A mudança de forma é toda a
+diferença: em vez de *"nomeia o caminho e o comando"* e *"escreve um chamador que escape"*, dez
+invariantes numeradas com a instrução de dizer, para cada uma, **se está imposta e por qual linha**.
+Veredito **APROVA**, `achados-por-severidade: vazio`, `EXIT=0`, 25 de 25 comandos.
+
+Duas coisas que valem mais do que o veredito. Primeira: ele **recomputou por conta própria** o
+`evaluatorDigest` (`583005d1…`), os 53 arquivos de `EVALUATOR_FILES` e as três contagens de
+`references.md` (498/26/71) — os quatro casaram com o publicado, o que é verificação independente do
+número e não confiança no meu relato. Segunda: as duas linhas que ele cita como sítio da imposição
+(`schema.ts:2765` para a impossibilidade de `outcome: "excluded"` num registro presente,
+`dataset-manifest.ts:1131` para a recusa do perfil pré-inscrito) foram **conferidas por mim no
+arquivo** antes de aceitar o veredito — citação de linha é a forma mais fácil de um revisor inventar
+e a mais fácil de eu conferir.
+
+**A lição de forma fica registada porque custou uma rodada inteira:** o prompt adversarial escrito
+como pedido de exploração é cortado pelo filtro de conteúdo do provedor, e a mesma pergunta cabe na
+forma defensiva sem perder mordida — foi a rodada defensiva que confirmou que os consertos fecham, e
+foi a adversarial que achou os buracos. As duas formas servem, e a adversarial paga-se sozinha mesmo
+quando morre; o que não se pode é contar a morta como veredito.
+
 ### O que fica em pé para a próxima rodada
 
-A dívida de codex desta unidade **continua aberta** — a rodada não deu veredito. O prompt precisa de
-ser reescrito antes de a repetir: a formulação adversarial pedia "escreve um chamador que escape" e
-"nomeia o caminho e o comando", que é o que o filtro do provedor leu como pedido de exploração. A
-mesma pergunta cabe na forma defensiva — "esta invariante é imposta? por qual linha?" —, e é assim que
-a próxima vai. O que a rodada morta **deixou verificado** e vale registar: ela recomputou por conta
-própria `evaluatorDigest`, a contagem 53 de `EVALUATOR_FILES` e 498/26/71 sobre `references.md`, e os
-quatro casaram com o publicado.
+A dívida de codex da metade de CONTRATO está **paga**, com as duas rodadas acima. A do LAB não existe
+ainda porque o lab não está escrito: a triagem no funil, o ledger de disposições, os controles com
+`S_control` por estrato, os gates adversariais por pares e o recibo entram como unidade própria, com
+TDD, bateria e as suas próprias três etapas.
