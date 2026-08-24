@@ -11387,3 +11387,49 @@ contra a alocação depois da corrida.
 
 Também não cobre nada da lista fechada: gastar a cota, o recibo humano do selo, a permutação de tarefas
 das ilhas reservadas, a assinatura de B1, `consume-holdout` e a publicação.
+## Retificação: a razão de não permutar as tarefas apoiava-se num custo que não existe (2026-08-23)
+
+A § 7 justificava não permutar as tarefas das três ilhas reservadas assim: *"permutar trocaria os 40
+digests de template para comprar propriedade que perna nenhuma da alegação reivindica"*. A segunda
+metade está certa. **A primeira é falsa, e eu repeti-a três vezes nesta sessão sem a medir.**
+
+**Medido:** os únicos `promptTemplateDigest` literais na árvore estão em material do corpus **morto** —
+`benchmark/data/candidates/ai_openai.batch.json` e o `source-manifest.json` privado do
+`corpus-build`. **Nada rastreado pina os 40 digests do slate novo**, eles são computados do texto do
+template em tempo de corrida, e **nenhuma linha `ai` existe**. Logo permutar hoje custa **zero**. O
+que aquela linha realmente carregava era um **prazo**, não um preço: permutar deixa de custar zero na
+primeira linha gerada, porque aí as linhas escritas passam a carregar digests de identidades que
+deixaram de existir — e corrigir isso é apagar material.
+
+### A razão certa, e ela é de desenho
+
+Três medições sustentam a decisão de **não** permutar, e nenhuma delas é custo:
+
+1. **`task` não é eixo de fatia.** `SliceAxis` tem dez membros — `lengthBucket`, `domain`,
+   `humanSourceType`, `temporalCohort`, `hardNegativeFamily`, `generatorExposure`, `transformation`,
+   `severity`, `mixedFraction`, `topic` — e a tarefa não está entre eles. Nada na alegação publica
+   recall por tarefa, então não há confundimento a consertar numa **quantidade declarada**;
+2. **o contraste seen/unseen já é casado por tarefa.** As 100 linhas de controle `seen` que a decisão
+   do teto da reserva (§ 5.12) põe DENTRO das ilhas reservadas partilham as tarefas delas, então a
+   comparação de família não mistura tarefa. Isso foi comprado por outra decisão e vale aqui;
+3. **500 linhas não sustentariam alegação por tarefa de nenhum modo.** A reserva é 2 × 250; espalhada
+   por três pares de tarefas daria ~83 por (família, tarefa). Permutar compraria um número marginal
+   sobre uma mistura mais larga, não uma alegação por tarefa.
+
+**O que fica é limitação a declarar**, não dívida a pagar: o número OOD é medido sobre duas tarefas de
+oito, e isso pertence ao model card.
+
+### E uma coisa que a verificação encontrou de graça
+
+**Nada em código pina a uniformidade dos blocos de cinco.** Uma permutação estreita — dar às três
+reservadas tarefas de blocos diferentes, tocando 6 receitas em vez de 40 — é aritmeticamente possível
+e nenhum teste a defende. Não a medi e **não a recomendo**: ela quebraria a simetria (tarefas com 4 e
+com 6 ilhas) e eu não sei o que mais depende dessa evenness. Fica nomeada porque a alternativa existir
+e não estar avaliada é diferente de ela não existir.
+
+### O padrão, e é o mesmo da sessão
+
+A frase estava ao lado do número errado. Não era o número que estava errado — os 40 digests existem —,
+era a **implicação** de que trocá-los custa algo. É a mesma família de defeito das quatro tabelas e dos
+dois "43 %": a prosa respondia uma pergunta mais larga do que a medição, e ninguém a cobrava porque
+soava plausível.
