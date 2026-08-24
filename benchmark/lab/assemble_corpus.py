@@ -81,6 +81,7 @@ import artifact_gate
 import generate_ai
 import group_axes
 import near_dupes
+import pii_screen
 
 CAND = Path(__file__).resolve().parent.parent / "data" / "candidates"
 DATASET = Path(__file__).resolve().parent.parent / "data" / "dataset"
@@ -1073,9 +1074,16 @@ def review_state(cand: dict | None = None) -> dict:
     value the row does not have is stated as missing, never substituted (R6/R7).
 
     Generated and mixed rows pass `cand=None`: `common.CandidateWriter` is the human
-    extraction path, the generation pools do not go through it, and no filter of ours
-    screened a generated row for personal data. Claiming otherwise would be a
-    provenance we do not have.
+    extraction path and the generation pools do not go through it, so no filter recorded
+    ON THE CANDIDATE ROW ever saw them.
+
+    THAT IS NO LONGER THE WHOLE TRUTH ABOUT A GENERATED ROW, and the sentence that used
+    to end here — "no filter of ours screened a generated row for personal data" — is
+    now false whenever the census screen runs: `llm-pii-screen` reads the single funnel,
+    which is every class. What keeps this function honest is WHERE the run is written:
+    `stamp_the_screen_run` appends it in `main()`, AFTER the disposition guard passed,
+    and never here. A filter run written at this point would be a claim about a screen
+    that had not yet been verified for this row.
     """
     meta = (cand or {}).get("meta") or {}
     declared = meta.get("automatedFilters")
@@ -3986,7 +3994,34 @@ def recipe_temperature(generation: dict) -> float | None:
     return decoding.get("temperature")
 
 
-def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> int:
+ORIGINAL_KEY_FIELD = "_originalKey"
+
+
+def original_key(row: dict) -> str:
+    """A chave do funil ANTES de qualquer desambiguacao.
+
+    Carimbada por `enforce_unique_keys` na propria linha, e nao devolvida so num mapa,
+    porque DOIS renomeios podem partir da mesma chave antiga — uma linha mista e uma
+    humana que colidiram no mesmo valor — e um mapa `velho -> novo` guarda um deles. A
+    cascata pai-dropado precisa da ligacao exacta, entao a ligacao viaja com a linha.
+
+    O campo comeca por `_` e nenhum construtor de registro o le: os construtores leem
+    campos nomeados, e uma chave a mais na linha de pool e inerte.
+    """
+    return row.get(ORIGINAL_KEY_FIELD) or funnel_key(row)
+
+
+def funnel_key(row: dict) -> str:
+    """A chave que o funil usa para esta linha, hoje.
+
+    Mistas sao chaveadas por `parentId` (o id do registro delas e `mix_<parent>`); as
+    outras carregam `candidateId`. Uma funcao e nao uma lambda porque a triagem, a poda
+    e a desambiguacao tem de concordar sobre o que e "a chave desta linha".
+    """
+    return row.get("candidateId") or row["parentId"]
+
+
+def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> dict[str, str]:
     """Make the candidate key unique across ALL pools, in place.
 
     A candidate id is derived from (provider, parent), so two generation lanes
@@ -4002,7 +4037,7 @@ def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> int:
     generations that are only accidentally named alike.
     """
     seen: set[str] = set()
-    renamed = 0
+    renames: dict[str, str] = {}
     for rows, field in pools:
         for row in rows:
             key = row[field]
@@ -4016,9 +4051,262 @@ def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> int:
                 suffix += 1
                 candidate = f"{key}_{digest[:8]}_{suffix}"
             row[field] = candidate
+            # The ORIGINAL, on the row. MEASURED, and it is why this stamp exists: the
+            # pools are handed over as (ai, mixed, humans), so a human whose
+            # `candidateId` equals a mixed row's `parentId` is the one renamed — the
+            # mixed row keeps the value it uses to name its parent, and the parent's own
+            # key moves out from under it. The cascade needs to find that parent.
+            row[ORIGINAL_KEY_FIELD] = key
             seen.add(candidate)
-            renamed += 1
-    return renamed
+            renames[key] = candidate
+    return renames
+
+
+
+# --- a triagem de PII por censo, dentro do funil -----------------------------------
+#
+# A POSICAO, e ela resolve cota e cegueira de uma vez: a projecao e tomada depois da
+# ultima poda determinística (dedup exacto, poda de quase-duplicata, poda contra o corpus
+# morto) e depois de `enforce_unique_keys`, e ANTES da selecao, da cota e do split. Logo
+# um drop nunca quebra a cota exacta — 4.000/4.000/2.000 fecham sobre linhas ja triadas —
+# e a barreira das duas cegas nao e tocada, porque pre-split nao ha particao.
+#
+# O QUE ESTE MODULO E DONO, e o outro nao: o DIGESTO. `norm_hash` e a regra selada, a
+# mesma que a ingestao aplica antes de gravar `normalizedTextSha256`, entao o par
+# `(chave, digesto)` do ledger e re-derivavel do `records.jsonl` por quem quer que seja.
+# `pii_screen` recebe o par ja formado e nunca o recalcula.
+
+SCREEN_FILTER = "llm-pii-screen"
+SCREEN_IMPLEMENTATION = "benchmark/lab/pii_screen.py:screen_census"
+
+# Onde o snapshot NAO pode ser escrito. Ele carrega TEXTO, e o texto de origem pode conter
+# PII real; D-4 manda os logs da triagem para `benchmark/data/`, que e gitignored. As
+# arvores abaixo sao rastreadas, e `benchmark/data` e a excecao dentro da primeira.
+TRACKED_TREES = ("benchmark", "docs", "src", "contracts", "scripts", "tests")
+
+
+class SnapshotPathIsTracked(RuntimeError):
+    """O snapshot ia para um caminho rastreado pelo git. Ele carrega texto de origem."""
+
+
+class ProjectionKeyCollision(RuntimeError):
+    """Duas linhas de pool com a MESMA chave de funil chegaram a projecao."""
+
+
+class SurvivorsBelowQuota(RuntimeError):
+    """Depois do drop, os sobreviventes de uma classe nao alcancam a cota dela."""
+
+
+class ScreeningDrop:
+    """O resultado do drop: os tres pools que ficam, e as contagens por categoria."""
+
+    def __init__(
+        self, humans: list[dict], ai: list[dict], mixed: list[dict], counts: dict
+    ):
+        self.humans = humans
+        self.ai = ai
+        self.mixed = mixed
+        self.counts = counts
+
+
+def screening_projection(
+    humans: list[dict], ai: list[dict], mixed: list[dict]
+) -> list[pii_screen.ProjectionRow]:
+    """A projecao de entrada da triagem: `(chave, digesto, texto)` por linha de pool.
+
+    A ordem e a do funil — `ai`, `mixed`, `humans` —, a mesma que `near_dupes.prune` e
+    `enforce_unique_keys` usam, para que a projecao de duas corridas sobre os mesmos pools
+    seja byte a byte a mesma e o digesto I nao se mova sem o conteudo mover.
+    """
+    rows: list[pii_screen.ProjectionRow] = []
+    seen: dict[str, str] = {}
+    for pool in (ai, mixed, humans):
+        for row in pool:
+            key = funnel_key(row)
+            _, digest = norm_hash(row["text"])
+            # A ORDEM E UMA CONDICAO, e esta e a linha que a impoe. Uma linha mista e
+            # chaveada pelo `parentId`, que e o `candidateId` do pai — logo antes de
+            # `enforce_unique_keys` correr as duas partilham a chave, e uma projecao
+            # tomada ali carregaria o mesmo id duas vezes. O par continuaria unico, mas
+            # o snapshot deixaria de ser legivel por id, e a cascata leria o pai errado.
+            if key in seen and seen[key] != digest:
+                raise ProjectionKeyCollision(
+                    f"duas linhas de pool chegaram a projecao com a chave {key!r}: a "
+                    "triagem corre DEPOIS de enforce_unique_keys, nunca antes"
+                )
+            seen[key] = digest
+            rows.append(
+                pii_screen.ProjectionRow(
+                    row_id=key, text_sha256=digest, text=row["text"]
+                )
+            )
+    return rows
+
+
+def assert_the_snapshot_path_is_not_tracked(path: Path) -> None:
+    resolved = Path(path).resolve()
+    repo = Path(__file__).resolve().parents[2]
+    try:
+        relative = resolved.relative_to(repo)
+    except ValueError:
+        return  # fora do repositorio: o caminho e do operador
+    parts = relative.parts
+    if not parts:
+        return
+    if parts[0] == "benchmark" and len(parts) > 1 and parts[1] == "data":
+        return
+    if parts[0] in TRACKED_TREES:
+        raise SnapshotPathIsTracked(
+            f"o snapshot de triagem carrega TEXTO de origem e {relative.as_posix()} esta "
+            "numa arvore rastreada. Escreva-o sob benchmark/data/ (gitignored) ou fora do "
+            "repositorio, como D-4 manda para os logs da triagem"
+        )
+
+
+def emit_screening_snapshot(
+    path: Path, projection: list[pii_screen.ProjectionRow]
+) -> str:
+    """Escreve a projecao e devolve o digesto I (sha256 dos bytes escritos)."""
+    assert_the_snapshot_path_is_not_tracked(path)
+    body = "".join(
+        json.dumps(
+            {"id": row.row_id, "textSha256": row.text_sha256, "text": row.text},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n"
+        for row in projection
+    )
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with Path(path).open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(body)
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def drop_the_flagged(
+    humans: list[dict], ai: list[dict], mixed: list[dict], ledger: dict
+) -> ScreeningDrop:
+    """D-12: todo sinalizado sai. E a mista cujo PAI saiu sai com ele.
+
+    A COBERTURA e exigida primeiro: sem ela o drop leria ausencia como `passed`, que e o
+    unico erro desta funcao capaz de deixar material nao triado dentro do corpus.
+
+    A CASCATA e categoria propria na contagem, e nao um somatorio com os sinalizados: a
+    mista nao foi sinalizada, saiu porque o pai saiu, e somar as duas esconderia o custo
+    de um falso positivo no pai. Ela atravessa o renomeio pela chave ORIGINAL carimbada na
+    linha — medido: `enforce_unique_keys` renomeia o lado HUMANO, entao a chave que a mista
+    nomeia deixou de existir no pool.
+
+    A mista cujo pai NAO RESOLVE no pool humano e contada em `parent-unresolved` e fica.
+    Uma ligacao quebrada tem de ser um numero: contada como zero na cascata, ela leria como
+    "nenhum pai sinalizado", que e afirmacao e nao ausencia de dado.
+    """
+    projection = screening_projection(humans, ai, mixed)
+    pii_screen.assert_the_ledger_covers(projection, ledger)
+
+    def kept(row: dict) -> bool:
+        _, digest = norm_hash(row["text"])
+        return ledger[(funnel_key(row), digest)].disposition == "passed"
+
+    flagged_original_keys = {
+        original_key(row)
+        for pool in (ai, mixed, humans)
+        for row in pool
+        if not kept(row)
+    }
+    flagged_count = sum(
+        1 for pool in (ai, mixed, humans) for row in pool if not kept(row)
+    )
+
+    humans_left = [row for row in humans if kept(row)]
+    ai_left = [row for row in ai if kept(row)]
+    mixed_survived = [row for row in mixed if kept(row)]
+
+    human_original_keys = {original_key(row) for row in humans}
+    cascaded = 0
+    unresolved = 0
+    mixed_left: list[dict] = []
+    for row in mixed_survived:
+        parent = original_key(row)
+        if parent not in human_original_keys:
+            unresolved += 1
+            mixed_left.append(row)
+            continue
+        if parent in flagged_original_keys:
+            cascaded += 1
+            continue
+        mixed_left.append(row)
+
+    counts = {
+        "screened": len(projection),
+        "flagged": flagged_count,
+        "cascade-parent-flagged": cascaded,
+        "parent-unresolved": unresolved,
+    }
+    return ScreeningDrop(humans_left, ai_left, mixed_left, counts)
+
+
+def assert_the_screen_passed_every_selected_record(
+    built: list[tuple[str, dict]], ledger: dict
+) -> None:
+    """D-13 + D-19: por registro selecionado, `disposition == "passed"` no ledger.
+
+    O digesto e RECOMPUTADO do texto do registro escrito, e nao reusado da projecao: se o
+    texto mudou entre o snapshot e o registro, o par nao casa e a linha e recusada. E o
+    risco que o perfil declara como "mutacao de bytes", e reusar o digesto da projecao
+    seria exactamente nao o verificar.
+    """
+    pairs = [(key, norm_hash(record["text"])[1]) for key, record in built]
+    pii_screen.assert_selected_records_passed(pairs, ledger)
+
+
+def stamp_the_screen_run(record: dict) -> None:
+    """Estampa a corrida `llm-pii-screen` no registro, DEPOIS da guarda ter passado.
+
+    A ORDEM e a guarda: `outcome: "passed"` so pode ser escrito depois de a disposicao ter
+    sido conferida, senao o selo seria a afirmacao e nao a consequencia dela.
+
+    Idempotente, porque uma corrida gravada duas vezes contaria duas vezes em qualquer
+    tabela por filtro. O `state` NAO muda: um filtro nao e uma revisao, e o registro
+    continua `automated/unreviewed` — que e o que `reviewClaimSupport` le.
+    """
+    filters = record["review"]["automatedFilters"]
+    if any(entry.get("filter") == SCREEN_FILTER for entry in filters):
+        return
+    filters.append(
+        {
+            "filter": SCREEN_FILTER,
+            "implementation": SCREEN_IMPLEMENTATION,
+            "outcome": "passed",
+        }
+    )
+
+
+def assert_the_survivors_meet_the_quota(
+    *, survivors: dict[str, int], counts: dict[str, int]
+) -> None:
+    """D-15 + D-21: o preflight sobre os SOBREVIVENTES, depois da ultima poda.
+
+    `assert_the_reserve_target_fits` prova que o ALVO cabe na matriz; este prova que o que
+    sobreviveu basta. Sao perguntas diferentes: a primeira e sobre o plano, a segunda sobre
+    o material que chegou aqui depois de dedup, poda, poda global e drop de triagem.
+
+    Nomeia TODAS as classes em falta e nao so a primeira, porque quem le precisa do tamanho
+    do buraco inteiro antes de decidir regenerar uma pista.
+    """
+    short = {
+        label: (survivors.get(label, 0), target)
+        for label, target in counts.items()
+        if survivors.get(label, 0) < target
+    }
+    if short:
+        detail = ", ".join(
+            f"{label} {have}/{want}" for label, (have, want) in sorted(short.items())
+        )
+        raise SurvivorsBelowQuota(
+            f"os sobreviventes nao alcancam a cota depois da ultima poda: {detail}. O alvo "
+            "caber na matriz e outra pergunta, e ja foi respondida antes da geracao"
+        )
 
 
 def dedup(records: list[dict], text_key, seen: set[str]) -> list[dict]:
@@ -4332,6 +4620,23 @@ def main() -> None:
         "Construa com `near_dupes.py build-seen-index`; uma montagem de release "
         "RECUSA sem ele",
     )
+    parser.add_argument(
+        "--emit-screening-snapshot",
+        type=Path,
+        default=None,
+        help="escreve a projecao de entrada da triagem (id, sha256, TEXTO) e PARA. O "
+        "arquivo carrega texto de origem, entao tem de ficar sob benchmark/data/ ou fora "
+        "do repositorio (D-4)",
+    )
+    parser.add_argument(
+        "--pii-screen-ledger",
+        type=Path,
+        default=None,
+        help="ledger de disposicoes de uma execucao do llm-pii-screen. AUSENTE e "
+        "legitimo: a montagem corre sem triagem, os registros nao carregam a corrida, e o "
+        "selo recusa `release` sob o perfil de censo um passo depois — que e o sitio com "
+        "autoridade para isso",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     # The slate before the pools: two contradictory role lists cannot produce a right
@@ -4405,11 +4710,61 @@ def main() -> None:
     else:
         print(f"!! sem indice de vistos em {args.seen_index}: fumaca sem poda global")
 
-    renamed = enforce_unique_keys(
+    renames = enforce_unique_keys(
         [(ai, "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
     )
-    if renamed:
-        print(f"ids desambiguados (colisao entre lanes): {renamed}")
+    if renames:
+        print(f"ids desambiguados (colisao entre lanes): {len(renames)}")
+
+    # A TRIAGEM DE PII POR CENSO, e esta e a posicao: depois da ultima poda
+    # determinística e da desambiguacao, antes da selecao, da cota e do split.
+    projection = screening_projection(humans, ai, mixed)
+    if args.emit_screening_snapshot is not None:
+        digest = emit_screening_snapshot(args.emit_screening_snapshot, projection)
+        print(
+            f"snapshot de triagem: {len(projection)} pares em "
+            f"{args.emit_screening_snapshot}"
+        )
+        print(f"digesto I: {digest}")
+        print(
+            "a montagem PAROU aqui de proposito: triar e o passo seguinte, e o ledger "
+            "dele volta por --pii-screen-ledger"
+        )
+        return
+    screen_ledger: dict | None = None
+    if args.pii_screen_ledger is not None:
+        screen_ledger = pii_screen.read_ledger(args.pii_screen_ledger)
+        dropped = drop_the_flagged(humans, ai, mixed, screen_ledger)
+        humans, ai, mixed = dropped.humans, dropped.ai, dropped.mixed
+        print(f"triagem de PII (censo): {dropped.counts}")
+        if dropped.counts["parent-unresolved"]:
+            print(
+                f"!! mistas cujo pai nao resolve no pool humano: "
+                f"{dropped.counts['parent-unresolved']} — a cascata nao as alcanca, e o "
+                "numero esta aqui para nao ler como zero"
+            )
+        print(
+            f"pools (pos-triagem): human={len(humans)} ai={len(ai)} mixed={len(mixed)}"
+        )
+        if not args.sample:
+            # D-15 + D-21: os SOBREVIVENTES, e so quando a triagem correu. Sem ela o
+            # deficit continua a ser o aviso impresso no fim, que e o comportamento
+            # pre-existente; converte-lo em recusa e decisao sobre o montador, e nao
+            # sobre a triagem.
+            assert_the_survivors_meet_the_quota(
+                survivors={
+                    "human": len(humans),
+                    "ai": len(ai),
+                    "mixed": len(mixed),
+                },
+                counts=counts,
+            )
+    else:
+        print(
+            "!! sem ledger de triagem: nenhuma linha foi triada por censo, e nenhum "
+            "registro carrega a corrida llm-pii-screen. Um selo `release` sob "
+            "census-pii-screen-v1 sera RECUSADO"
+        )
 
     # Within the reproducibility order, push records whose topic seed is already
     # taken to the END, so the quota truncation drops them FIRST. Two lanes asked
@@ -4467,16 +4822,24 @@ def main() -> None:
     evidence_entries: list[dict] = []
     refused: Counter = Counter()
     refused_examples: dict[str, str] = {}
+    # A chave do funil por id de registro, para a guarda da triagem poder juntar o
+    # registro escrito ao par do ledger. Guardada aqui e nao recomputada depois: o id do
+    # registro e derivado da chave, mas por uma regra que cada construtor tem a sua, e
+    # uma segunda derivacao seria uma segunda regra capaz de discordar.
+    funnel_key_by_record: dict[str, str] = {}
 
     def build(rows: list[dict], make) -> list[dict]:
         out: list[dict] = []
         for row in rows:
             try:
-                out.append(make(row))
+                record = make(row)
             except UnwritableInV3 as error:
                 reason = type(error).__name__
                 refused[reason] += 1
                 refused_examples.setdefault(reason, str(error))
+                continue
+            funnel_key_by_record[record["id"]] = funnel_key(row)
+            out.append(record)
         return out
 
     records = build(
@@ -4629,6 +4992,18 @@ def main() -> None:
         "generationBatches": batches,
         "licenses": used_license_inventory(records),
     }
+
+    # A GUARDA DA TRIAGEM, sobre os registros que o corpus vai realmente conter: depois
+    # dos drops de familia e do piso da reserva, porque "registro selecionado" e o que
+    # sobra e nao o que foi construido. O SELO vem depois dela, nunca antes: `passed` e a
+    # consequencia da disposicao ter sido conferida.
+    if screen_ledger is not None:
+        assert_the_screen_passed_every_selected_record(
+            [(funnel_key_by_record[r["id"]], r) for r in records], screen_ledger
+        )
+        for record in records:
+            stamp_the_screen_run(record)
+        print(f"corrida {SCREEN_FILTER} estampada em {len(records)} registro(s)")
 
     # THE CLUSTER DISTRIBUTION REPORT (requirement 7). Counts, size distribution and
     # the largest cluster per axis AND per slice, over the records actually written.

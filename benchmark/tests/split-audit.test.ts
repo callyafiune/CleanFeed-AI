@@ -2320,7 +2320,7 @@ const SWEPT_SKIPPED_DIRECTORIES: readonly string[] = [
  * A new module under `benchmark/` turns this red. That is the intended price: the number
  * moving is then a decision someone writes down.
  */
-const SWEPT_REACH = { total: 149, typescript: 106, python: 43 } as const;
+const SWEPT_REACH = { total: 151, typescript: 106, python: 45 } as const;
 
 /** A line break inside a comment, as a single space. */
 const COMMENT_BREAK = /\r?\n[ \t]*(?:\/\/+|\*)?[ \t]*/gu;

@@ -12078,3 +12078,190 @@ novidade que já lá está; a regra de que um censo com lacuna não é um censo 
 unidade acrescenta é **engenharia** — a cegueira imposta pela forma do tipo, a direção da dependência,
 os dois códigos de recusa —, e engenharia não pede âncora. Acrescentar uma seção para não deixar o
 commit sem seção seria inflar a contagem que a § 5.6 publica sem acrescentar precedente.
+
+## A triagem entra no funil, e o caminho revelou dois defeitos que não são meus (2026-08-24)
+
+Terceira unidade do lab: a triagem passa a correr **dentro** do funil de
+`assemble_corpus.main()`, na posição que o desenho fixa — depois da última poda determinística
+e da desambiguação, antes da seleção, da cota e do split.
+
+### L-13 — o fluxo é de dois passos, e o snapshot é o contrato entre eles
+
+`--emit-screening-snapshot` escreve a projeção `(id, sha256, texto)` e **para**;
+`--pii-screen-ledger` traz de volta o ledger da execução. O snapshot é legível de volta como
+projeção sem tradução nenhuma, o que faz dele contrato e não relatório. **Razão:** a montagem
+tem de ser re-executável sem gastar chamada, e o ledger é o registo da triagem. O montador
+nunca chama modelo.
+
+### L-14 — o ledger é OPCIONAL, e a recusa vive um passo depois
+
+Ausente, a montagem corre sem triagem, nenhum registro carrega a corrida, e o log diz isso
+com essas palavras. **Razão:** a sequência do operador põe `infrastructure-only` primeiro, que
+não precisa de triagem; e um `release` sob `census-pii-screen-v1` já é recusado pelo selo
+quando a corrida falta — `DATASET_ASSURANCE_UNSUPPORTED`, do commit da metade de contrato.
+Exigir o ledger aqui bloquearia o passo seguinte decidido e duplicaria uma recusa que já
+existe no sítio com autoridade para ela. **Custo de reversão:** uma condição.
+
+### L-15 — o selo entra DEPOIS da guarda, e a docstring que ficou falsa foi corrigida
+
+`stamp_the_screen_run` é chamado em `main()` depois de
+`assert_the_screen_passed_every_selected_record`, nunca dentro de `review_state`. **Razão:**
+`outcome: "passed"` só pode ser escrito depois de a disposição ter sido conferida, senão o
+selo é a afirmação e não a consequência. E a docstring de `review_state` dizia *"no filter of
+ours screened a generated row for personal data"* — com o censo isso é **falso**, porque o
+censo lê o funil único, que é toda classe. A frase saiu, e o que ficou no lugar diz onde a
+corrida é escrita e por que não é ali. É a regra da § U.4 de `references.md`: o comentário não
+pode declarar uma limitação que o mecanismo deixou de ter.
+
+### L-16 — a cascata atravessa o renomeio pela chave carimbada na linha
+
+`enforce_unique_keys` passa a devolver o mapa de renomeios **e** a carimbar
+`_originalKey` na própria linha. A cascata usa o carimbo e não o mapa. **Razão medida:** dois
+renomeios podem partir da mesma chave antiga — uma mista e uma humana que colidiram no mesmo
+valor —, e um mapa `velho → novo` guarda um deles.
+
+### L-17 — a projeção RECUSA chave repetida, e isso impõe a ordem
+
+Uma linha mista é chaveada por `parentId`, que é o `candidateId` do pai: antes de
+`enforce_unique_keys` as duas partilham a chave. A projeção tomada ali carregaria o mesmo id
+duas vezes, e a cascata leria o pai errado. A recusa (`ProjectionKeyCollision`) é o que faz da
+ordem uma condição verificada em vez de uma convenção.
+
+### L-18 — o snapshot não pode ser escrito em árvore rastreada
+
+Ele carrega **texto**, e o texto de origem pode conter PII real. `benchmark/data/` é
+gitignored e é onde D-4 manda os logs da triagem; escrever sob `benchmark/`, `docs/`, `src/`,
+`contracts/`, `scripts/` ou `tests/` recusa por nome. Fora do repositório é aceito — o caminho
+é do operador.
+
+---
+
+## DOIS DEFEITOS MEDIDOS QUE NÃO SÃO DESTA UNIDADE, e o segundo é dinheiro
+
+### (i) `enforce_unique_keys` renomeia o PAI, e a ponte pai↔mista quebra em silêncio
+
+**Medido, com fixture, nas duas direções.** Os pools são entregues na ordem
+`(ai, mixed, humans)`, então quando `mixed.parentId` colide com `human.candidateId` quem é
+renomeado é o **humano**: a mista guarda o valor com que nomeia o pai, e a chave do pai move-se
+debaixo dela.
+
+A consequência é do **split**, não da minha cascata. `connected_components` une por
+`SPLIT_PARENT_LINKAGE_AXES = ("derivationRoot", "humanSeed")` com a condição
+`named in ids` — o valor do eixo tem de ser um **id de registro presente**. Medido sobre um
+par pai/mista:
+
+| estado | `derivationRoot` da mista | está nos ids? | componentes |
+|---|---|---|---|
+| sem renomeio | `src_ptwiki_p1` | sim | **1** |
+| com renomeio | `src_ptwiki_p1` | **não** | **2** |
+
+E a união é saltada **em silêncio**, porque `named in ids` é exactamente a condição que a
+silencia. A ilha racha, e a ponte que a § 5.4c e a § 5.12 declaram — *"a ponte entre eles são
+as mistas, que nomeiam uma humana em `derivationRoot` — união POR VALOR"* — é a que se perde.
+
+**A condição, e ela estreita o achado:** o par só chega a colidir se os dois SOBREVIVEREM à
+poda de quase-duplicata. A § U.3 mediu Jaccard **0,848–0,869** para pai/mista em `insercao/25`,
+acima do limite de 0,82 — nessas células a poda já derruba o pai e a ponte já não existe, o que
+é o achado antigo. O achado NOVO é sobre as células **abaixo** de 0,82 (a segunda mais próxima
+mede 0,774): ali os dois sobrevivem, colidem, o pai é renomeado, e a ponte quebra sem que nada
+o diga.
+
+**O diagnóstico é de tipo, não de ordem:** `parentId` é chave **estrangeira**, e passá-la a um
+impositor de unicidade que a **mutila** é tratar referência como identidade. Reordenar os pools
+não conserta — inverteria quem é renomeado e a ponte quebraria do outro lado. O conserto é
+chavear a mista pelo id dela própria (`mix_<parent>`), e isso muda quais linhas são renomeadas
+numa montagem real, logo muda contagens de componente que o plano ratificado da ilha usa.
+**Não é desta unidade e não entra aqui:** é unidade própria, com as suas três etapas. Fica na
+§ 7, e **vence antes da montagem da Fase 3** — e antes de gastar a cota de geração, porque a
+matriz de cobertura é declarada contra a conectividade da ilha.
+
+### (ii) `load_humans` lê `reserved.jsonl` de caminho FIXO, e essas linhas seriam triadas por nada
+
+**Medido:** uma corrida `--sample` sobre um `--candidates-dir` com **3** linhas colheu **583**
+humanas, porque `load_humans` lê `read_jsonl(DATASET / "reserved.jsonl")` ignorando
+`--candidates-dir`. E o comentário do próprio sítio diz que essas linhas são **recusadas** pelo
+construtor (`MissingDocumentLicense` é a primeira das quatro).
+
+**A consequência é dinheiro.** Elas entram na projeção, logo o censo pagaria uma chamada por
+cada uma, e nenhuma pode entrar no corpus. O `screened` do recibo ficaria sobre uma população
+maior que o conjunto candidato.
+
+**Não conserto aqui, e a razão é o que o conserto exige:** saber quais linhas o construtor
+recusa obriga a construir antes de projetar, e construir antes de selecionar muda quais linhas
+são selecionadas quando as recusas são desiguais entre pools. É mudança ao funil, com efeito na
+aritmética da cota. Fica na § 7, e **vence antes da primeira execução da triagem** — é uma
+conta antes de uma chamada paga.
+
+---
+
+### A bateria: 14 mutações, 11 mortas na primeira volta e 3 refeitas
+
+Duas das minhas mutações estavam mal escritas e uma âncora era ambígua — declaro isso porque
+uma mutação que não muda nada contada como morta é pior que mutante nenhum:
+
+| # | mutação | caso que ficou VERMELHO |
+|---|---|---|
+| M46 | `enforce_unique_keys` deixa de carimbar a chave original | *a cascata atravessa o RENOMEIO do pai* |
+| M47 | a cascata deixa de olhar o pai | *a mista cujo PAI saiu sai em categoria propria* |
+| M48 | pai que não resolve deixa de ser contado | *mista cujo pai nao resolve e CONTADA e nao calada* |
+| M49 | o drop deixa de exigir a cobertura | *a cobertura e exigida antes do drop* |
+| M50 | *(no-op — mutação minha mal escrita)* | refeita como **M50b**: o digesto passa a ser o da regra do LAB → *o digesto e o da regra SELADA*, mais três |
+| M51 | a guarda reusa o digesto da projeção | *a guarda le o digesto do TEXTO DO REGISTRO*, mais dois de `main()` |
+| M52 | **o selo é estampado sem a guarda** | **SOBREVIVE — equivalente, e declarado abaixo** |
+| M53 | o selo deixa de ser idempotente | *o selo nao se estampa duas vezes* |
+| M54 | o selo escreve `outcome: excluded` | *o selo da corrida entra na lista de filtros* |
+| M55 | o snapshot aceita caminho rastreado | *recusa escrever dentro da arvore de fontes*, e o de `main()` |
+| M56 | a projeção aceita chave repetida | *recusa a projecao tomada ANTES da desambiguacao* |
+| M57 | *(âncora ambígua)* | refeita como **M57b** → *recusa nomeando a classe e a falta* |
+| M58 | `main()` deixa de parar depois do snapshot | *o snapshot sai … e main PARA* |
+| M59 | `main()` deixa de dropar o sinalizado | *o sinalizado nao chega ao records_jsonl* |
+
+### M52 é MUTANTE EQUIVALENTE, e o que isso significa aqui
+
+Retirar a chamada da guarda de `main()` deixa a suíte verde. A guarda não é decorativa — D-13
+exige-a —, ela é **implicada** por três factos: a cobertura provou que todo par da projeção
+está no ledger, o drop removeu toda linha que não diz `passed`, e **nada entre a projeção e o
+registro escrito toca o `text`**.
+
+O terceiro é o frágil, então ganhou teste próprio (*os construtores passam o texto BYTE A
+BYTE*, sobre texto com espaço em volta e CRLF). E a carga da guarda foi **medida por mutação
+composta**, que é o que mostra o que ela compra no momento em que o invariante cai:
+
+| mutação | resultado |
+|---|---|
+| **A** — o construtor humano apara o texto, guarda **presente** | **VERMELHO**, e dois dos vermelhos são os testes de `main()`: a guarda dispara |
+| **B** — o construtor apara o texto **e** a guarda sai | só os dois testes puros ficam vermelhos; os de `main()` voltam a VERDE, e o corpus é escrito com o selo `llm-pii-screen: passed` sobre texto que não foi o triado |
+
+A diferença entre A e B é a guarda, e em B o corpus carrega um selo falso. O fixture de
+`main()` levou espaço em volta de propósito: com texto sem bordas, aparar não muda nada e a
+igualdade de digestos seria vácua.
+
+### A bateria deixou 76 KB de texto numa árvore rastreada, e o teste antigo não o via
+
+Depois de M55 — a mutação que desliga a guarda do caminho do snapshot — a suíte ficou vermelha,
+como devia. Mas `git status` mostrou **dois arquivos novos**: `benchmark/snapshot.jsonl` (vazio) e
+`docs/_nao.jsonl` com **76.011 bytes**, que é a projeção inteira, texto incluído. A restauração da
+bateria devolve o **fonte** e não desfaz o **efeito**, e sem o `git status` os dois entravam no
+commit em silêncio.
+
+Duas coisas ficaram melhores por causa disso, e nenhuma é o conserto do lixo:
+
+1. **"Recusa" e "recusa e não escreve" são alegações diferentes,** e era a primeira que o teste
+   afirmava. Os dois casos passaram a asserir `assertFalse(path.exists())` depois da recusa, e o
+   nome deles diz-no (`..._E_NAO_ESCREVE`). D-4 não quer a exceção, quer o arquivo ausente.
+2. **Toda mutação de uma guarda contra escrita pode deixar o que a guarda impedia.** Os dois casos
+   ganharam `finally: unlink(missing_ok=True)`, e usam nomes com prefixo `_teste_` em vez de nomes
+   plausíveis. Medido depois: M55 morre nos dois casos e a árvore fica limpa.
+
+O que isto mede sobre o desenho é bom: a guarda estava certa e o caminho de escrita respeitava-a —
+`assert_the_snapshot_path_is_not_tracked` corre antes do `mkdir` e do `open`. O que estava fraco era
+a **asserção**.
+
+### Referências: nada de novo, outra vez, e por quê
+
+A posição no funil, o drop incondicional e a cascata como categoria própria são D-12, D-13/D-19
+e D-15/D-21, já registados no desenho e ancorados em `references.md` § V.2 e § V.4. O que esta
+unidade acrescenta — o snapshot como contrato, a chave carimbada, a recusa de caminho
+rastreado, a recusa de chave repetida — é engenharia. A publicação de `parent-unresolved` com
+denominador é a regra da casa sobre ausência declarada, que já está escrita em vários sítios do
+ESTADO e não é precedente externo.
