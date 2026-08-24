@@ -5511,3 +5511,41 @@ e os primeiros ids em vez de parar no primeiro, porque o número é o que diz se
 de uma linha ou da corrida. A distinção censo/amostra é padrão em auditoria; o que não foi localizado
 é precedente para ela ser imposta por marcador **por registro** dentro do artefato selado, com a
 ausência do marcador a recusar o selo.
+
+
+### V.5 — pisos de sensibilidade DIFERENTES por subtipo, escolhidos antes do resultado e com a tolerância publicada
+
+_Âncora:_ NIST SP 800-188, *De-Identifying Government Datasets: Techniques and Governance*
+(Garfinkel, Guttman, Near, Dajani e Singer; setembro de 2023). _Onde no projeto:_ o subtipo
+`quasi-identifier` da taxonomia pré-inscrita — combinação de três ou mais atributos que juntos
+identificam uma pessoa sem que nenhum o faça sozinho. _Fato citado, e só o que foi verificado na
+página da publicação:_ **quase-identificador é vocabulário de norma** na de-identificação — a
+publicação nomeia *transforming quasi-identifiers* entre as técnicas e lista o termo entre as
+palavras-chave. A definição combinatória em si não foi lida no documento completo e por isso não é
+citada como dela; o que a âncora sustenta é que a categoria existe na norma e não foi inventada aqui.
+[link](https://csrc.nist.gov/pubs/sp/800/188/final)
+
+**Declaração de novidade, exigida pela regra da casa. Sem precedente encontrado (2026-08-24)** para
+a forma exacta desta pré-inscrição: pisos de sensibilidade **diferentes por subtipo** — 0,95 nos
+cinco visíveis por regex, 0,80 / 0,75 / 0,70 nos seis de prosa só —, lidos no limite **inferior**
+unilateral de Wilson e com **estrato abaixo do piso a ABORTAR** a execução inteira.
+
+Três coisas ficam escritas ao lado deles, porque um piso sem elas é um número que se escolhe depois:
+
+1. **A tolerância de cada piso é medida e publicada**, em falhas sobre `n = 60`: o piso de 0,95 não
+   tolera **nenhuma** falha (o limite inferior de 59/60 é 0,9287); 0,80 tolera **seis** (54/60 dá
+   0,8181 e 53/60 dá 0,7981); 0,75 tolera **nove**; 0,70 tolera **doze**. Quem lê o piso vê o que ele
+   custa.
+2. **Por que os pisos diferem, e é uma escolha e não uma concessão.** Os cinco visíveis por regex são
+   *sanity check*: as cinco `PII_PATTERNS` do repositório pegam-nos por construção, então um triador
+   que perde um deles falha num caso que dez linhas de expressão regular resolvem. Os de prosa só são
+   onde vive o valor novo, e `relational` — a pessoa identificada pela relação com outra nomeada — não
+   tem forma de superfície nenhuma. Igualar o piso dele ao do e-mail abortaria toda execução na
+   categoria reconhecidamente mais difícil, o que não é honestidade e sim inutilidade.
+3. **O `n` é escolhido e não redondo.** Com acerto total o limite inferior de Wilson colapsa em
+   `n / (n + z²)`, que alcança 0,95 a partir de `n = 52` e não antes; `n = 60` compra oito controles
+   de margem sobre essa fronteira, ao custo linear em chamadas.
+
+A regra de aderência — o protocolo vale porque foi escrito antes e não se move depois, e o recibo
+carrega o `sha256` do arquivo que o contém — é a mesma da âncora da § V.4 (*in-principle acceptance*),
+e não repete link.

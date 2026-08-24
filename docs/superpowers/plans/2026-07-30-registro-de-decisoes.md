@@ -11892,3 +11892,95 @@ A dívida de codex da metade de CONTRATO está **paga**, com as duas rodadas aci
 ainda porque o lab não está escrito: a triagem no funil, o ledger de disposições, os controles com
 `S_control` por estrato, os gates adversariais por pares e o recibo entram como unidade própria, com
 TDD, bateria e as suas próprias três etapas.
+
+## A pré-inscrição do protocolo de triagem, e o Wilson do lab é espelho da bancada (2026-08-24)
+
+Primeira unidade da metade do LAB do `llm-pii-screen`: `benchmark/lab/pii_screen_protocol.py`, os
+números que a execução vai medir, escritos **antes** de qualquer resultado. Nenhum resultado foi visto
+— nem um controle correu —, o que é exactamente a janela que a § 3.4 do ESTADO declara legítima para
+pré-inscrever.
+
+### L-1 — os literais vivem em Python, e não em JSON
+
+O corpo do avaliador tem a regra oposta para os arquivos dele: `EVALUATOR_FILES` em JSON não se edita
+por Python, porque a autoridade de formato de número é o Node e um round-trip trocou `0.00002` por
+`2e-05`. Este arquivo **não está** em `EVALUATOR_FILES` e não precisa de estar: ele não decide escore
+nem gate do avaliador, decide o protocolo do lab. Mantendo os literais em Python não existe segundo
+formatador para eles. **Custo de reversão:** mover para JSON exigiria um parser fechado no estilo de
+`sealed_policy.py` e ganharia zero.
+
+### L-2 — o `n` é escolhido, e a tolerância de cada piso é medida
+
+`n = 60` controles por subtipo. A razão é aritmética e está no teste: com acerto total o limite
+inferior unilateral de Wilson colapsa em `n / (n + z²)`, que alcança 0,95 a partir de `n = 52` e não
+antes — 51 dá 0,9497. Os 60 compram oito controles de margem sobre a fronteira.
+
+E as quatro tolerâncias, **medidas e não estimadas** (a minha primeira aritmética à mão errou por um,
+e o teste é que a corrigiu): sobre `n = 60`, o piso de 0,95 não tolera **nenhuma** falha, o de 0,80
+tolera **seis**, o de 0,75 tolera **nove**, o de 0,70 tolera **doze**. Um piso novo entra com a sua
+fronteira medida no mesmo caso, ou a tolerância dele fica sem número publicado.
+
+### L-3 — pisos DIFERENTES por subtipo, e a razão fica escrita
+
+0,95 nos cinco visíveis por regex, porque as `PII_PATTERNS` os pegam por construção e perder um deles
+é falhar num caso que dez linhas de regex resolvem. 0,80 / 0,75 / 0,70 nos seis de prosa só, com o
+mais baixo em `relational` e `quasi-identifier` — os dois sem forma de superfície nenhuma. Igualar o
+piso do relacional ao do e-mail abortaria toda execução na categoria reconhecidamente mais difícil, o
+que não é honestidade e sim inutilidade. **O que impede isto de ser concessão:** os pisos estão
+escritos antes de qualquer medição, a tolerância de cada um é publicada em falhas, e o recibo publica
+o piso ao lado do medido. **Custo de reversão:** mover um piso depois de ver resultado é ilegítimo
+pela § 3.4, e é por isso que a escolha é agora.
+
+### L-4 — a taxonomia visível por regex é IGUAL ao que os padrões pegam, não um superconjunto
+
+O teste compara os dois conjuntos por igualdade. As duas direções custam: um subtipo declarado
+"visível por regex" que nenhum padrão pega é um *sanity check* que não checa nada, e um padrão sem
+subtipo declarado sai da medição por omissão.
+
+### L-5 — o Wilson do lab é ESPELHO da bancada, prendido por teste que dirige o node
+
+`benchmark/intervals.ts::wilsonOneSided` já existe e decide os tetos de FPR e os pisos de recall da
+bancada; `references.md` já ancora Wilson 1927 com este mesmo `z` literal. O lab é Python por decisão,
+então a fórmula aparece duas vezes — e duas implementações que ninguém compara divergem em silêncio.
+
+**A divergência provável não é algébrica, é o último bit do float.** A minha primeira versão estava
+escrita na forma multiplicada (`(successes + z²/2) / (n + z²)`), algebricamente idêntica à da bancada
+(`(p + z²/(2n)) / (1 + z²/n)`) e numericamente diferente nos últimos dígitos. Um piso comparado contra
+um valor que difere do da bancada no 16.º dígito é um piso que muda de veredito por arredondamento.
+A versão que ficou está escrita na **forma da bancada**, com o mesmo *clamp* em [0, 1], e um teste
+dirige `node --experimental-strip-types` sobre 16 casos e exige **igualdade exacta de float** — não
+`assertAlmostEqual`, porque uma tolerância apagaria a única coisa que o caso mede. Um segundo teste lê
+o literal `ONE_SIDED_95_Z` do **arquivo** da bancada em vez de o copiar.
+
+### L-6 — o orçamento de chamadas é itemizado, e o total de hoje é 1.740 mais o censo
+
+11 subtipos × (60 controles + 60 shams) = 1.320; 4 vetores × 40 pares × 2 = 320; 100 do
+discriminador de indistinguibilidade. O censo escala com a projeção. O total é publicado como valor
+porque é o número que o operador vai digitar num `--confirm-calls`: dinheiro acima do envelope é
+decisão nunca delegada, e um plano que mudasse de tamanho em silêncio faria da confirmação uma
+confirmação de outra coisa.
+
+### A bateria: 10 mutações, 10 mortas
+
+| # | mutação | caso que ficou VERMELHO |
+|---|---|---|
+| M22 | o raio de Wilson perde o termo de continuidade | *a tolerancia de cada piso… e medida e nao estimada* |
+| M23 | o `z` do lab passa a ser o bilateral (1,9600) | idem |
+| M24 | a forma **algebricamente igual** e numericamente diferente | *a bancada e o lab devolvem o MESMO float em toda a tabela* |
+| M25 | um piso passa a exigir mais do que o acerto total alcança | *todo piso da taxonomia e um dos quatro medidos acima* |
+| M26 | um subtipo visível por regex sai da taxonomia | *a taxonomia tem os dois grupos e onze subtipos* |
+| M27 | o `n` por subtipo cai para 40, abaixo da fronteira de 0,95 | *a tolerancia de cada piso…* |
+| M28 | o orçamento perde os shams | *o orcamento e itemizado e soma o total* |
+| M29 | o digesto do protocolo passa a ser constante | *o digesto… e o sha256 dos bytes do proprio modulo* |
+| M30 | o gate perde a regra de PAR e conta sinalizações | *o piso do gate e sobre a taxa de PARES e nao de sinalizacoes* |
+| M31 | um vetor adversarial fica sem sham declarado | *todo vetor tem sham pareado declarado* |
+
+**M24 é a que justifica a forma da expressão**, e sem ela a alegação do espelho seria decoração: a
+mutação troca a fórmula pela versão multiplicada, que é a MESMA álgebra, e o teste morre na igualdade
+de float contra o node. Nenhum mutante equivalente a declarar.
+
+### O que esta unidade NÃO faz
+
+Não chama modelo nenhum, não gera injeção nenhuma, não escreve ledger nem recibo. É a pré-inscrição
+e a aritmética. Os controles, os gates adversariais, o ledger de disposições, o censo e a integração no
+funil do montador são as unidades seguintes.
