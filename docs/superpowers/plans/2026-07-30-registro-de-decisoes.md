@@ -11984,3 +11984,97 @@ de float contra o node. Nenhum mutante equivalente a declarar.
 Não chama modelo nenhum, não gera injeção nenhuma, não escreve ledger nem recibo. É a pré-inscrição
 e a aritmética. Os controles, os gates adversariais, o ledger de disposições, o censo e a integração no
 funil do montador são as unidades seguintes.
+
+## O censo e o ledger de disposições: a cegueira é a forma do tipo, e presença do par não basta (2026-08-24)
+
+Segunda unidade do lab. `benchmark/lab/pii_screen.py`: a porta do triador, o censo, o ledger de
+disposições por `(id, sha256)`, as duas guardas da montagem e as três categorias da revisão post-hoc.
+Nenhuma chamada a modelo nenhum — o triador é um chamável que os testes dirigem.
+
+### L-7 — a cegueira é mecânica porque é a FORMA do tipo, não uma disciplina
+
+`ProjectionRow` tem três campos: `row_id`, `text_sha256`, `text`. Não existe `label`, `groups`,
+`score` nem `partition` na forma que chega à triagem, e a porta `Triager.__call__(text: str)` não tem
+parâmetro por onde passar mais nada — o triador não recebe nem o id. **Razão:** uma regra que diz "não
+mostre o rótulo ao triador" é uma regra que alguém esquece; um tipo que não tem o campo não tem o que
+esquecer. Um teste lê os campos por `dataclasses.fields` e recusa os cinco nomes proibidos, e outro
+grava com que argumentos o triador foi chamado. **Custo de reversão:** acrescentar um campo é uma
+linha, e a linha fica vermelha.
+
+### L-8 — o digesto do texto NÃO é calculado aqui, e a direção da dependência é a razão
+
+`assemble_corpus` é dono do snapshot (D-19), é ele que calcula `norm_hash`, e a guarda da montagem é
+chamada por ele. Logo a dependência corre montador → triagem, e nunca ao contrário. Se `pii_screen`
+calculasse o mesmo digesto haveria duas autoridades para o valor que é a chave do ledger, e a
+divergência apareceria como uma lacuna de cobertura sem causa legível. **O módulo é stdlib só**, porque
+o montador é stdlib só e vai importá-lo. **Custo de reversão:** mover o digesto para cá exigiria
+inverter a dependência ou duplicá-lo.
+
+### L-9 — a união tem DOIS valores, e o valor da v2 é recusado POR NOME
+
+`("passed", "flagged-dropped")`. Um terceiro valor seria "sinalizado mas mantido", que é exactamente a
+linha exposta a humano dentro do corpus que D-12 fecha. E o `flagged-human-cleared` do híbrido da v2
+(§ 5.14b do ESTADO) é **recusado na leitura do ledger com mensagem própria**, que diz o que a v2 exige
+e a v1 não tem: recibo ortogonal `humanExposure` e proibição do componente conexo nas duas cegas.
+**Razão:** o mecanismo da v2 está escrito antes de ser preciso, e um valor escrito num ledger da v1
+entraria sem nenhum dos mecanismos que o tornam legítimo. **Custo de reversão:** quando a v2 chegar,
+o valor entra na união e a mensagem sai.
+
+### L-10 — presença do par não basta, e os dois modos de falha têm exceções diferentes
+
+`assert_selected_records_passed` recusa por `SelectedRecordNotScreened` quando o par não existe e por
+`SelectedRecordWasFlagged` quando existe e não diz `passed`. **Razão:** "ninguém triou esta linha" e
+"esta linha foi sinalizada" mandam quem lê a trabalhos diferentes — o primeiro é uma lacuna do censo
+ou uma mutação de bytes, o segundo é material bom perdido para um falso positivo. As duas contam
+**todos** os casos e publicam o denominador, em vez de parar no primeiro.
+
+### L-11 — o veredito incoerente é recusado nas duas direções
+
+Sinalizado sem subtipo é recusado (uma sinalização que não diz de que categoria é não entra em estrato
+nenhum, logo não é medível) e subtipo sem sinalização também (seria sinalização sem disposição de
+sinalização). E o subtipo tem de estar na taxonomia **pré-inscrita** — lida do protocolo e nunca
+copiada, o que um teste prova movendo a pré-inscrita e vendo a leitura mover com ela.
+
+### L-12 — o ledger é ordenado pelo par e escrito em LF
+
+O digesto do ledger entra na alegação, então não pode depender da ordem em que o funil entregou as
+linhas. LF explícito no `open`, porque a invariável da árvore é LF e a plataforma daqui não é.
+
+### Dois testes meus afirmavam tautologia, e isso é defeito
+
+`assertIn("Reviewed", "precisionAmongReviewed")` compara dois literais e não lê o código; e
+`assertIs(pii_screen.taxonomy_keys.__module__ and True, True)` não afirma nada. Os dois foram
+substituídos por asserções reais — o denominador da precisão é `r` e não `k` (25/40 e não 25/100), e a
+taxonomia é lida e não copiada, provado movendo a pré-inscrita. É a mesma família que a § 7 já nomeia:
+*comentário falso não tem mutante*. Um teste que afirma tautologia é pior, porque conta como caso.
+
+### A bateria: 14 mutações, 14 mortas
+
+| # | mutação | caso que ficou VERMELHO |
+|---|---|---|
+| M32 | o censo engole a falha do triador e salta a linha | *um triador que levanta ABORTA o censo em vez de saltar a linha* |
+| M33 | subtipo fora da taxonomia passa a ser aceito | *um subtipo fora da taxonomia pre-inscrita e recusado* |
+| M34 | o sinalizado passa a ser gravado como `passed` | *o sinalizado e flagged-dropped e nunca passed* |
+| M35 | o ledger deixa de ser ordenado pelo par | *o ledger e escrito em LF e ordenado pelo par* |
+| M36 | o ledger aceita par duplicado | *recusa par duplicado* |
+| M37 | o ledger aceita disposição fora da união | *recusa disposicao fora da uniao* |
+| M38 | a cobertura do censo deixa de recusar | *linha da projecao sem linha no ledger recusa…* e *texto que mudou depois do snapshot recusa* |
+| M39 | **presença do par passa a bastar** | *registro cujo par ESTA no ledger mas como flagged-dropped RECUSA* |
+| M40 | as duas recusas da guarda colapsam numa | idem, mais a da contagem |
+| M41 | o falso positivo passa a ser `k − c` | *o falso positivo e r menos c e NUNCA k menos c* |
+| M42 | a precisão sem denominador passa a ser zero | *sem revisao nenhuma as tres categorias sao honestas* |
+| M43 | o ledger passa a ser escrito com a quebra da plataforma | *…em LF e ordenado pelo par* |
+| M44 | subtipo fora da taxonomia passa na LEITURA do ledger | *recusa subtipo fora da taxonomia na leitura* |
+| M45 | o veredito contraditório deixa de ser recusado | *sinalizado sem subtipo nenhum tambem e contradicao* |
+
+**M39 é o centro de D-13** e é a razão de a guarda existir: com ela desligada, um registro sinalizado
+cujo par está no ledger passa a montagem. Nenhum mutante equivalente a declarar.
+
+### Referências: nada de novo, e isso é a resposta e não a omissão
+
+Tudo o que esta unidade decide de metodológico já está ancorado. A remoção incondicional do
+sinalizado e a contagem em `c` / `r − c` / `k − r` estão em `references.md` § V.2, com a declaração de
+novidade que já lá está; a regra de que um censo com lacuna não é um censo está na § V.4. O que esta
+unidade acrescenta é **engenharia** — a cegueira imposta pela forma do tipo, a direção da dependência,
+os dois códigos de recusa —, e engenharia não pede âncora. Acrescentar uma seção para não deixar o
+commit sem seção seria inflar a contagem que a § 5.6 publica sem acrescentar precedente.
