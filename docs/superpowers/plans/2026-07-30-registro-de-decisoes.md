@@ -11451,7 +11451,9 @@ comentário do tipo já diz a filosofia: *"NOT a review… it names code, never 
 
 - `llm-pii-screen` entra como membro novo de `AUTOMATED_FILTERS` (união fechada) — **um nome numa
   união, não um `ReviewStateName` novo**: `automated/unreviewed` continua a verdade de todo registro,
-  `reviewClaimSupport` não muda, o selo continua `infrastructure-only`;
+  `reviewClaimSupport` não muda, o selo continua `infrastructure-only` **na v1** — e a sequência
+  até o `release` sob perfil de garantia está na entrada «O perfil de garantia
+  `census-pii-screen-v1`» do mesmo dia, que supersede esta cláusula na parte do selo;
 - cada registro presente carrega o run pelo mecanismo existente (`meta.automatedFilters` →
   `review_state`); para os gerados, cuja docstring hoje diz que nenhum filtro nosso os viu, a verdade
   muda com o mecanismo;
@@ -11460,7 +11462,10 @@ comentário do tipo já diz a filosofia: *"NOT a review… it names code, never 
   o ledger de disposições e as declarações de limite.
 
 Custo de contrato: mover `AUTOMATED_FILTERS` move o `evaluatorDigest` **uma vez, na implementação**.
-Nenhum valor novo de `scientificUse`, nenhum gate de selo tocado.
+Nenhum valor novo de `scientificUse` — isso continua verdade. **A segunda metade desta frase está**
+**superseditada em 2026-08-24** («O perfil de garantia `census-pii-screen-v1`»): o perfil de
+garantia obrigatório É gate de selo novo, e o custo de contrato dele é próprio, medido na
+implementação e não aqui.
 
 ### A posição, e ela resolve cota e cegueira de uma vez
 
@@ -11549,9 +11554,105 @@ R4 e **não** destrava o selo `release`; a família certificadora não decide, p
 tetada em `indicator-only` e já não publicava taxa de erro (ESTADO § 3.5) — e a promoção do screening a
 algo que um gate de selo leia fica como emenda futura, explícita e versionada.
 
+**Esta última frase durou horas.** A emenda veio no mesmo dia, e está na entrada «O perfil de
+garantia `census-pii-screen-v1`», que supersede daqui: *o selo em `infrastructure-only`* como
+estado final, e *não destrava o selo `release`* como enunciado sem prazo. O que sobrevive intacto
+desta entrada: a R4 continua não satisfeita, e o caminho não produz recibo humano por registro.
+
 **Correção de leitura minha, no mesmo dia.** Depois de registar o desenho, voltei a apresentar o recibo
 como decisão aberta entre quatro caminhos, e a sugerir que implementar o screening seria "trabalho em
 risco" à espera da escolha dele. A escolha estava feita duas mensagens antes, e era justamente o
 desenho que eu tinha acabado de registar; a § 3.9 ficou a dizer que a decisão estava pendente até esta
 entrada. É o mesmo defeito de ler o título em vez do corpo que me fez tratar a dívida da normalização
 como aberta quando ela estava paga — duas vezes no mesmo dia, e as duas apanhadas por ele e não por mim.
+
+## O perfil de garantia `census-pii-screen-v1`: o `release` redefinido, pré-inscrito agora e ativado por execução (2026-08-24)
+
+O operador abriu esta linha com duas perguntas — *"porque o release só é admitido com revisão
+humana?"* e *"seria admitido então por uma ia diferente?"* — e fechou-a refutando-me: *"acredito
+que seja diferente. como já dissemos, definimos regras claras sobre o que a ia pode ver e quais
+critérios ela irá analisar nos 10.000"*. Eu tinha apoiado a impossibilidade da redefinição em
+*falha correlacionada*, e concedi, porque eu tinha **juntado dois modos de falha distintos**:
+critério incompleto — categoria que a taxonomia não nomeia — afeta a revisão **humana de forma
+idêntica** e não é fraqueza da IA; instrumento que perde instância de categoria declarada é
+medível, e é o que `S_control` mede. Depois ele propôs um terceiro caminho, o híbrido, e pediu
+*"veja primeiro com o codex antes de sugerir"*. Uma consulta de tese cobriu os dois.
+
+### A alegação do perfil, verbatim do veredito
+
+`release` sob `assuranceProfile: census-pii-screen-v1` afirma **censo sobre bytes digestados** e
+**desempenho por subtipo apenas nos controles pré-inscritos**. Não afirma: ausência ou prevalência
+de PII real, `S_real`, completude taxonômica, leitura humana por registro, nem validação humana dos
+rótulos. É **defensável** com condição: o perfil **obrigatório**, **versionado** e **impossível de
+confundir** com um perfil de revisão humana integral. Sem as três, é recuo disfarçado de emenda.
+
+### A sequência, que é a decisão de verdade
+
+Pré-inscrever o perfil **agora** — legítimo pela § 3.4 do ESTADO, nenhum resultado visto —,
+implementar com D-12, selar `infrastructure-only`, e ativar o `release` limitado **só depois de uma
+execução passar os gates**. O que destrava é execução medida, não decisão nova; e o custo de errar é
+baixo, porque o estado intermédio é exatamente o que a decisão anterior já dizia.
+
+### O contra-argumento fica no registro, porque limita a tese
+
+Consistência **não prova validade**: aplicar o mesmo critério errado a 10.000 registros é
+consistente e inútil. O LLM é **não-determinístico entre execuções**, logo a uniformidade é
+intra-execução e a re-execução mede **estabilidade**, não acerto. Humanos **podem** ser calibrados e
+medidos, se alguém o fizer — o que ninguém fez aqui é diferente do que é impossível. E a
+responsabilidade continua humana. O ganho é **auditabilidade**, não superioridade.
+
+### Os nove riscos que o perfil tem de declarar
+
+*verification bias* / selective labels; confirmação humana; **falso cleared**; feedback adaptativo;
+contaminação por componente; conflito com split temporal/OOD; mutação de bytes; **PII relacional**;
+e confusão de **PPV** — a taxa de acerto entre os sinalizados não é a sensibilidade nem o FPR do
+corpus. Nove, contados: a primeira versão desta linha dizia *sete* e listava nove.
+
+### O híbrido: v2 CONDICIONAL, com o mecanismo escrito antes de ser preciso
+
+Não entra na v1, e a razão é sequência e não mérito: com D-12 nenhum registro exposto a humano fica
+no corpus, e não há buraco de exposição para tapar. Entra **se e quando** `k` ou a perda de
+componentes ameaçar materialmente as cotas — e aí `k` estará medido. O mecanismo, para essa hora:
+ledger com `flagged-human-cleared`; recibo **ortogonal** `humanExposure`; `review` **continua**
+`automated/unreviewed`, porque verificar sinalizado não é revisar rótulo; e `assign_partitions` mais
+um **verificador independente** proibindo **o componente conexo inteiro** do exposto em `cal-B` e
+`test` — não o registro, o componente —, com conflito contra split temporal ou OOD a **dropar ou
+recusar**. Custo O(`k`): FPR de 0,1 / 0,5 / 1 / 2 % implica ~10 / 50 / 100 / 200 falsos alertas em
+10.000. E **o híbrido sozinho não destrava o selo**, confirmado: `sealDataset` exige que todo
+registro sustente, e verificar só os sinalizados deixa ~9.900 em `automated/unreviewed`.
+
+### O que esta entrada supersede, nomeado
+
+Do registro do desenho, no mesmo dia: *"nenhum gate de selo tocado"* — o perfil obrigatório é gate
+novo. Da entrada da decisão, no mesmo dia: *"com o selo em `infrastructure-only`"* como estado
+final, e *"a promoção do screening a algo que um gate de selo leia fica como emenda futura"* — a
+emenda é esta, e é pré-inscrição e não promoção. Os três sítios levaram marcador in loco. **O que
+não é superseditado, e continua a valer:** a R4 não é satisfeita, não há recibo humano por registro,
+`prevalenceBound` continua `null`, e nenhum valor novo de `scientificUse` entra.
+
+Onde vive o desenho válido: ESTADO § 3.9 (a sequência), § 5.14 (o perfil) e § 5.14b (o híbrido
+condicional). Referências e declaração de novidade: `references.md` § V.3.
+
+## A guarda das contagens de referências ficou VERMELHA em dois commits meus (2026-08-24)
+
+`estado-counts.test.ts` existe para uma coisa só: recontar, sobre `references.md`, os três números
+que o ESTADO § 5.6 publica — marcadores de link, seções `##` e declarações literais de "Sem
+precedente encontrado". O comentário do arquivo diz por que existe: *"os valores publicados
+envelheceram em silêncio duas vezes"*.
+
+Envelheceram uma terceira. O commit `f85d619` acrescentou a § V a `references.md` — três marcadores,
+uma seção, uma declaração — e não tocou o § 5.6. Medido nos dois lados: em `f85d619~1` o arquivo
+tinha 492 / 25 / 67 e o ESTADO publicava 492 / 25 / 67; em `f85d619` e em `beb0ae1` o arquivo tinha
+**495 / 26 / 68** e o ESTADO continuava a publicar 492 / 25 / 67. A guarda estava vermelha no HEAD, e
+os dois commits entraram assim.
+
+A causa não é a guarda nem o número: é que eu **não corri o vitest** naquele commit, por ser "só
+documentação". É a terceira vez que esta forma me pega — `SWEPT_REACH` 141→142 quebrou por eu não ter
+corrido a suíte no diretório certo, e a regra de que unidade cuja verificação não correu não se
+commita está escrita desde então. Acrescentar seção a `references.md` **move três contagens**
+publicadas noutro arquivo; "só documentação" não é categoria que dispense a suíte.
+
+Corrigido no commit desta emenda, com o valor recontado pela própria guarda: **497 / 26 / 69**, já
+com a § V.3. E a § V.3 declara a novidade com o literal exato "Sem precedente encontrado" em vez de
+uma paráfrase — uma declaração que a contagem não vê é uma declaração que envelhece em silêncio pela
+mesma razão.

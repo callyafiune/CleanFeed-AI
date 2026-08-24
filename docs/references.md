@@ -5443,3 +5443,34 @@ fecha por construção. _Onde no projeto:_ D-12 do desenho; a barreira das duas 
 incondicional do sinalizado como mecanismo de cegueira, com a caracterização do triador contada como
 `c` confirmados / `r − c` falsos positivos / `k − r` não revisados — e ela fica declarada como escolha
 de desenho desta casa.
+
+
+### V.3 — o `release` sob perfil de garantia declarado: o NÍVEL de garantia tem precedente forte, o perfil sobre um corpus não
+
+_Âncora 1:_ NIST SP 800-63-3, *Digital Identity Guidelines* (junho de 2017), define **níveis de**
+**garantia** nomeados — IAL, AAL, FAL —, e o nível declara a robustez do processo que sustenta a
+asserção e não uma asserção diferente: *"FAL refers to the strength of an assertion in a federated*
+*environment"*, e cada nível é *"the robustness of"* o processo correspondente. _Onde no projeto:_
+`assuranceProfile: census-pii-screen-v1` faz o mesmo movimento — `scientificUse` continua
+`"release"` e o perfil declara **sob que robustez**. _Fato citado:_ um mesmo tipo de asserção admite
+níveis nomeados e versionados, e o nível é parte da asserção.
+[link](https://pages.nist.gov/800-63-3/sp800-63-3.html)
+
+_Âncora 2:_ ISAE 3000 (Revised), do IAASB, admite o **mesmo tipo de trabalho em dois níveis de**
+**garantia** — *reasonable* e *limited* —, em que num trabalho de garantia limitada o profissional
+reduz o risco a um nível aceitável *mas maior* do que o de garantia razoável, e o relatório **diz**
+**qual dos dois** e o que por isso não conclui. _Onde no projeto:_ a exigência de que o perfil seja
+obrigatório, versionado e impossível de confundir com um perfil de revisão humana integral — sem as
+três, o nível deixa de ser nível e passa a ser ambiguidade. _Fato citado:_ declarar o nível de
+garantia junto do parecer é prática de norma, não invenção nossa.
+[link](https://www.iaasb.org/publications/isae-3000-revised-assurance-engagements-other-audits-or-reviews-historical-financial-information)
+
+**Declaração de novidade, exigida pela regra da casa. Sem precedente encontrado (2026-08-24)** para
+o objeto específico: **selo de corpus** qualificado por perfil de garantia cuja alegação é *censo*
+*sobre bytes digestados* mais *desempenho por subtipo apenas nos controles pré-inscritos*, com
+prevalência explicitamente **não** limitada. Sem precedente também os dois argumentos com que
+esta casa justifica admitir a triagem por LLM onde antes só a leitura humana admitia — (a) a
+sensibilidade **não medida** da revisão humana de 10.000 registros e (b) a **deriva de critério**
+humano ao longo dela —; ficam declarados como raciocínio desta casa, com o contra-argumento que os
+limita escrito ao lado deles em ESTADO § 5.14 (*consistência não prova validade*; o LLM é
+não-determinístico entre execuções; humanos podem ser calibrados, se alguém o fizer).

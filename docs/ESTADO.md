@@ -274,17 +274,25 @@ depois do plano de cobertura e da razão da cota.
 curtas foram a zero; o nível de gerador está na tabela; o teto da reserva está aferido; a razão da
 cota está derivada; e as três guardas de admissão correm como descarte com denominador publicado.
 
-**O CAMINHO DO RECIBO ESTÁ DECIDIDO (2026-08-24), e é dele:** triagem por IA em **censo sobre os
-10.000**, com o selo em **`infrastructure-only`**. O desenho `llm-pii-screen` está aprovado em
-quatro rodadas e registado (§ 7); ele **não** satisfaz a R4 nem destrava o selo `release`, e
-promovê-lo a algo que um gate de selo leia fica como emenda futura, explícita e versionada. A
-consequência aceita: a família certificadora não decide, porque `integrity.scientific-use` exige
-`release` — a v1 já era `indicator-only` e já não publicava taxa de erro.
+**O CAMINHO DO RECIBO ESTÁ DECIDIDO (2026-08-24), e é dele — e é uma SEQUÊNCIA e não um selo
+fixo.** Triagem por IA em **censo sobre os 10.000**, com o perfil de garantia
+**`census-pii-screen-v1`** **pré-inscrito agora**, e o selo a caminhar: **`infrastructure-only` →
+uma execução passa os gates → `release` limitado sob aquele perfil**. Pré-inscrever agora é legítimo
+pela § 3.4 — nenhum resultado foi visto —, e o que destrava a promoção é **execução medida** e não
+decisão nova.
+
+O que o perfil afirma e o que **não** afirma está em § 5.14, verbatim, e a defensabilidade tem
+condição: o perfil é **obrigatório**, **versionado** e impossível de confundir com revisão humana
+integral. A **R4 continua não satisfeita** por este caminho, e o recibo humano por registro não
+existe nele. O híbrido em que um humano verifica os resultados fica como **v2 condicional**
+(§ 5.14b), com o mecanismo já escrito.
 
 **Ordem:**
 
 1. **implementar o `llm-pii-screen`** — minha, unidade própria com TDD e bateria, e vence antes
-   da montagem da Fase 3. Move o `evaluatorDigest` uma vez (`AUTOMATED_FILTERS`);
+   da montagem da Fase 3. Move o `evaluatorDigest` uma vez (`AUTOMATED_FILTERS`), e **pré-inscreve**
+   **o perfil** `census-pii-screen-v1`, que é gate de selo novo — o custo de contrato dele mede-se
+   na implementação, não se declara aqui;
 2. **as 400 linhas de qwen** em disco e **as 235 mistas na representação antiga** — dois atos de
    apagar material, dele, com os snapshots já fora do repositório;
 3. **gastar a cota de geração**, botão dele — e a corrida declara a **matriz de cobertura**
@@ -314,7 +322,7 @@ botão de publicação externa — os três dele, os três de fase posterior.
 | **`consume-holdout`** — o botão irreversível da medição | Fase 5 |
 | a **razão** da cota `mixed = 2000` — **retirada desta tabela em 2026-08-22, e é minha.** O VALOR já foi ratificado por ele: a tabela de 2026-08-04 traz `ai 4000 / mixed 2000` na coluna ratificada, e o que falta é a coluna de razão, que é prosa e não valor a escolher. A derivação está medida na árvore — bloco cego 20 % de 2.000 = 400 mistas, coorte ≥ 0,50 = 240 contra `criticalRecallPositives` 200; a alocação fecha exacta em 20 ilhas × 100; e o teto de material são 2.247 pais contra 2.000. Escrever a razão de um número que continua `mixed: 2_000` não gasta cota, não apaga material e não move digesto algum. Fica como **minha** dívida de registro | eu, antes de gerar a classe mista |
 | **gastar a cota de geração**, e agora ela é a única porta em pé: os dois slates servem o plano — 40 identidades de geração e 60 de mistura — e `island_plan` aceita toda ilha nas DUAS pistas, então nada em código barra uma corrida além da chave de API. Vence **antes** desta, e é **uma**, e não está nesta tabela porque é minha: a **razão** da cota `mixed = 2000`. As outras duas que esta linha cobrava estão **pagas** — a emenda da `proxyReason` selada, dentro de `preregistration-v4.json` desde `789d8cf`, e o **nível de gerador** da classe mista, decidido em 2026-08-23 (§ 3.1, § 5.11), que espera só a ratificação no molde `AG · ratificado` | antes de gerar as classes `ai` e `mixed` |
-| **como satisfazer o recibo humano que o selo de release exige, sob a auditoria amostral que ele mesmo decidiu.** Medido: `sealDataset` recusa com `DATASET_REVIEW_INVALID` um corpus `release` em que **qualquer** registro não sustente alegação de revisão, e o comentário do sítio declara que o desfecho é intencional — os 10.000 registros do corpus morto declaravam `agreement: "agree"` e uma auditoria de PII que nunca houve, e `reviewOf` lê todos como `automated/unreviewed`. O montador **proíbe-se** de produzir recibo (`NO_HUMAN_AUDIT`, com um "DO NOT ADD A RECEIPT BUILDER HERE" escrito), porque quem escreve toda linha é o único que teria os meios de fabricá-lo. `automated/unreviewed` é legítimo e sela `infrastructure-only`; o que ele não pode é sustentar alegação de que alguém olhou. Isso colide com R4 (§ 3.3), que é decisão **dele**: auditoria amostral, sem `passed` por registro. As duas pontas são dele, e reconciliá-las custa horas de revisão humana — ou o selo de release é inalcançável. **Nota de 2026-08-24:** a camada diagnóstica `llm-pii-screen` foi desenhada e registrada (§ 7) como alternativa honesta — ela não resolve esta colisão nem satisfaz R4; a escolha entre `infrastructure-only`, revisão humana integral e a camada diagnóstica continua dele | Fase 3, antes do primeiro selo `release`; hoje nenhum corpus chega lá |
+| **como satisfazer o recibo humano que o selo de release exige, sob a auditoria amostral que ele mesmo decidiu.** Medido: `sealDataset` recusa com `DATASET_REVIEW_INVALID` um corpus `release` em que **qualquer** registro não sustente alegação de revisão, e o comentário do sítio declara que o desfecho é intencional — os 10.000 registros do corpus morto declaravam `agreement: "agree"` e uma auditoria de PII que nunca houve, e `reviewOf` lê todos como `automated/unreviewed`. O montador **proíbe-se** de produzir recibo (`NO_HUMAN_AUDIT`, com um "DO NOT ADD A RECEIPT BUILDER HERE" escrito), porque quem escreve toda linha é o único que teria os meios de fabricá-lo. `automated/unreviewed` é legítimo e sela `infrastructure-only`; o que ele não pode é sustentar alegação de que alguém olhou. Isso colide com R4 (§ 3.3), que é decisão **dele**: auditoria amostral, sem `passed` por registro. As duas pontas são dele, e reconciliá-las custa horas de revisão humana — ou o selo de release é inalcançável. **Nota de 2026-08-24 — o CAMINHO já não é o que esta linha trava.** O operador escolheu a triagem em censo com perfil de garantia **pré-inscrito** (§ 3.9, § 5.14): o `release` passa a ser alcançável por **outro perfil**, com alegação estreitada e declarada, e o recibo humano por registro fica como o que um perfil de revisão humana integral exigiria — não como o único caminho até o selo. A colisão com R4 **permanece** e é aceita: este caminho não satisfaz R4 nem produz recibo por registro. **O que resta dele nesta linha, e é só isto:** ratificar o perfil `census-pii-screen-v1` **antes do primeiro selo `release`** — a ativação é marco, e marco não se atravessa sem ratificação (§ 3.7) | Fase 3, antes do primeiro selo `release`; hoje nenhum corpus chega lá |
 | re-rodar o codex em **R1** e **R2** — **feito em 2026-08-22**, sob o mandato em pé de manter o codex na revisão gastando menos, e não era item desta tabela: rodar a janela não é dinheiro, e a fronteira escrita é COMPRAR crédito. Os dois voltaram **REPROVA** com um achado cada mais um não nomeado, e os quatro estão consertados no mesmo dia (§ 7 e o registro) | fechado |
 
 ---
@@ -716,7 +724,7 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |
-| referências | **492** marcadores de link em **25** seções de nível `##` de `references.md`, e **67** declarações literais de "Sem precedente encontrado". A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve **454** — a diferença é exatamente os 38. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia — e o número por linha envelheceu **também**, publicado como 437 quando a medição dava 449, porque o teste lê os três valores da junta e não esse |
+| referências | **497** marcadores de link em **26** seções de nível `##` de `references.md`, e **69** declarações literais de "Sem precedente encontrado". A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve **454** — a diferença é exatamente os 38. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia — e o número por linha envelheceu **também**, publicado como 437 quando a medição dava 449, porque o teste lê os três valores da junta e não esse |
 
 ### 5.7 Sondas diagnósticas sobre os pools em moldura (W3)
 
@@ -1272,6 +1280,68 @@ contra o piso de 200. **1.800** passa o piso (216) e falha a alocação (4,5 por
 passa as duas e custa 400 linhas geradas por 48 positivos. O teto de material não é o vínculo: são
 2.578 pais admissíveis contra 2.000 (§ 5.4c).
 
+### 5.14 O perfil de garantia `census-pii-screen-v1`, e a sequência até o `release` (2026-08-24)
+
+**A alegação do perfil, verbatim do veredito.** `release` sob `assuranceProfile: census-pii-screen-v1` afirma **censo sobre bytes digestados** e **desempenho por
+subtipo apenas nos controles pré-inscritos**. Ele **não** afirma: ausência ou prevalência de PII
+real, `S_real`, completude taxonômica, leitura humana por registro, nem validação humana dos
+rótulos.
+
+**A condição de defensabilidade é parte da decisão, e não um ornamento:** o perfil é
+**obrigatório** (todo corpus `release` declara um), **versionado**, e **impossível de confundir**
+com um perfil de revisão humana integral. Sem as três, a redefinição é recuo disfarçado de emenda —
+o veredito diz isso nessas palavras.
+
+**A sequência:** pré-inscrever o perfil **agora**, implementar com D-12, selar
+`infrastructure-only`, e só **depois de uma execução passar os gates** ativar o `release` limitado.
+Ordem que existe para que o selo dependa de medição e não de intenção.
+
+**Por que a redefinição é defensável, e onde o argumento pára.** Dois modos de falha que eu tinha
+juntado e são distintos: **critério incompleto** — categoria que a taxonomia não nomeia — afeta a
+revisão **humana de forma idêntica**, e declarar a taxonomia não o elimina mas torna a lacuna
+nomeável; e **instrumento que perde instância de categoria declarada**, que é medível e é o que
+`S_control` mede por estrato com pisos por subtipo, com o censo a eliminar o erro de amostragem. O
+resíduo real é mais estreito do que eu disse: **dentro** de cada categoria declarada, as injeções
+são tão difíceis quanto as instâncias reais? É o `S_control ≠ S_real`, e contra ele o desenho tem
+indistinguibilidade testada, injeções in situ e fração escrita à mão pelo operador.
+
+**Dois argumentos a favor:** a revisão humana de 10.000 tem **sensibilidade não medida** — não há
+`S`, nem intervalo, nem estrato —, e a **deriva de critério** de um humano ao longo de 10.000
+registros não é medida nem declarada em lugar nenhum. O caminho da IA é menos responsabilizável e
+mais caracterizado.
+
+**O contra-argumento fica escrito, porque limita a tese:** consistência **não prova validade** —
+aplicar o mesmo critério errado a 10.000 registros é consistente e inútil; o LLM é
+**não-determinístico entre execuções**, então a uniformidade é intra-execução e a re-execução mede
+estabilidade e não acerto; humanos **podem** ser calibrados e medidos, se alguém o fizer; e a
+responsabilidade continua humana. O ganho é **auditabilidade**, não superioridade.
+
+**Os NOVE riscos nomeados, que o perfil tem de declarar:** *verification bias* / selective labels;
+confirmação humana; **falso cleared**; feedback adaptativo; contaminação por componente; conflito
+com split temporal/OOD; mutação de bytes; **PII relacional**; e confusão de **PPV** — a taxa de
+acerto entre os sinalizados não é a sensibilidade nem o FPR do corpus.
+
+### 5.14b O híbrido humano-verifica-resultados, como v2 CONDICIONAL (2026-08-24)
+
+**Não entra na v1**, e a razão é sequência e não mérito: com **D-12** — todo sinalizado dropado —
+não há registro exposto a humano dentro do corpus, e a v1 fica sem buraco de exposição para tapar.
+O híbrido entra **se e quando** `k` ou a perda de componentes ameaçar materialmente as cotas — e aí
+`k` estará **medido** em vez de estimado.
+
+**O mecanismo, escrito agora para quando for a hora:** ledger com `flagged-human-cleared`; recibo
+**ortogonal** `humanExposure`; o `review` **continua** `automated/unreviewed`, porque verificar um
+sinalizado não é revisar o rótulo; e `assign_partitions` mais um **verificador independente**
+proibindo **o componente conexo inteiro** do exposto em `cal-B` e `test` — não o registro, o
+componente. Conflito com split temporal ou OOD **dropa ou recusa**.
+
+**O custo é O(`k`):** `k` registros para um verificador, ~`2k` mais adjudicações para dois. FPR de
+0,1 / 0,5 / 1 / 2 % implica cerca de **10 / 50 / 100 / 200** falsos alertas em 10.000, mais os
+controles.
+
+**E o híbrido sozinho NÃO destrava o selo**, confirmado: `sealDataset` exige que **todo** registro
+sustente a alegação, e verificar só os sinalizados deixa ~9.900 em `automated/unreviewed`. Ele é
+qualidade e custo; o selo vem do perfil.
+
 ## 6. NÃO APLICAR — aparecem no registro e não valem
 
 **A célula v1 × inserção como "inalcançável em todo comprimento", e os Jaccard de 0,848–0,869** (publicados em 2026-08-12 no ESTADO, no registro e em duas mensagens de commit). A sonda que os produziu passou uma **string** para `shingles_of`, que recebe **lista de tokens**: ela mediu 5-gramas de **caractere**, que é outra quantidade. Medido com a API correta, o par cruza 0,82 só a partir de ~223 tokens de pai — a álgebra que eu havia feito antes e depois declarado refutada estava certa. A exclusão da célula permanece, com a razão trocada para viés de comprimento (§ 3.3), e agora presa por teste nos dois lados da fronteira. Lição registrada: passar o tipo errado a uma função de produção devolve um número que **parece** medido.
@@ -1506,7 +1576,7 @@ passa as duas e custa 400 linhas geradas por 48 positivos. O teto de material n�
 | a **composição REALIZADA não é a alocada, e o que sobrevive às guardas não demonstra a cobertura planeada.** As guardas de admissão descartam por linha, e o descarte **não é uniforme entre células**: pai mais longo (janela do extrator) desloca a probabilidade de descarte por comprimento, operação e família, então os níveis realizados que `mixed.levels` reamostra podem não ser os que `mix_cell_allocation` alocou. Consequência escrita: a alegação é **explicitamente pós-guarda** — o denominador publicado a sustenta — e **não** se extrapola para candidatos brutos nem afirma que a cobertura planeada sobreviveu. O que fecha isto é **conferir os níveis realizados contra a alocação** depois da corrida; nada em código o faz hoje | primeira corrida, junto com o rendimento de banda |
 | a **cota mista é alcançável, e o vínculo que sobrou é rendimento de banda e não número de pais.** A janela de pais é a do extrator — `common.MINIMUM_WORDS`–`MAXIMUM_WORDS`, lida por nome em `make_mixed.admissible_parents` —, e sobre `reserved.jsonl` ela admite **2.578** pais contra os 2.247 do teto anterior, o que leva as quatro ilhas curtas (92, 94, 95, 99) a **zero**. O que fica: a folga mínima é de **8** pais em `ilha_08`, então essa ilha exige **92,6 %** das edições dentro da banda, e a perda de banda vem depois da contagem. As outras dezenove exigem 87,0 % ou menos. Logo a cota deixa de ser impossível — exigia rendimento acima de 1 — e passa a ser condicional ao rendimento medido, que **nenhuma corrida mediu ainda** | medir o rendimento de banda real na primeira corrida, antes de confiar na cota |
 | a **geometria da operação é conferida no que o gerador devolve**, e o **eco do pai é recusado no `emit`**. `assert_the_geometry_matches` lê a sobrevivência do pai do MESMO diff por palavra de `mixture_spans` — remove palavra do pai? sobra pai depois do enxerto? — e essas duas respostas separam as três operações (`GEOMETRY_SURVIVAL`). A tolerância de remoção incidental **deriva** de `MIX_LEVELS` (um terço do menor nível, 5 %), porque "removeu zero" recusaria a insercao legítima em que o provedor conserta uma gralha. `assert_the_pair_is_not_an_echo` lê `near_dupes.JACCARD_THRESHOLD` — a MESMA condição que a poda aplicaria, não uma segunda autoridade — e o que ela muda é o momento. As duas correm como **descarte** no laço, no molde do veredito de banda, e a corrida publica `descartados por guarda: {…}` **sempre**, porque a ausência da linha e o zero não podem parecer iguais | **feita** em 2026-08-23 |
-| a **triagem de PII por censo está DESENHADA e aprovada, e não implementada.** O desenho `llm-pii-screen` — filtro automático na união existente, censo sobre o funil único de `assemble_corpus.main()` pré-cota/pré-split, todo sinalizado dropado, ledger de disposições por `(id, sha256)` digestado, controles semeados com `S_control` por estrato e gates adversariais por pares corretos, preflight de sobreviventes pós-poda — passou por quatro rodadas de codex (REPROVA ×3, APROVA na v4) e está no registro (2026-08-24) com referências em § V de `references.md`. O que ele compra: alegação honesta de triagem com `prevalenceBound: null`; o que não compra: R4, selo `release`, e qualquer limite sobre PII real. Implementar move o `evaluatorDigest` uma vez (`AUTOMATED_FILTERS`) | implementação: antes da montagem da Fase 3, como unidade própria com TDD e bateria |
+| a **triagem de PII por censo está DESENHADA e aprovada, e não implementada.** O desenho `llm-pii-screen` — filtro automático na união existente, censo sobre o funil único de `assemble_corpus.main()` pré-cota/pré-split, todo sinalizado dropado, ledger de disposições por `(id, sha256)` digestado, controles semeados com `S_control` por estrato e gates adversariais por pares corretos, preflight de sobreviventes pós-poda — passou por quatro rodadas de codex (REPROVA ×3, APROVA na v4), e a **emenda do perfil de garantia** por uma quinta; está no registro (2026-08-24) com referências em § V de `references.md`. **O que ele compra, e é mais do que a primeira versão desta linha dizia:** o caminho até `release` sob `assuranceProfile: census-pii-screen-v1` — pré-inscrito agora, ativado por uma execução que passe os gates (§ 5.14). **O que ele não compra:** R4, `S_real`, completude taxonômica, e qualquer limite sobre PII real. Implementar move o `evaluatorDigest` uma vez (`AUTOMATED_FILTERS`) | implementação: antes da montagem da Fase 3, como unidade própria com TDD e bateria |
 | a **poda morde em `insercao/25`, e o VALOR do regime de eco continua não medido.** § 5.4d: 11 cruzamentos em 618.720 sorteios, todos nessa célula, **0,036** linhas esperadas por corrida, e quatro dos onze de pai que o teto anterior já admitia. O regime de eco está **fechado por protocolo** e não por medição: `assert_the_pair_is_not_an_echo` recusa no `emit` e o descarte entra no denominador publicado, então a alegação passa a ser condicional a saídas pós-guarda em vez de silenciosa. O que continua sem número é a **taxa** com que um gerador real ecoa, e medi-la exige saída de gerador real | a taxa, na primeira corrida; o protocolo está fechado |
 | a **pista de geração da reserva existe** — `generate_ai.py --provider ollama`, que reusa ilha, semente, pareamento de comprimento, janela de palavras, PII, resume e lote —, e o que fica aberto é a decisão do operador sobre as 400 linhas que já estão em disco. **Quatro medições, e cada uma é razão para regerar em vez de completar:** (i) o template daquelas 400 **não foi recuperado** — `promptSha256` `f823530d215fffe8…`, bytes ausentes do repositório e do snapshot, quinze reconstruções testadas contra o digesto sem casar (um acerto seria prova, uma falha não é) —, então **com o template que o repositório carrega** as 50 que faltam até 450 carregam outro digesto de prompt; o que não está aferido é necessidade — os bytes podem reaparecer; (ii) **67 das 400 estão abaixo do mínimo de 50 palavras** e uma não está na forma canônica, porque o script não commitado não passou pelo `CandidateWriter`; (iii) **328 das 400 têm pai fora das ilhas reservadas**, e a reserva assenta por COMPONENTE — uma linha reservada semeada em ilha de núcleo arrasta as linhas de núcleo que o pai humano une para o bloco cego; (iv) o runtime local está em **0.32.15** e as 400 gravaram **0.32.6**, então a reprodutibilidade delas contra o binário instalado deixou de valer. A pista nova fecha (ii), (iii) e (iv) por construção e não pode consertar (i). **Regerar é apagar material, que é nunca delegado** | a decisão das 400 é **do operador**; a pista está feita |
 | **nada cruza modelo e effort com template, e a lacuna é de PLANO.** Medido: uma ilha carrega `templates`, `mixingTemplates`, `seedBlock`, `lines` e `reserved`; uma receita carrega `task`, `register`, `template` e `weight`. **Nenhum dos dois nomeia modelo ou effort** — os dois são argumentos POR CORRIDA, e nada garante que um modelo apareça em mais de uma ilha. Duas leituras da consequência foram procuradas em 2026-08-22 e o que sobrou é mais estreito do que as duas. **(i) A fatia que sofre atribuição existe, e é a da RESERVA.** Nenhuma fatia é chaveada por modelo ou effort — `SliceAxis` tem dez membros —, mas `generatorExposure` é **derivada de `generatorFamily`** (`heldOut.has(family) ? "unseen" : "seen"`), então um confundimento de nível de família alcança-a. E alcança de facto: a reserva é gerada nas três ilhas reservadas, logo o recall da fatia `unseen` fica confundido com os templates dessas ilhas, e nenhuma reamostragem os separa. Isso é o mesmo confundimento que a `proxyReason` da classe mista declara, num eixo que **tem** gate. **(ii) A ameaça ao INTERVALO não foi demonstrada.** Supus que uma família num só cluster de template estreitaria o intervalo de `ai-recall` (que aninha `promptTemplate` dentro de `generatorFamily`). Medido pela função de produção em dois regimes de lote, a largura **não mostrou tendência monótona** com a cardinalidade do template (0,2167 e 0,2167 com um e dois templates num regime; 0,2250 e 0,2000 no outro). O fixture **não isola** a cardinalidade da partição posicional dos acertos entre templates, nem do alinhamento das fronteiras de lote, então nem o efeito nem a ausência dele estão estabelecidos — e uma guarda escrita sobre isso foi retirada por falta de consequência medida. O que fica é **plano de cobertura**, com a fatia da reserva como o consumidor conhecido, e congelar a lista de modelos está fora de questão porque o roster é de fora e se move (§ 5.10) | antes de gerar a classe `ai` |
