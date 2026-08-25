@@ -3912,13 +3912,14 @@ export function assertMaterialBatchesResolve(
  * therefore not pedantry about a missing field — it is refusing a lineage with no
  * evidence at its root.
  *
- * NOT WIRED YET. `parseBenchmarkDataset` deliberately does not call it: that
- * function parses a JSONL file that may be one PARTITION, and a parent legitimately
- * lives in another, so calling it there would refuse valid files. It belongs on the
- * whole-corpus path — C3's audit, beside `assertDeclaredAxesResolved` — and until
- * that call exists a JSONL file whose derived rows name a missing or non-human
- * parent parses without complaint. The refusal is proven against this function, not
- * against any pipeline.
+ * WIRED ON THE WHOLE-CORPUS PATH, and NOT on the per-file one. `parseBenchmarkDataset`
+ * deliberately does not call it: that function parses a JSONL file that may be one
+ * PARTITION, and a parent legitimately lives in another, so calling it there would
+ * refuse valid files. `commands/split.ts` DOES call it, before the split is cut, which
+ * is the whole-corpus path this belongs on — so a corpus whose derived rows name a
+ * missing or non-human parent parses file by file and is then refused at the split. The
+ * distinction matters to a producer: the refusal is real, and it fires one command after
+ * the assembly that wrote the rows.
  */
 export function assertDerivedParentsResolve(
   records: readonly BenchmarkRecord[],

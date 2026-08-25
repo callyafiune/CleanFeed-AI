@@ -265,6 +265,62 @@ class DropTests(unittest.TestCase):
         self.assertEqual(result.counts["flagged"], 1)
         self.assertEqual(result.counts["cascade-parent-flagged"], 1)
 
+    def test_a_gerada_cuja_SEMENTE_foi_sinalizada_sai_em_categoria_propria(self) -> None:
+        # A metade que faltava da cascata. Uma linha gerada nomeia a semente humana em
+        # `humanSeed`, e `assertDerivedParentsResolve` recusa o corpus cujo valor de la
+        # nao seja id de registro presente: dropar a semente e deixar a geracao dentro
+        # produzia um corpus que o comando de split recusa.
+        humans = [human_candidate("src_p1", "p1")]
+        ai = [
+            {
+                "candidateId": "a1",
+                "text": "gerado " * 20,
+                "meta": {"pairedWith": "src_p1"},
+            }
+        ]
+        projection = ac.screening_projection(humans, ai, [])
+        ledger = self.ledger_for(projection, {ac.funnel_key(humans[0])})
+        result = ac.drop_the_flagged(humans, ai, [], ledger)
+        self.assertEqual(result.humans, [])
+        self.assertEqual(result.ai, [])
+        # CATEGORIA PROPRIA, e separada da mista: uma mista e barata de regerar do mesmo
+        # pai, uma geracao e uma chamada paga, e somar as duas esconderia o preco.
+        self.assertEqual(result.counts["cascade-ai-seed-flagged"], 1)
+        self.assertEqual(result.counts["cascade-parent-flagged"], 0)
+
+    def test_a_gerada_cuja_semente_NAO_foi_sinalizada_fica(self) -> None:
+        humans = [human_candidate("src_p1", "p1")]
+        ai = [
+            {
+                "candidateId": "a1",
+                "text": "gerado " * 20,
+                "meta": {"pairedWith": "src_p1"},
+            }
+        ]
+        projection = ac.screening_projection(humans, ai, [])
+        ledger = self.ledger_for(projection)
+        result = ac.drop_the_flagged(humans, ai, [], ledger)
+        self.assertEqual(len(result.ai), 1)
+        self.assertEqual(result.counts["cascade-ai-seed-flagged"], 0)
+
+    def test_a_gerada_cuja_semente_NUNCA_esteve_no_pool_fica(self) -> None:
+        # A cascata e sobre semente SINALIZADA, e nao sobre semente ausente: a ausente e
+        # decidida um passo depois, sobre os registros construidos, e confundir as duas
+        # faria a triagem responder por uma pergunta que nao e dela.
+        humans = [human_candidate("src_p1", "p1")]
+        ai = [
+            {
+                "candidateId": "a1",
+                "text": "gerado " * 20,
+                "meta": {"pairedWith": "semente_que_nunca_existiu"},
+            }
+        ]
+        projection = ac.screening_projection(humans, ai, [])
+        ledger = self.ledger_for(projection, {ac.funnel_key(humans[0])})
+        result = ac.drop_the_flagged(humans, ai, [], ledger)
+        self.assertEqual(len(result.ai), 1)
+        self.assertEqual(result.counts["cascade-ai-seed-flagged"], 0)
+
     def test_a_cascata_atravessa_o_RENOMEIO_do_pai(self) -> None:
         # O pai E renomeado — uma linha `ai` tomou a identidade primeiro —, e a cascata
         # continua a acha-lo: ela liga pela REFERENCIA, e a referencia nao se move.

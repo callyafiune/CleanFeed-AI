@@ -409,21 +409,76 @@ class MainSnapshotTests(unittest.TestCase):
         self.assertIn(f"mix_{pai}", ids)
         self.assertIn(pai, ids)
 
-    def test_a_poda_derruba_o_pai_e_a_mista_CHEGA_ao_corpus(self) -> None:
-        # A mista E o texto do pai com um trecho enxertado, entao as duas caem no mesmo
-        # cluster de quase-duplicata. A poda guarda a de prioridade menor — a mista — e
-        # derruba o pai. Com a chave partilhada, o nome devolvido por `prune` nomeava as
-        # duas e as duas morriam: perda de material que ninguem escolheu.
-        self.write_humans(50)
-        pai = human_row(self.PRIMEIRO_PAI_MISTO)
-        enxertada = pai["text"].replace(
-            f"palavra{self.PRIMEIRO_PAI_MISTO}_7", "enxerto"
-        )
-        self.write_mixed(self.vinte_mistas(enxertada))
+    def test_a_mista_quase_duplicada_do_pai_sai_com_ele_e_nao_chega_ao_corpus(
+        self,
+    ) -> None:
+        # PONTA A PONTA da retractacao: a poda derruba o pai (a mista tem prioridade
+        # menor e fica), e a mista sai depois, porque a linhagem dela nomeia um registro
+        # que o corpus nao tem. Guardar a filha e derrubar o pai nao guarda material — e
+        # o corpus que sairia dali seria recusado pelo comando de split.
+        # Os pais das mistas ficam DENTRO dos que o nucleo `ai` pareia (h1..h40), e a
+        # razao e aritmetica de cota: a escala de amostra escolhe 40 humanas, e cada linha
+        # derivada exige o pai dela entre as escolhidas. Com pais mistos fora desse
+        # conjunto, as ancoras distintas passam de 40 e a selecao tem de cortar algumas —
+        # o que orfana linhas derivadas que nada de errado tem.
+        primeiro = 6
+        self.write_humans(45)
+        pai = human_row(primeiro)
+        enxertada = pai["text"].replace(f"palavra{primeiro}_7", "enxerto")
+        # VINTE E UMA, para a cota de vinte fechar DEPOIS de a orfa sair: a mista cujo
+        # pai a poda derrubou e cortada antes da selecao, entao escrever exactamente
+        # vinte deixaria a classe com dezenove e as fracoes do split fora do alvo.
+        # UMA mista, e so uma: o caso mede que ela SAI, entao a classe fica vazia e o
+        # corpo volta a ser o de humanas mais geradas — a mesma forma dos outros casos
+        # deste arquivo. Uma classe mista sobrevivente poria a aritmetica de subconjuntos
+        # do split dentro deste caso, que nao e o que ele mede.
+        self.write_mixed([mixed_row(primeiro, enxertada)])
         self.run_main()
         ids = [record["id"] for record in self.records()]
-        self.assertIn(f"mix_{pai['candidateId']}", ids)
+        # O pai caiu na poda e a mista saiu com ele: nenhum dos dois esta no corpus.
         self.assertNotIn(pai["candidateId"], ids)
+        self.assertNotIn(f"mix_{pai['candidateId']}", ids)
+        self.assertEqual([i for i in ids if i.startswith("mix_")], [])
+
+    def test_a_selecao_humana_RECEBE_as_ancoras_das_duas_classes_derivadas(self) -> None:
+        # A costura, e ela nao se le de `balanced_humans`: o efeito de honrar uma ancora
+        # esta medido em `test_funnel_identity.py`; o que falta e que `main()` as passe, e
+        # que passe as das DUAS classes. Sem as mistas na conta, o pai de uma mista pode
+        # ser cortado pela cota e a mista sai com ele.
+        # Os pais das mistas ficam FORA do alcance do nucleo `ai` (que pareia h1..h40),
+        # porque de outro modo a metade `ai` das ancoras ja os traria e apagar a metade
+        # mista nao mudaria nada — o caso mediria menos do que diz.
+        primeiro = 41
+        self.write_mixed(
+            [
+                mixed_row(primeiro + offset, " ".join(f"mix{offset}_{n}" for n in range(60)))
+                for offset in range(5)
+            ]
+        )
+        vistas: list[set[str]] = []
+        original = ac.balanced_humans
+
+        def espia(cands, total, anchors=None):
+            vistas.append(set(anchors or ()))
+            return original(cands, total, anchors)
+
+        ac.balanced_humans = espia
+        try:
+            self.run_main()
+        except ac.UnsplittableCorpus:
+            # TOLERADA, e a razao esta escrita: cinco mistas fazem de cada componente
+            # 20 % da classe, e a menor particao pede 5 % — granularidade, nao tamanho de
+            # corpo. Este caso mede o que a SELECAO recebe, e a selecao corre antes.
+            pass
+        finally:
+            ac.balanced_humans = original
+        self.assertEqual(len(vistas), 1)
+        ancoras = vistas[0]
+        # As sementes das geradas de nucleo (o nucleo pareia h1..h40) ...
+        self.assertIn("src_ptwiki_h1", ancoras)
+        # ... e os pais das mistas, que sao a metade que uma mutacao apagava em silencio.
+        for offset in range(5):
+            self.assertIn(f"src_ptwiki_h{primeiro + offset}", ancoras)
 
     def test_a_LIGACAO_pai_mista_corre_entre_a_desambiguacao_e_a_projecao(self) -> None:
         # A POSICAO e a alegacao, e ela nao se le de nenhuma funcao pura: resolver a

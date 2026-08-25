@@ -12380,3 +12380,184 @@ A distinção identidade/referência é normalização elementar (chave primári
 estrangeira), e a regra de que um impositor de unicidade não muta chave estrangeira não é
 precedente de pesquisa — é o modelo relacional. A faixa de Jaccard do par pai/mista é a medição do
 § U.3 de `references.md`, já ancorada. Nada entra.
+
+## O cross-review REPROVOU a unidade da identidade, e o achado maior é de MATERIAL (2026-08-24)
+
+Uma rodada adversarial de codex sobre `63738d2` devolveu **REPROVA** com quatro achados — dois
+altos, dois médios — e **os quatro eram reais**. Um deles, perseguido até ao material em disco,
+abriu a coisa mais séria que este projeto tem em aberto antes de gastar a cota de geração. A
+sequência abaixo é a dos achados; a medição em material vem depois.
+
+### C-1 (alta) — a desambiguação corria DEPOIS das podas, e as homónimas morriam em par
+
+`prune` e `drop_seen_against` devolvem **conjuntos de nomes**, e o montador filtra os três pools por
+pertença a esses conjuntos. Duas linhas que cheguem ali com a **mesma identidade** vivem e morrem
+juntas, mesmo em clusters diferentes — e chegar com a mesma identidade não é excepcional: duas
+mistas do mesmo pai (o funil lê dois arquivos, e `already_done` chaveia por pai dentro de **um**),
+duas lanes `ai` que pediram o mesmo pai (**295** renomeios medidos no material). O revisor mediu o
+custo na poda global: **6.827 ocorrências eliminadas contra 6.800 decisões por ocorrência** — 27
+linhas mortas pelo nome de outra.
+
+`enforce_unique_keys` passou a correr **antes** das podas. Todo nome que elas devolvem nomeia uma
+linha só.
+
+### C-2 (média) — a identidade não era o id do registro BYTE A BYTE
+
+`funnel_key` devolvia o `candidateId` cru e os construtores escreviam `slug(identidade)`. Então
+`id.a` e `id_a` eram identidades **distintas** que produziam o **mesmo** `id` — `DUPLICATE_ID` na
+ingestão, e a unicidade imposta no espaço errado. O `slug` passou para dentro de `funnel_key`, que é
+idempotente, e a igualdade «identidade = id do registro» deixou de ser aproximação. O caso afirma
+**as duas coisas**: as identidades ficam distintas **e** cada uma é token `/^[A-Za-z0-9_-]+$/` — a
+primeira sozinha aprovava um `id.a` que a ingestão recusa.
+
+### C-3 (alta) — «pai não resolvido é resultado legítimo» era FALSO, e a docstring do esquema mentia
+
+`assertDerivedParentsResolve` recusa o corpus inteiro quando `humanSeed` ou `derivationRoot` não
+nomeiam registro presente. A docstring dela diz **«NOT WIRED YET… `parseBenchmarkDataset`
+deliberately does not call it»** — e isso **está desactualizado**: `benchmark/commands/split.ts:116`
+chama-a. Contar a órfã e seguir não guardava material; trocava uma linha por uma **montagem
+recusada um comando depois**, com a mensagem a nomear o esquema em vez do funil.
+
+O conserto tem **duas** metades, e a posição de cada uma é a alegação:
+
+- **antes da selecção**, `drop_orphan_derived_rows` tira toda linha derivada cujo pai não está no
+  pool humano, contada por classe. Deixá-la chegar à cota fazia a cota ser preenchida com linhas que
+  desaparecem depois — 4.000 escolhidas, menos as órfãs, corpus curto sem ninguém escolher isso;
+- **depois da construção**, `drop_records_whose_parent_is_absent` é o guarda que prova que a
+  combinação de poda, triagem e selecção fechou. Faz **as duas** perguntas do guarda selado
+  (presença, e classe humana para `humanSeed`) e **não** a terceira (`labelBasis` no pai), porque
+  `human_record` recusa a linha humana que não o produz — repeti-la seria segunda autoridade sobre
+  um facto que o construtor garante.
+
+### C-4 (média) — o fixture do seam escondia referências órfãs
+
+Os pais das mistas estavam fora do conjunto que a selecção escolhe, então as vinte pontes
+desapareciam antes do split e o caso — que só conferia ordem — passava. Com C-3 as órfãs saem
+contadas, e o fixture passou a nomear pais que a selecção **mantém**. A aritmética que isso obrigou
+a escrever está no sítio: cada mista traz o pai consigo, então o bloco cego tem de ter lugar humano
+para ela **depois** de a reserva assentar inteira.
+
+---
+
+## E O ACHADO QUE OS QUATRO ABRIRAM: a geração em disco está pareada com humanas que o corpus não pode conter
+
+Perseguindo C-3 até ao material, a conta é esta, e cada número é medido:
+
+| medição | valor |
+|---|---:|
+| linhas `ai` em disco | **4.048** |
+| … que nomeiam semente **ausente** do pool humano | **2.319** |
+| … que nomeiam semente **presente** | **253** |
+| … sem semente declarada (a reserva, cujo `pairedWith` o loader descarta) | **1.476** |
+| linhas mistas em disco | **2.135** |
+| … cujos pais vivem **só** em `reserved.jsonl` | **2.135** (todas) |
+
+**As 2.319 sementes ausentes são de fontes que a moldura já não declara:** os ids são `src_ptso_*` e
+companhia, e por família geradora repartem-se em `gpt-5.6-luna` 1.294, `gemini-3.5-flash-lite` 414,
+`gemini-3.5-flash-low` 320, `gemini-3.5-flash-medium` 99, `gemini-3.1-flash-lite` 190,
+`gemini-3-flash-preview` 2. **Nenhuma** delas é id de `reserved.jsonl`.
+
+**As mistas são o caso fechado por construção, e por três razões ao mesmo tempo:** `load_humans`
+exclui de propósito a reservada que é pai de mista (`r["id"] not in parents` — **2.135** excluídas de
+2.578 label-0, sobrando 443); nenhuma linha reservada é expressável em v3 (não carrega licença, data
+nem eixos — `MissingDocumentLicense` é a primeira das quatro recusas); e **1.597** das 2.135 têm
+`parentFamily` fora da moldura de qualquer modo (`ptso_qa` 1.111, `carolina_*` 486). As 538 em
+moldura morrem no pai ausente.
+
+### A consequência, dita sem margem
+
+Uma montagem sobre o material de hoje produz um corpus que **`benchmark split` recusa**. Não é
+opinião: é `assertDerivedParentsResolve` sobre `humanSeed`, chamado por `commands/split.ts`. E como
+a Fase 3 nunca correu o split sobre um corpus v4, ninguém tinha visto.
+
+### O que isto decide, e a decisão é minha
+
+**A pista de geração tem de parear com as humanas que o corpus vai conter.** Não é opção de
+qualidade: o esquema selado força-o — para uma linha gerada de pai humano real, `humanSeed` só pode
+ser `known`, e `known` tem de resolver. As alternativas foram consideradas e caem: `unknown` seria
+falso (sabemos o pai), `notApplicable` seria falso (há pai), e emendar o guarda selado é desfazer a
+condição que mantém semente e geração na mesma partição.
+
+**A população certa está medida, e é melhor do que a que o plano usava:**
+
+| população de pais | admissíveis pela janela do extrator | ilhas cobertas | menor ilha | rendimento de banda mínimo |
+|---|---:|---:|---:|---:|
+| `reserved.jsonl` (§ 5.4c, 2026-08-22) | 2.578 | 20 | 108 (`ilha_08`) | **92,6 %** |
+| **`wikipedia_fresh.jsonl` (vigente)** | **5.000** | **20** | **230** (`ilha_06`, `ilha_10`, `ilha_01`) | **43,5 %** |
+
+Todas as 5.000 linhas frescas passam a janela (`common.MINIMUM_WORDS`–`MAXIMUM_WORDS`), todas são
+`ptwiki_lead`, todas carregam licença, data e eixos — logo todas são expressáveis. As vinte ilhas
+ficam cobertas e a menor tem **230** pais contra uma cota de 100 por ilha.
+
+**Isto supersede a tabela da § 5.4c** e corrige a frase da § 5.13 «o teto de material não é o
+vínculo: são 2.578 pais admissíveis contra 2.000» — o número é 5.000, e os 2.578 eram da população
+errada.
+
+### A selecção passou a proteger a âncora, e a razão é preço
+
+`balanced_humans` tomava as primeiras da célula. Uma humana cortada pela cota levava consigo toda
+linha gerada que a nomeia — e trocar uma **extracção** por uma **chamada paga** é trocar o barato
+pelo caro. As âncoras (sementes das geradas selecionadas mais pais das mistas selecionadas) vão à
+frente dentro da célula, com a ordem relativa preservada, então a selecção continua determinista. E
+as classes geradas passaram a ser selecionadas **primeiro**: o que elas nomeiam decide quais humanas
+têm de ficar, e escolher as humanas antes era escolher sem saber o que se ia perder.
+
+### A cascata da triagem alcançou a classe `ai`, que era a metade que faltava
+
+D-12 dropa a humana sinalizada; a mista derivada dela já saía em categoria própria. A **geração** que
+a nomeia em `humanSeed` **ficava** — e o corpus resultante seria recusado pelo split. As duas
+cascatas são contadas **separadamente** (`cascade-ai-seed-flagged`, `cascade-parent-flagged`) porque
+custam material diferente: uma mista é barata de regerar do mesmo pai, uma geração é uma chamada
+paga.
+
+### RETRACTAÇÃO: a poupança da poda não é o par pai/mista
+
+A entrada anterior publicou, como benefício medido, «a poda derruba o pai e a mista SOBREVIVE».
+**Está errado**, e a razão é a que C-3 estabelece: a mista precisa do pai presente, então guardar a
+filha e derrubar o pai não guarda nada — as duas saem, antes e depois do conserto, e só a razão
+muda. A poupança real são as **homónimas** (duas mistas do mesmo pai, duas lanes `ai` do mesmo pai),
+que é o que C-1 mede. O caso mudou de nome e de conteúdo, e o caso da retractação — o par sai
+inteiro — está escrito ao lado dele.
+
+### A bateria: 11 mutações, 11 mortas, e cinco sobreviveram à primeira volta
+
+| # | mutação | caso que ficou VERMELHO |
+|---|---|---|
+| M71 | `funnel_key` devolve o `candidateId` cru | *duas identidades que o slug COLAPSA* |
+| M72 | a desambiguação volta a correr depois das podas | *a LIGACAO corre entre a desambiguacao e a projecao* |
+| M73 | a órfã `ai` deixa de sair antes da cota | *a gerada cuja semente nao esta no pool SAI contada* |
+| M74 | a órfã mista deixa de sair antes da cota | *a mista cujo pai nao esta no pool SAI contada* |
+| M75 | o guarda deixa de recusar a ausência | *registro cujo pai nao esta no corpus SAI*, mais 1 |
+| M76 | o guarda aceita pai presente não humano | *pai presente que NAO E HUMANO tambem sai* |
+| M77 | o guarda pergunta só por um eixo de linhagem | *pai presente que NAO E HUMANO tambem sai* |
+| M78 | a cascata não alcança a classe `ai` | *a gerada cuja SEMENTE foi sinalizada sai*, mais 1 |
+| M79 | a selecção humana ignora as âncoras | *a selecao humana RECEBE as ancoras* |
+| M80 | as âncoras não incluem os pais das mistas | *a selecao humana RECEBE as ancoras* |
+| M81 | `named_seed_identity` não converte em token de eixo | *a semente e TOKEN de eixo* |
+
+**Cinco sobreviveram na primeira volta, e cada sobrevivência era uma asserção a menos:**
+
+1. **M71** — o caso afirmava que as identidades ficavam distintas e não que eram **tokens**. Sem
+   slug, `id.a` e `id_a` continuam distintas e o caso passava; o defeito muda de sítio em vez de
+   desaparecer. Passou a afirmar as duas coisas.
+2. **M74** — o guarda pós-construção apanhava a mesma órfã, então apagar o corte pré-cota deixava a
+   suíte verde. A **posição** é a alegação (a cota preenchida com sobreviventes), e ela ganhou casos
+   puros próprios.
+3. **M79 e M80** — nenhum caso media que `main()` **passa** as âncoras. E quando o primeiro foi
+   escrito, **M80 continuou a sobreviver**: os pais das mistas do fixture eram também sementes de
+   geradas, então a metade `ai` das âncoras já os trazia e apagar a metade mista não mudava nada. O
+   fixture passou a usar pais **fora** do alcance do núcleo.
+4. **M81** — nada media que a semente é convertida em token de eixo, então escrever a cadeia crua do
+   arquivo de pares deixava a suíte verde e explodiria em `group_axes.known`.
+
+É a terceira vez que a mesma lição aparece nesta sessão: **medição não transfere entre formas**, e um
+guarda a jusante que apanha o mesmo estado esconde a mutação do guarda a montante.
+
+### Referências: uma correcção de documentação selada, e nada novo
+
+A docstring de `assertDerivedParentsResolve` (`benchmark/schema.ts`) afirma «NOT WIRED YET» e nomeia
+a razão — `parseBenchmarkDataset` parseia uma partição, e o pai pode viver noutra. A segunda metade
+continua verdadeira; a primeira **não**, desde que `commands/split.ts` passou a chamá-la. Corrigida
+no mesmo commit, porque é a regra da § U.4 de `references.md`: o comentário não pode declarar uma
+limitação que o mecanismo deixou de ter. Nada de precedente externo entra: identidade contra
+referência é modelo relacional, e a aritmética das ilhas é medição própria.

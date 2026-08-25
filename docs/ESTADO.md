@@ -23,7 +23,7 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 172 arquivos / 3.127 testes (vitest) + 880 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| suíte | 172 arquivos / 3.127 testes (vitest) + 898 testes e 970 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
 | dos quais, o avaliador | 2.500 — 1.739 em 46 arquivos de `benchmark/tests`, 761 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
@@ -481,7 +481,7 @@ abre depois da emenda da moldura é só `wikipedia_fresh.jsonl` (5.000 linhas) m
 A linha "documentos de origem conhecidos na célula" acima descreve o pool de 24/07, que § 5.4b substitui:
 a extração de 2026-08-06 escreve `groupAxes` e o piso passa.
 
-### 5.4c Os pais mistos por ILHA, e o rendimento que cada uma exige (2026-08-22)
+### 5.4c Os pais mistos por ILHA, e o rendimento que cada uma exige (2026-08-22) — **SUPERSEDITADA em 2026-08-24 pela § 5.15: a população medida aqui é a errada**
 
 Medido sobre `benchmark/data/dataset/reserved.jsonl` por `make_mixed.admissible_parents` — as duas
 telas que a pista aplica antes de gastar chamada, `label == 0` e a janela do extrator — e chaveado
@@ -723,7 +723,7 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 |---|---|
 | componentes independentes na célula, hoje | **4.000**, todos de tamanho 1, sobre o corpo estampado de 2026-08-06 (§ 5.4b) — a unidade é a PÁGINA (`groups.source = ptwiki_page_<page_id>`) e o piso de 300 fica 13,3× folgado. Era 1 enquanto o pool de 24/07 não carregava `groupAxes` |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| `evaluatorDigest` da árvore | `583005d1503e6b09d0f954a93f93034544123d4936e20ef1b33bf83ed4daa76c` — 53 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
+| `evaluatorDigest` da árvore | `c32abba5e6f4a00f0a1630bccd5ea47d5cb983a176350195857ec3bab977a4ef` — 53 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
 | byte de controle cru em caminho rastreado | **zero**, e imposto por dois testes nomeados, com escopos diferentes de propósito. `digests.test.ts` ("carry no raw control byte, so no code-search tool can skip an evaluator file") varre os **53** de `EVALUATOR_FILES` e **não isenta nada**, porque os bytes desses arquivos são a identidade do avaliador. `tests/unit/repo/line-endings.test.ts` ("leaves no raw control byte in a tracked path the repo calls text") varre **todo** caminho de `git ls-files`, isentando só extensão que `.gitattributes` declara `binary` — nenhuma rastreada hoje, então na prática é a árvore inteira. Os dois recusam controle C0 fora de LF, TAB e CR e apontam `arquivo:linha:coluna` mais o offset de byte. A isenção **não** é a classificação `i/-text` do git: ela é causada pelo byte cru, e filtrar por ela pularia justamente o infrator |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
@@ -1281,8 +1281,54 @@ condições independentes:
 
 **Alternativa recusada: 1.600** — o múltiplo de 400 imediatamente abaixo, que dá **192** positivos
 contra o piso de 200. **1.800** passa o piso (216) e falha a alocação (4,5 por célula). **2.400**
-passa as duas e custa 400 linhas geradas por 48 positivos. O teto de material não é o vínculo: são
-2.578 pais admissíveis contra 2.000 (§ 5.4c).
+passa as duas e custa 400 linhas geradas por 48 positivos. O teto de material não é o vínculo — e o número **mudou**: eram
+2.578 pais admissíveis de `reserved.jsonl` (§ 5.4c), que é a população **errada**, e são
+**5.000** da extração fresca (§ 5.15), contra 2.000.
+
+### 5.15 A geração em disco está pareada com humanas que o corpus NÃO PODE CONTER (2026-08-24)
+
+**Medido no material, e é o achado que mais custa antes de gastar a cota.** O esquema selado exige
+que `humanSeed` e `derivationRoot` de uma linha derivada nomeiem **registro presente**
+(`assertDerivedParentsResolve`), e `benchmark/commands/split.ts` chama-o antes de cortar o split.
+Logo uma linha gerada cuja semente não está no corpus **não pode entrar nele**.
+
+| medição | valor |
+|---|---:|
+| linhas `ai` em disco | **4.048** |
+| … semente **ausente** do pool humano | **2.319** |
+| … semente **presente** | **253** |
+| … sem semente declarada (a reserva; `load_ai` descarta o `pairedWith` dela) | **1.476** |
+| linhas mistas em disco | **2.135** |
+| … cujos pais vivem **só** em `reserved.jsonl` | **2.135** (todas) |
+
+**Por que ausentes:** as sementes são `src_ptso_*` e companhia — fontes que a moldura já não declara.
+Por família geradora: `gpt-5.6-luna` 1.294, `gemini-3.5-flash-lite` 414, `gemini-3.5-flash-low` 320,
+`gemini-3.1-flash-lite` 190, `gemini-3.5-flash-medium` 99, `gemini-3-flash-preview` 2. **Nenhuma** é
+id de `reserved.jsonl`. As mistas são fechadas por três razões ao mesmo tempo: `load_humans` exclui a
+reservada que é pai de mista (**2.135** de 2.578 label-0, sobrando 443), nenhuma reservada é
+expressável em v3 (sem licença, data nem eixos), e **1.597** têm `parentFamily` fora da moldura
+(`ptso_qa` 1.111, `carolina_*` 486).
+
+**A população CERTA, medida, e é melhor do que a do plano:**
+
+| população de pais | admissíveis pela janela do extrator | ilhas | menor ilha | rendimento de banda mínimo |
+|---|---:|---:|---:|---:|
+| `reserved.jsonl` (§ 5.4c) | 2.578 | 20 | 108 | **92,6 %** |
+| **`wikipedia_fresh.jsonl`** | **5.000** | **20** | **230** | **43,5 %** |
+
+Todas as 5.000 passam a janela, todas são `ptwiki_lead` e todas são expressáveis. **Isto supersede a
+§ 5.4c** e corrige a § 5.13.
+
+**O que o código faz agora com isso:** a linha derivada órfã sai **antes da selecção**
+(`drop_orphan_derived_rows`, contada por classe), a selecção humana **protege as âncoras** que as
+classes geradas nomeiam, a cascata da triagem alcança a classe `ai`, e um guarda pós-construção
+(`drop_records_whose_parent_is_absent`) prova que a combinação fechou. Nada disto **cria** material:
+com o material de hoje, a classe `ai` fica em **1.729** linhas utilizáveis contra a cota de 4.000, e a
+mista em **zero**.
+
+**A decisão, minha, registada:** a pista de geração pareia com as humanas que o corpus vai conter. As
+alternativas caem por esquema — `unknown` seria falso (sabemos o pai), `notApplicable` seria falso (há
+pai), e emendar o guarda selado desfaz a condição que mantém semente e geração na mesma partição.
 
 ### 5.14 O perfil de garantia `census-pii-screen-v1`, e a sequência até o `release` (2026-08-24)
 
@@ -1339,7 +1385,7 @@ declara. **O custo medido:** `evaluatorDigest` moveu **uma** vez, de
 outra vez — é isso que faz de ativar o perfil ato auditável e não configuração.
 **O digesto moveu uma SEGUNDA vez, e a razão não é o contrato: é um achado do
 cross-review.** `d1086098…` durou um commit; o valor de hoje é
-`583005d1503e6b09d0f954a93f93034544123d4936e20ef1b33bf83ed4daa76c`. O que o achado obrigou a
+`583005d1503e6b09d0f954a93f93034544123d4936e20ef1b33bf83ed4daa76c`, e ele durou até a correção da docstring de `assertDerivedParentsResolve` — o digesto de hoje é `c32abba5e6f4a00f0a1630bccd5ea47d5cb983a176350195857ec3bab977a4ef`, e o custo está declarado na entrada do cross-review da identidade do funil. O que o achado obrigou a
 acrescentar: `sealDataset` recusa (`DATASET_ASSURANCE_UNENFORCEABLE`) o perfil que declara **nem**
 leitura humana por registro **nem** filtro exigido — sem isso, as duas recusas de `release` ficavam
 as duas caladas e o corpus selava pela força de um nome, e a pergunta é feita ao perfil **em mão** e
@@ -1611,7 +1657,7 @@ qualidade e custo; o selo vem do perfil.
 | a **composição REALIZADA não é a alocada, e o que sobrevive às guardas não demonstra a cobertura planeada.** As guardas de admissão descartam por linha, e o descarte **não é uniforme entre células**: pai mais longo (janela do extrator) desloca a probabilidade de descarte por comprimento, operação e família, então os níveis realizados que `mixed.levels` reamostra podem não ser os que `mix_cell_allocation` alocou. Consequência escrita: a alegação é **explicitamente pós-guarda** — o denominador publicado a sustenta — e **não** se extrapola para candidatos brutos nem afirma que a cobertura planeada sobreviveu. O que fecha isto é **conferir os níveis realizados contra a alocação** depois da corrida; nada em código o faz hoje | primeira corrida, junto com o rendimento de banda |
 | a **cota mista é alcançável, e o vínculo que sobrou é rendimento de banda e não número de pais.** A janela de pais é a do extrator — `common.MINIMUM_WORDS`–`MAXIMUM_WORDS`, lida por nome em `make_mixed.admissible_parents` —, e sobre `reserved.jsonl` ela admite **2.578** pais contra os 2.247 do teto anterior, o que leva as quatro ilhas curtas (92, 94, 95, 99) a **zero**. O que fica: a folga mínima é de **8** pais em `ilha_08`, então essa ilha exige **92,6 %** das edições dentro da banda, e a perda de banda vem depois da contagem. As outras dezenove exigem 87,0 % ou menos. Logo a cota deixa de ser impossível — exigia rendimento acima de 1 — e passa a ser condicional ao rendimento medido, que **nenhuma corrida mediu ainda** | medir o rendimento de banda real na primeira corrida, antes de confiar na cota |
 | a **geometria da operação é conferida no que o gerador devolve**, e o **eco do pai é recusado no `emit`**. `assert_the_geometry_matches` lê a sobrevivência do pai do MESMO diff por palavra de `mixture_spans` — remove palavra do pai? sobra pai depois do enxerto? — e essas duas respostas separam as três operações (`GEOMETRY_SURVIVAL`). A tolerância de remoção incidental **deriva** de `MIX_LEVELS` (um terço do menor nível, 5 %), porque "removeu zero" recusaria a insercao legítima em que o provedor conserta uma gralha. `assert_the_pair_is_not_an_echo` lê `near_dupes.JACCARD_THRESHOLD` — a MESMA condição que a poda aplicaria, não uma segunda autoridade — e o que ela muda é o momento. As duas correm como **descarte** no laço, no molde do veredito de banda, e a corrida publica `descartados por guarda: {…}` **sempre**, porque a ausência da linha e o zero não podem parecer iguais | **feita** em 2026-08-23 |
-| **PAGA em 2026-08-24 — identidade não é referência, e o defeito era de tipo.** `funnel_key` devolve a identidade da linha, que **é** o id do registro que ela produz, e a mista carrega a dela própria (`mix_<pai>`); `enforce_unique_keys` deixou de receber nome de campo — a ausência do parâmetro é o mecanismo, porque com ele era *possível* apontá-la a uma referência — e escreve o valor desambiguado em campo próprio; `link_mixed_to_parents` corre entre a desambiguação e a projecção, resolve `parentId` na identidade do pai, **recusa** quando resolve em duas linhas humanas (`ParentIdentityAmbiguous`) e **conta** quando não resolve em nenhuma. **O defeito custava TRÊS sítios e a dívida publicava um.** O segundo é **perda de material** e corrige o que esta linha dizia: `near_dupes.prune` devolve **nomes**, e com a chave partilhada a poda que escolhe guardar a mista e derrubar o pai derrubava **as duas** — o par cai no mesmo cluster por construção (Jaccard medido **0,8361** no fixture, 0,848–0,869 em material, § U.3), então nas células acima de 0,82 não era só o pai que caía. O terceiro é o carimbo `_originalKey`, que **saiu**: com `candidateId` imutável ele seria segunda autoridade sobre um valor de fonte única. **11 mutações, 11 mortas**, duas âncoras refeitas. **O que a ponte a funcionar traz, e não é defeito:** componentes maiores, então a interacção com a reserva OOD e com o passeio guloso pode recusar a montagem (`ReserveFillsTheBlindBlock`, `UnsplittableCorpus`) — as duas com entrada de teste agora, e o remédio é escolha de material, não código | fechada; o atrito ponte × reserva vence na Fase 3, com material real |
+| **PAGA em 2026-08-24 — identidade não é referência, e o defeito era de tipo.** `funnel_key` devolve a identidade da linha, que **é** o id do registro que ela produz, e a mista carrega a dela própria (`mix_<pai>`); `enforce_unique_keys` deixou de receber nome de campo — a ausência do parâmetro é o mecanismo, porque com ele era *possível* apontá-la a uma referência — e escreve o valor desambiguado em campo próprio; `link_mixed_to_parents` corre entre a desambiguação e a projecção, resolve `parentId` na identidade do pai, **recusa** quando resolve em duas linhas humanas (`ParentIdentityAmbiguous`) e **conta** quando não resolve em nenhuma. **O defeito custava TRÊS sítios e a dívida publicava um.** O segundo é **perda de material**: `near_dupes.prune` devolve **nomes**, e duas linhas com o mesmo nome morrem juntas mesmo em clusters diferentes — as **homónimas** (duas mistas do mesmo pai, duas lanes `ai` do mesmo pai; **27** linhas medidas na poda global). **RETRACTADO em 2026-08-24, no mesmo dia:** a primeira versão desta linha dizia que a poupança era o par pai/mista, e não é — a mista precisa do pai **presente**, então guardar a filha e derrubar o pai não guarda nada, e as duas saem antes e depois do conserto. O terceiro é o carimbo `_originalKey`, que **saiu**: com `candidateId` imutável ele seria segunda autoridade sobre um valor de fonte única. **11 mutações, 11 mortas**, duas âncoras refeitas. **O que a ponte a funcionar traz, e não é defeito:** componentes maiores, então a interacção com a reserva OOD e com o passeio guloso pode recusar a montagem (`ReserveFillsTheBlindBlock`, `UnsplittableCorpus`) — as duas com entrada de teste agora, e o remédio é escolha de material, não código | fechada; o atrito ponte × reserva vence na Fase 3, com material real |
 | **`load_humans` lê `reserved.jsonl` de caminho FIXO, e essas linhas seriam triadas por nada.** Medido: uma corrida `--sample` sobre um `--candidates-dir` com **3** linhas colheu **583** humanas, porque o loader lê `DATASET / "reserved.jsonl"` ignorando `--candidates-dir`. O comentário do próprio sítio diz que essas linhas são **recusadas** pelo construtor (`MissingDocumentLicense` é a primeira das quatro). **A consequência é dinheiro:** elas entram na projeção do censo, logo pagariam uma chamada cada, e nenhuma pode entrar no corpus — o `screened` do recibo ficaria sobre população maior que o conjunto candidato. O conserto obriga a construir antes de projetar, e construir antes de selecionar muda quais linhas são selecionadas quando as recusas são desiguais entre pools: é mudança ao funil com efeito na aritmética da cota | antes da primeira execução da triagem — é uma conta antes de uma chamada paga |
 | a **triagem de PII por censo tem a METADE DE CONTRATO PAGA e o LAB aberto.** O desenho `llm-pii-screen` — filtro automático na união existente, censo sobre o funil único de `assemble_corpus.main()` pré-cota/pré-split, todo sinalizado dropado, ledger de disposições por `(id, sha256)` digestado, controles semeados com `S_control` por estrato e gates adversariais por pares corretos, preflight de sobreviventes pós-poda — passou por quatro rodadas de codex (REPROVA ×3, APROVA na v4), e a **emenda do perfil de garantia** por uma quinta; está no registro (2026-08-24) com referências em § V de `references.md`. **O que ele compra, e é mais do que a primeira versão desta linha dizia:** o caminho até `release` sob `assuranceProfile: census-pii-screen-v1` — pré-inscrito agora, ativado por uma execução que passe os gates (§ 5.14). **O que ele não compra:** R4, `S_real`, completude taxonômica, e qualquer limite sobre PII real. **PAGO em 2026-08-24** (§ 5.14): `llm-pii-screen` é membro de `AUTOMATED_FILTERS`, o perfil está pré-inscrito em `benchmark/assurance-profile.ts` com as três recusas do selo, e o `evaluatorDigest` moveu a **uma** vez orçada — 52 → 53 arquivos, `d1086098…`. **O LAB COMEÇOU: a pré-inscrição do protocolo está em `benchmark/lab/pii_screen_protocol.py`** (2026-08-24) — taxonomia de 11 subtipos em dois grupos, `n = 60` por subtipo, pisos 0,95/0,80/0,75/0,70 com a tolerância de cada um medida em falhas, quatro vetores adversariais com sham pareado, margem de equivalência 0,10 sobre 100 pares, e o orçamento itemizado em **1.740** chamadas mais o censo. O Wilson do lab é **espelho** de `benchmark/intervals.ts`, prendido por teste que dirige o node e exige igualdade exacta de float. **O CENSO E O LEDGER estão em `benchmark/lab/pii_screen.py`** (2026-08-24): a porta do triador recebe `str` e nada mais — a cegueira é a FORMA do tipo, `ProjectionRow` não tem campo de rótulo, grupo, escore ou partição —, a união de disposições tem **dois** valores com o `flagged-human-cleared` da v2 recusado por nome, o ledger é ordenado pelo par e digestado, a cobertura recusa lacuna, a guarda da montagem separa **presença do par** de **disposição `passed`** em duas exceções, e a revisão post-hoc conta `c` / `r − c` / `k − r` com a precisão `None` quando não há denominador. **A INTEGRAÇÃO NO FUNIL está feita** (2026-08-24): fluxo de dois passos — `--emit-screening-snapshot` escreve a projeção e PARA, `--pii-screen-ledger` traz o ledger de volta —, o ledger é **opcional** porque a recusa vive um passo depois no selo, o sinalizado sai e a mista cujo pai saiu sai em categoria própria com o `parent-unresolved` publicado ao lado, a guarda de D-13 corre sobre os registros que o corpus vai conter, o selo `llm-pii-screen` é estampado **depois** dela, e `main()` é dirigido por teste ponta a ponta — inclusive D-12: a linha sinalizada não chega ao `records.jsonl`. **ABERTO ainda:** os controles com `S_control` por estrato, os gates adversariais por pares, o teste de indistinguibilidade, o recibo `pii-screening-receipt.json` e o adaptador real do triador. **A dívida de CODEX da metade de contrato está PAGA:** duas rodadas em 2026-08-24. A primeira, adversarial, morreu num filtro de conteúdo do provedor antes do bloco de veredito (`EXIT=1`, não cota) e mesmo assim achou dois defeitos reais — o perfil que não impõe nada e a guarda que enumerava —, os dois consertados em `d4ad73e`. A segunda, reescrita na forma defensiva (verificar invariante e nomear a linha que a impõe, em vez de pedir o caminho de escape), devolveu **APROVA** com `achados-por-severidade: vazio`, `EXIT=0`, 25/25 comandos, e recomputou por conta própria o `evaluatorDigest`, os 53 arquivos e 498/26/71 — os quatro casaram. As duas linhas que ela cita foram conferidas por mim no arquivo (`schema.ts:2765` e `dataset-manifest.ts:1131`). **A dívida de codex do LAB ainda não existe: ele não está escrito** | lab: antes da montagem da Fase 3, como unidade própria com TDD e bateria |
 | a **poda morde em `insercao/25`, e o VALOR do regime de eco continua não medido.** § 5.4d: 11 cruzamentos em 618.720 sorteios, todos nessa célula, **0,036** linhas esperadas por corrida, e quatro dos onze de pai que o teto anterior já admitia. O regime de eco está **fechado por protocolo** e não por medição: `assert_the_pair_is_not_an_echo` recusa no `emit` e o descarte entra no denominador publicado, então a alegação passa a ser condicional a saídas pós-guarda em vez de silenciosa. O que continua sem número é a **taxa** com que um gerador real ecoa, e medi-la exige saída de gerador real | a taxa, na primeira corrida; o protocolo está fechado |

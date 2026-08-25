@@ -8744,10 +8744,16 @@ class AssemblyRunTests(unittest.TestCase):
             "version": f"{family}-build-{index:04d}",
             "recipe": receita_da_tarefa("original"),
             "generationLane": self.LANE_OF[provider],
-            "promptId": f"original_ausente_{index:04d}",
+            # NENHUMA SEMENTE HUMANA, e a ausencia e declarada em vez de fabricada.
+            # Antes estas linhas nomeavam `ausente_<n>` — um pai que o pool nao tem —, e
+            # esse e o estado que `assertDerivedParentsResolve` (chamado por
+            # `benchmark/commands/split.ts`) recusa no corpus inteiro. Estes casos medem
+            # licenca, cota, exclusao e gates, e nao linhagem: a linhagem tem os casos
+            # dela em `test_funnel_identity.py`. Um `promptId` sem sublinhado nao nomeia
+            # pai nenhum, que e como `parent_of_prompt` le a ausencia.
+            "promptId": "original",
             "promptSha256": digest,
             "promptTemplateDigest": digest,
-            "pairedWith": f"ausente_{index:04d}",
             "harnessVersion": "1.0.0",
         }
         if self.LANE_OF[provider] == "codex":

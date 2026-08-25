@@ -1514,6 +1514,25 @@ def seed_pair(meta: dict) -> dict:
     return {"seedNullReason": str(meta.get("seedNullReason") or SEED_NULL_REASON)}
 
 
+def named_seed_identity(row: dict) -> str | None:
+    """A IDENTIDADE do pai humano que esta linha de pool vai nomear em `humanSeed`.
+
+    UMA autoridade, e por isso e uma funcao: quem escreve o eixo (`ai_record`), quem
+    protege a semente na selecao e quem cascateia o drop da triagem tem de concordar sobre
+    qual registro a linha nomeia. Duas derivacoes do mesmo valor divergiriam no dia em que
+    uma delas ganhasse um `slug` que a outra nao tem — que foi exactamente o defeito que o
+    cross-review achou na identidade.
+
+    Devolve `None` quando a receita respondeu a um topico sem pai humano: nao ha semente a
+    proteger nem linhagem a resolver.
+    """
+    meta = row.get("meta") or {}
+    parent = meta.get("pairedWith") or parent_of_prompt(str(meta.get("promptId") or ""))
+    if not parent:
+        return None
+    return group_axes.axis_token(str(parent))
+
+
 def parent_of_prompt(prompt_id: str) -> str | None:
     """The human seed a generated row came from, out of its `promptId`.
 
@@ -1821,7 +1840,7 @@ def human_record(
     hard_neg: str | None,
     evidence_sink: list | None = None,
 ) -> dict:
-    rec_id = slug(funnel_key(cand))
+    rec_id = funnel_key(cand)
     cell, source_id = cell_of(cand)
     license_id = document_license(cand)
     if register != cell:
@@ -1963,7 +1982,7 @@ def ai_record(cand: dict) -> dict:
     # licence never mentioned.
     license_id = generated_license(cand)
     meta = cand.get("meta") or {}
-    rec_id = slug(funnel_key(cand) if cand.get("candidateId") else cand["id"])
+    rec_id = funnel_key(cand) if cand.get("candidateId") else slug(cand["id"])
     family_raw = meta.get("family") or cand.get("family") or "unknown"
     lane = lane_of(str(meta.get("provider") or ""), meta.get("generationLane"))
     # The governance audit compares generation.promptSha256 against the batch's
@@ -1981,7 +2000,7 @@ def ai_record(cand: dict) -> dict:
         )
     recipe = meta.get("recipe")
     prompt_id = slug(meta.get("promptId") or f"repro_{rec_id}")
-    parent = meta.get("pairedWith") or parent_of_prompt(str(meta.get("promptId") or ""))
+    parent = named_seed_identity(cand)
     model = str(meta.get("model") or family_raw)
     version = str(meta.get("version") or family_raw)
     axes = generation_axes(lane, str(family_raw), version, recipe, template_digest, meta)
@@ -2030,7 +2049,9 @@ def ai_record(cand: dict) -> dict:
                 group_axes.axis_token(str(cand.get("domainSource") or f"ai_{lane}"))
             ),
             "humanSeed": (
-                group_axes.known(group_axes.axis_token(str(parent)))
+                # Ja e token de eixo: `named_seed_identity` o converte, e converter duas
+                # vezes seria a segunda grafia que esta funcao existe para nao haver.
+                group_axes.known(parent)
                 if parent
                 else group_axes.not_applicable(
                     "the recipe answered a bare topic prompt with no human parent"
@@ -4033,13 +4054,21 @@ def funnel_key(row: dict) -> str:
     construtores tem de concordar sobre o que e "a identidade desta linha". O campo
     carimbado vem primeiro porque a desambiguacao escreve nele — e escreve NELE e nao no
     `candidateId` da linha, para que nenhuma referencia guardada por outra linha se mova.
+
+    O `slug` E DAQUI, e o cross-review mediu por que: os construtores escrevem
+    `slug(identidade)`, entao com a unicidade imposta sobre a chave CRUA duas chaves
+    distintas que o `slug` colapsa — `id.a` e `id_a` — passavam as duas e escreviam o
+    MESMO `id`. Slugando na identidade, "a identidade e o id do registro" deixa de ser
+    aproximacao e passa a ser igualdade de cadeia, e a desambiguacao opera no espaco em
+    que a colisao existe. `slug` e idempotente, entao a chave ja desambiguada nao se
+    move ao voltar por aqui.
     """
     stamped = row.get(FUNNEL_KEY_FIELD)
     if stamped:
         return stamped
     candidate_id = row.get("candidateId")
     if candidate_id:
-        return candidate_id
+        return slug(candidate_id)
     return mixed_own_key(row)
 
 
@@ -4093,6 +4122,48 @@ def enforce_unique_keys(pools: list[list[dict]]) -> dict[str, str]:
     return renames
 
 
+def drop_orphan_derived_rows(
+    humans: list[dict], ai: list[dict], mixed: list[dict]
+) -> tuple[list[dict], list[dict], dict[str, int]]:
+    """As linhas derivadas cujo pai NAO esta no pool humano saem, contadas por classe.
+
+    POR QUE ANTES DA SELECAO, e nao depois da construcao. Uma linha derivada sem pai
+    presente nao pode entrar no corpus — `assertDerivedParentsResolve` recusa o corpus
+    inteiro por ela —, entao deixa-la chegar a selecao faz a cota ser preenchida com
+    linhas que desaparecem depois: 4.000 escolhidas, menos as orfas, e o corpus sai curto
+    sem ninguem ter escolhido isso. Tirando-as aqui, a cota fecha sobre material que pode
+    ficar, e o deficit aparece como deficit em vez de como corpus menor.
+
+    A pergunta e sobre o POOL HUMANO e nao sobre o corpus final: a selecao pode ainda
+    cortar um pai, e `balanced_humans` recebe as ancoras exactamente para nao o fazer. O
+    guarda de `drop_records_whose_parent_is_absent`, sobre os registros construidos, e o
+    que prova que a combinacao das duas coisas fechou.
+
+    O QUE ISTO MEDE NO MATERIAL DE HOJE, e e a razao de existir: 2.319 das 4.048 linhas
+    `ai` em disco nomeiam uma semente que o pool humano nao tem, porque foram geradas
+    pareadas com humanas de `ptso` e `carolina` — fontes que a moldura ja nao declara — e
+    as 2.135 mistas nomeiam pais que vivem so em `reserved.jsonl`, que `load_humans`
+    exclui e que nao sao expressaveis em v3 de qualquer modo. Sem esta funcao, uma
+    montagem sobre esse material produz um corpus que o comando de split recusa.
+    """
+    presentes = {funnel_key(row) for row in humans}
+    counts = {"ai-seed-absent": 0, "mixed-parent-absent": 0}
+    ai_left: list[dict] = []
+    for row in ai:
+        seed = named_seed_identity(row)
+        if seed is not None and seed not in presentes:
+            counts["ai-seed-absent"] += 1
+            continue
+        ai_left.append(row)
+    mixed_left: list[dict] = []
+    for row in mixed:
+        if parent_identity(row) not in presentes:
+            counts["mixed-parent-absent"] += 1
+            continue
+        mixed_left.append(row)
+    return ai_left, mixed_left, counts
+
+
 def link_mixed_to_parents(mixed: list[dict], humans: list[dict]) -> dict[str, int]:
     """Resolve a referencia de cada mista na IDENTIDADE do pai, in place.
 
@@ -4131,6 +4202,59 @@ def link_mixed_to_parents(mixed: list[dict], humans: list[dict]) -> dict[str, in
             counts["repointed"] += 1
         row[PARENT_IDENTITY_FIELD] = slug(identities[0])
     return counts
+
+
+def drop_records_whose_parent_is_absent(
+    records: list[dict],
+) -> tuple[list[dict], dict[str, int]]:
+    """Os registros derivados cujo pai NAO esta no corpus saem, contados por razao.
+
+    POR QUE SAIR e nao ser contado e mantido, que era o que esta funcao substitui:
+    `assertDerivedParentsResolve` (`benchmark/schema.ts`) recusa o corpus INTEIRO por um
+    destes, e o sitio que a chama e o comando de split (`benchmark/commands/split.ts`).
+    Manter a linha nao guardava material — trocava uma linha perdida por uma montagem
+    inteira recusada, um comando depois, com a mensagem a nomear o esquema em vez do
+    funil.
+
+    DUAS PERGUNTAS, que sao as duas que o guarda selado faz sobre presenca: o pai existe
+    entre os ids escritos, e — so para `humanSeed` — ele e humano. A terceira pergunta de
+    la, `labelBasis` no pai, NAO e feita aqui e a razao e construcao: `human_record`
+    recusa (`MissingLabelEvidence`) a linha humana que nao o produz, entao um registro
+    humano escrito por este montador carrega-o sempre. Repeti-la seria uma segunda
+    autoridade sobre um facto que o construtor ja garante.
+
+    O caso que isto fecha em MATERIAL: as 2.135 mistas em disco nomeiam pais que vivem so
+    em `reserved.jsonl`, e `load_humans` exclui exactamente esses (`r["id"] not in
+    parents`) — e nenhuma linha reservada e expressavel em v3 de qualquer modo, porque nao
+    carrega licenca, data nem eixos. Entao TODA mista de hoje tem o pai ausente por
+    construcao, e sem esta funcao a montagem produzia um corpus que o split recusa.
+    """
+    by_id = {record["id"]: record for record in records}
+    counts = {"parent-absent": 0, "parent-not-human": 0}
+    kept: list[dict] = []
+    for record in records:
+        if record.get("label") == "human":
+            kept.append(record)
+            continue
+        motivo: str | None = None
+        for axis in SPLIT_PARENT_LINKAGE_AXES:
+            named = group_axes.identity_of((record.get("groups") or {}).get(axis))
+            if named is None or named == record["id"]:
+                continue
+            parent = by_id.get(named)
+            if parent is None:
+                motivo = "parent-absent"
+                break
+            # `derivationRoot` admite pai gerado — uma parafrase de uma geracao e cadeia
+            # legitima —, e so `humanSeed` tem classe a satisfazer.
+            if axis == "humanSeed" and parent.get("label") != "human":
+                motivo = "parent-not-human"
+                break
+        if motivo is None:
+            kept.append(record)
+        else:
+            counts[motivo] += 1
+    return kept, counts
 
 
 def parent_identity(row: dict) -> str:
@@ -4280,6 +4404,13 @@ def drop_the_flagged(
     `candidateId` da linha humana —, e a ligacao vale em qualquer ponto do caminho porque
     nada no funil reescreve nenhum dos dois.
 
+    E A CASCATA ALCANCA A CLASSE `ai`, que e a metade que faltava. Uma linha gerada nomeia
+    a semente humana em `humanSeed`, e `assertDerivedParentsResolve` recusa o corpus cujo
+    valor de la nao seja id de registro presente: dropar o pai e deixar a geracao dentro
+    produzia um corpus que o comando de split recusa. As duas cascatas sao contadas
+    SEPARADAMENTE porque custam material diferente — uma mista e barata de regerar do
+    mesmo pai, uma geracao e uma chamada paga.
+
     A mista cujo pai NAO RESOLVE no pool humano e contada em `parent-unresolved` e fica.
     Uma ligacao quebrada tem de ser um numero: contada como zero na cascata, ela leria como
     "nenhum pai sinalizado", que e afirmacao e nao ausencia de dado.
@@ -4299,8 +4430,21 @@ def drop_the_flagged(
     )
 
     humans_left = [row for row in humans if kept(row)]
-    ai_left = [row for row in ai if kept(row)]
+    ai_survived = [row for row in ai if kept(row)]
     mixed_survived = [row for row in mixed if kept(row)]
+
+    # A cascata da classe `ai`: a semente e comparada com a IDENTIDADE da humana, porque
+    # e a identidade que vira id de registro e e ela que o eixo nomeia.
+    surviving_seeds = {funnel_key(row) for row in humans_left}
+    all_seeds = {funnel_key(row) for row in humans}
+    ai_left: list[dict] = []
+    ai_cascaded = 0
+    for row in ai_survived:
+        seed = named_seed_identity(row)
+        if seed is not None and seed in all_seeds and seed not in surviving_seeds:
+            ai_cascaded += 1
+            continue
+        ai_left.append(row)
 
     human_references = {row["candidateId"] for row in humans}
     cascaded = 0
@@ -4320,6 +4464,7 @@ def drop_the_flagged(
     counts = {
         "screened": len(projection),
         "flagged": flagged_count,
+        "cascade-ai-seed-flagged": ai_cascaded,
         "cascade-parent-flagged": cascaded,
         "parent-unresolved": unresolved,
     }
@@ -4558,7 +4703,9 @@ def assert_cells_can_meet_the_origin_document_floor(
         )
 
 
-def balanced_humans(cands: list[dict], total: int) -> list[dict]:
+def balanced_humans(
+    cands: list[dict], total: int, anchors: set[str] | None = None
+) -> list[dict]:
     """`total` human lines split over the DECLARED cells, never across them.
 
     The quota is per cell because the claim is per cell: each cell publishes its own FPR
@@ -4578,14 +4725,29 @@ def balanced_humans(cands: list[dict], total: int) -> list[dict]:
     A remainder the cells cannot divide goes to the first cells in name order, so a
     smoke run whose total is smaller than the number of cells still selects something,
     and selects it deterministically.
+
+    `anchors` sao as identidades humanas que linhas GERADAS nomeiam como semente, e elas
+    vao a frente DENTRO da celula. Nao e preferencia estetica: uma humana cortada pela
+    cota leva consigo toda geracao que a nomeia (`assertDerivedParentsResolve` recusa o
+    corpus cujo `humanSeed` nao resolva), e trocar uma linha humana — que ha de sobra, e
+    e extraccao — por uma linha gerada — que e chamada paga — e trocar o barato pelo
+    caro.
+    A ordem RELATIVA dentro de cada grupo e preservada, entao a selecao continua
+    determinista.
     """
     per_cell, remainder = divmod(total, len(QUOTA_CELLS))
+    ancoras = anchors or set()
     by_cell: dict[str, list[dict]] = {cell: [] for cell in QUOTA_CELLS}
     for cand in cands:
         by_cell[cell_of(cand)[0]].append(cand)
     chosen: list[dict] = []
     for index, cell in enumerate(QUOTA_CELLS):
-        chosen.extend(by_cell[cell][: per_cell + (1 if index < remainder else 0)])
+        rows = by_cell[cell]
+        if ancoras:
+            rows = [row for row in rows if funnel_key(row) in ancoras] + [
+                row for row in rows if funnel_key(row) not in ancoras
+            ]
+        chosen.extend(rows[: per_cell + (1 if index < remainder else 0)])
     return chosen
 
 
@@ -4743,10 +4905,21 @@ def main() -> None:
     # pools at once (a human and its AI paraphrase is exactly the dangerous
     # case). AI is the scarcest class, so it outranks mixed, which outranks the
     # human surplus.
-    # `prune` DEVOLVE NOMES, e e por isso que a chave aqui tem de ser identidade: com a
-    # mista chaveada pelo pai, o nome devolvido nomeava as duas linhas, e a poda que
-    # escolhe guardar a mista e derrubar o pai derrubava as duas — pai e mista sao
-    # quase-duplicatas por construcao, que e exactamente o cluster onde isso morde.
+    # A DESAMBIGUACAO VEM ANTES DAS PODAS, e o cross-review mediu por que. `prune` e
+    # `drop_seen_against` devolvem CONJUNTOS DE NOMES, e o montador filtra os pools por
+    # pertenca a esses conjuntos: duas linhas que cheguem ali com a mesma identidade vivem
+    # e morrem juntas, mesmo em clusters diferentes. E chegar com a mesma identidade nao e
+    # excepcional — duas mistas do mesmo pai (o funil le dois arquivos), duas lanes `ai`
+    # que pediram o mesmo pai (295 colisoes medidas no material). Desambiguando primeiro,
+    # todo nome que as podas devolvem nomeia UMA linha.
+    renames = enforce_unique_keys([ai, mixed, humans])
+    if renames:
+        print(f"ids desambiguados (colisao entre lanes): {len(renames)}")
+
+    # A chave das podas e a IDENTIDADE, e nunca a referencia: com a mista chaveada pelo
+    # pai, o nome devolvido nomeava tambem o pai, e a poda que escolhe guardar a mista e
+    # derrubar o pai derrubava as duas — pai e mista sao quase-duplicatas por construcao,
+    # que e exactamente o cluster onde isso morde.
     key = funnel_key
 
     docs = (
@@ -4791,12 +4964,24 @@ def main() -> None:
     else:
         print(f"!! sem indice de vistos em {args.seen_index}: fumaca sem poda global")
 
-    renames = enforce_unique_keys([ai, mixed, humans])
-    if renames:
-        print(f"ids desambiguados (colisao entre lanes): {len(renames)}")
+    # AS ORFAS SAEM ANTES DA SELECAO: linha derivada sem pai no pool nao pode entrar no
+    # corpus, e ocupar cota com ela e fazer o corpus sair curto sem ninguem escolher isso.
+    ai, mixed, orphans = drop_orphan_derived_rows(humans, ai, mixed)
+    if any(orphans.values()):
+        print(
+            f"!! linhas derivadas sem pai no pool humano (SAEM antes da cota): {orphans}"
+        )
+        print(
+            "   a geracao tem de ser pareada com as humanas que o corpus vai conter: "
+            "`assertDerivedParentsResolve` recusa o corpus cujo `humanSeed` ou "
+            "`derivationRoot` nao resolva"
+        )
+    print(f"pools (com pai): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
 
     # A REFERENCIA segue o referente, e so aqui: e o passo que impede a uniao do split de
-    # ligar uma mista ao registro errado quando o pai foi renomeado.
+    # ligar uma mista ao registro errado quando o pai foi renomeado. DEPOIS das podas e do
+    # corte das orfas, e nao antes: uma resolucao tomada antes deles apontaria para pai
+    # que a poda derruba.
     linked = link_mixed_to_parents(mixed, humans)
     print(f"ligacao pai/mista: {linked}")
     if linked["unresolved"]:
@@ -4897,9 +5082,18 @@ def main() -> None:
             f"({', '.join(QUOTA_CELLS)})"
         )
 
-    human_sel = balanced_humans(humans, counts["human"])
+    # AS CLASSES GERADAS PRIMEIRO, e a ordem e a razao: elas sao truncadas por cota
+    # independentemente das humanas, e o que elas nomeiam decide quais humanas tem de
+    # ficar. Selecionar as humanas primeiro era escolher sem saber o que se ia perder.
     ai_sel = ai[: counts["ai"]]
     mixed_sel = mixed[: counts["mixed"]]
+    anchors = {
+        seed
+        for seed in (named_seed_identity(row) for row in ai_sel)
+        if seed is not None
+    }
+    anchors |= {parent_identity(row) for row in mixed_sel}
+    human_sel = balanced_humans(humans, counts["human"], anchors)
 
     # Every builder can REFUSE a row now, and a refusal is counted rather than
     # swallowed or worked around. This is where the v2 corpus's hidden debt becomes
@@ -4943,6 +5137,19 @@ def main() -> None:
         print("!! registros que a v3 nao consegue expressar (descartados):")
         for reason, count in sorted(refused.items()):
             print(f"   {reason}: {count} — ex.: {refused_examples[reason][:160]}")
+
+    # O PAI AUSENTE SAI AQUI, antes de qualquer contagem: `assertDerivedParentsResolve`
+    # recusa o corpus inteiro por um destes, e o sitio que a chama e o comando de split.
+    # Contar e continuar trocava uma linha perdida por uma montagem recusada um comando
+    # depois. Depois da construcao porque a pergunta e sobre ids ESCRITOS, e antes de
+    # `tag_hard_negatives` pela razao que a exclusao de familia tem: linha que o corpus
+    # nao vai conter nao entra no denominador de ninguem.
+    records, absent = drop_records_whose_parent_is_absent(records)
+    if any(absent.values()):
+        print(
+            "!! registros derivados cujo pai nao esta no corpus (SAEM, porque o split "
+            f"recusaria o corpus inteiro): {absent}"
+        )
 
     tagged = tag_hard_negatives(records, max(1, counts["human"] // 200))
     print(f"hard-negatives etiquetados por familia: {tagged}")
