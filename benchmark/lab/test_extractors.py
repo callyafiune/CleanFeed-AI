@@ -3695,6 +3695,108 @@ class HumanPoolSelectionTests(unittest.TestCase):
         self.assertEqual(colisoes, [])
         self.assertEqual([r["candidateId"] for r in colhidas], ["src_partilhado"])
 
+    def test_without_a_sink_the_drop_is_PRINTED_and_never_silent(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        # A INVARIANTE E «QUEDA NUNCA SILENCIOSA», e ela sobrevive ao canal. Tirar o `print`
+        # em favor do sink deixou `collision_sink=None` a derrubar sem sinal nenhum — medido
+        # no material real: 66 quedas e stdout vazio. O sink e o canal estruturado; a
+        # impressao e o piso de quem nao o passa.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_partilhado"])
+            reservada = cand / "reservada.jsonl"
+            reservada.write_text(
+                json.dumps(
+                    {
+                        "id": "src_partilhado",
+                        "text": PROSE_60,
+                        "label": 0,
+                        "family": "ptwiki_lead",
+                        "wordCount": 60,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            saida = io.StringIO()
+            with contextlib.redirect_stdout(saida):
+                load_humans(cand, reservada)
+        self.assertIn("1", saida.getvalue())
+        self.assertIn("caidas", saida.getvalue())
+
+    def test_the_sink_DISTINGUISHES_two_reserved_lines_under_one_id(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        # «O sink NOMEIA as linhas» nao vale so por carregar o id: sem unicidade de id no
+        # arquivo das reservadas, duas linhas caidas davam dois dicionarios indistinguiveis
+        # e a alegacao era mais forte que o dado. O numero de linha do arquivo e o que a
+        # torna verdadeira. Medido: `reserved.jsonl` nao tem id repetido hoje, entao isto
+        # prende a propriedade e nao o material.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_partilhado"])
+            reservada = cand / "reservada.jsonl"
+            uma = json.dumps(
+                {
+                    "id": "src_partilhado",
+                    "text": PROSE_60,
+                    "label": 0,
+                    "family": "ptwiki_lead",
+                    "wordCount": 60,
+                }
+            )
+            reservada.write_text(uma + "\n" + uma + "\n", encoding="utf-8")
+            colisoes: list[dict] = []
+            load_humans(cand, reservada, collision_sink=colisoes)
+        self.assertEqual([c["reservedLine"] for c in colisoes], [1, 2])
+        self.assertEqual({c["candidateId"] for c in colisoes}, {"src_partilhado"})
+
+    def _reservada(self, cand: Path, **campos) -> Path:
+        caminho = cand / "reservada.jsonl"
+        linha = {
+            "id": "src_reservada",
+            "text": PROSE_60 + " corpo proprio",
+            "label": 0,
+            "family": "ptwiki_lead",
+            "wordCount": 62,
+        }
+        linha.update(campos)
+        caminho.write_text(json.dumps(linha) + "\n", encoding="utf-8")
+        return caminho
+
+    def test_a_reserved_row_that_is_a_MIXED_PARENT_does_not_enter(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        # PERNA SEM COBERTURA ATE AQUI, medido: apagar `r["id"] not in parents` deixava a
+        # suite do lab inteira verde. A razao da perna: um pai de mistura no pool humano
+        # poe pai e derivada na mesma particao, e e a linhagem que o split usa para os
+        # separar.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_do_pool"])
+            (cand / "mixed_candidates.jsonl").write_text(
+                json.dumps({"parentId": "src_reservada"}) + "\n",
+                encoding="utf-8",
+            )
+            reservada = self._reservada(cand)
+            colhidas = load_humans(cand, reservada)
+        self.assertEqual([r["candidateId"] for r in colhidas], ["src_do_pool"])
+
+    def test_a_reserved_row_of_an_OUT_OF_FRAME_family_does_not_enter(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        # PERNA SEM COBERTURA ATE AQUI, medido: trocar `fam in REGISTER` por `True` deixava
+        # a suite do lab inteira verde. O pool das reservadas e chaveado pelos estratos da
+        # moldura ANTIGA, entao as linhas de Carolina e B2W chegam a este loader e e por
+        # celula — nao por nome de arquivo — que saem.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_do_pool"])
+            reservada = self._reservada(cand, family="carolina_judicial_branch")
+            colhidas = load_humans(cand, reservada)
+        self.assertEqual([r["candidateId"] for r in colhidas], ["src_do_pool"])
+
     def test_the_selection_main_opens_is_the_flag_or_the_default(self) -> None:
         from assemble_corpus import HUMAN_POOL_FILES, human_pool_selection
 

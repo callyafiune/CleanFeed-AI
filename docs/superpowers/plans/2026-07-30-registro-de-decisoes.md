@@ -13062,3 +13062,47 @@ pega isso, porque a mutação testa o que o código diz, não o que a prosa prom
 ### Referências
 
 Nada de novo.
+
+## R3: REPROVA, e o achado é uma regressão que o conserto da R2 introduziu (2026-08-25)
+
+Terceira rodada de codex sobre `6a1fc96` (`EXIT=0`). Confirmou o item que mais me preocupava — **a
+igualdade de texto é condição suficiente hoje**, com varredura integral: 66 colisões, 66 textos
+exatamente iguais, `wordCount` e família também a coincidir, zero divergentes, e a chamada real não
+levanta —, confirmou a sincronia `origem`/`textos_anexados` e confirmou que a restauração da
+invariante de `39556dd` é exacta para linha não colidente. Refutou quatro.
+
+**A regressão, e é minha:** aceitar «o `print` num loader é o sítio errado» e trocá-lo pelo sink
+deixou `collision_sink=None` a derrubar **em silêncio** — medido no material real, 66 quedas e stdout
+vazio. A invariante que importa não é o canal, é «queda nunca silenciosa», e ela sobrevive ao canal:
+o sink é o canal estruturado, a impressão é o piso de quem não o passa. As duas pernas têm teste e
+mutante.
+
+**«O sink nomeia as linhas» era prosa mais forte que o dado.** Sem unicidade de id no arquivo das
+reservadas, duas linhas caídas davam dois dicionários indistinguíveis. A entrada passou a carregar o
+**número da linha** do arquivo, e o teste prende a propriedade em vez do material — `reserved.jsonl`
+não tem id repetido hoje, e é justamente por isso que o caso tinha de ser fabricado.
+
+**Uma contagem falsa que eu introduzi ao consertar outra:** a § 7 dizia que a selecção default sobre
+`candidates-f3` «colhe 4.100». Colhe **4.614** — as 4.100 do pool mais as reservadas em moldura que
+sobraram — e é `human_record` que constrói 4.100, recusando 514 por `MissingDocumentLicense`. O número
+certo já estava no registro da unidade anterior, o que torna a inconsistência interna e não uma
+medição nova.
+
+**E duas pernas PRÉ-EXISTENTES sem cobertura nenhuma, medido por mutação contra a suíte inteira do
+lab:** apagar `r["id"] not in parents` ou trocar `fam in REGISTER` por `True` deixava **991 passed**
+nas duas. Não são desta unidade, mas a medição estava feita e o custo era dois fixtures: um pai de
+mistura e uma família fora da moldura. As duas mutações agora morrem.
+
+**Fica declarado e não fechado:** um teste de regressão que prenda a medição real dos 66 exigiria
+depender de material gitignored, que é o que os testes deste arquivo evitam por regra; a medição vive
+aqui e na § 3.3. E `collision_sink` continua opcional — a alternativa (obrigatório ou retorno
+estruturado) muda a assinatura para os quinze chamadores, e a invariante que ela protegeria já está
+protegida pela impressão.
+
+**A prova:** quatro mutações, quatro mortas, restauração por sha256 — as duas pernas, a impressão sem
+sink, e o número de linha no sink. Lab **993 passed / 972 subtests**. Material real inalterado: 66
+quedas com 66 números de linha distintos, dedup remove zero, constrói 4.100.
+
+### Referências
+
+Nada de novo.

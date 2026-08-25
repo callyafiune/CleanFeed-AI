@@ -3961,8 +3961,18 @@ def load_humans(
     # A ELEGIBILIDADE VEM PRIMEIRO. Contar a colisao antes dos predicados reportava perda
     # onde nao havia — uma reservada de `label` 1 nunca seria anexada — e tirava-lhes a
     # palavra sobre a linha, que e invariante que existia antes desta guarda.
+    #
+    # A QUEDA NUNCA E SILENCIOSA, e a invariante sobrevive ao canal: o `collision_sink` e o
+    # canal estruturado — nomeia id, pool e o NUMERO DA LINHA do arquivo das reservadas, que
+    # e o que distingue duas linhas sob um id — e a impressao e o piso de quem nao o passa.
+    # Trocar a impressao pelo sink sozinho deixou `collision_sink=None` a derrubar sem sinal
+    # nenhum, medido: 66 quedas e stdout vazio.
     textos_anexados: dict[str, str] = {r["candidateId"]: r["text"] for r in rows}
-    for r in read_jsonl(reserved if reserved is not None else DATASET / "reserved.jsonl"):
+    caidas: list[dict] = []
+    for indice, r in enumerate(
+        read_jsonl(reserved if reserved is not None else DATASET / "reserved.jsonl"),
+        start=1,
+    ):
         if r.get("label") == 0 and r["id"] not in parents:
             fam = r.get("family", "?")
             if fam in REGISTER:
@@ -3975,10 +3985,13 @@ def load_humans(
                             "conflito de material, e derrubar uma delas por igualdade de "
                             "id apagaria conteudo em silencio"
                         )
-                    if collision_sink is not None:
-                        collision_sink.append(
-                            {"candidateId": r["id"], "pool": str(origem[r["id"]])}
-                        )
+                    caidas.append(
+                        {
+                            "candidateId": r["id"],
+                            "pool": str(origem[r["id"]]),
+                            "reservedLine": indice,
+                        }
+                    )
                     continue
                 rows.append(
                     {
@@ -3998,6 +4011,11 @@ def load_humans(
                         "meta": {},
                     }
                 )
+    if caidas:
+        if collision_sink is not None:
+            collision_sink.extend(caidas)
+        else:
+            print(f"reservadas caidas por id que um pool ja anexou: {len(caidas)}")
     return rows
 
 
