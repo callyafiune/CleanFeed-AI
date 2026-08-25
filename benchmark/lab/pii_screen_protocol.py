@@ -266,6 +266,32 @@ INDISTINGUISHABILITY_MARGIN = 0.10
 HUMAN_INDISTINGUISHABILITY_SAMPLE = 20
 
 
+# OS NOVE RISCOS que o perfil `census-pii-screen-v1` tem de declarar, e vivem AQUI para
+# o recibo os citar da pre-inscricao em vez de os retypar. Um risco que o artefato nao
+# nomeia e um risco que quem le o artefato nao sabe que corre — e a lista e FECHADA: um
+# decimo risco e emenda de protocolo, com digesto novo, e nao um acrescento silencioso.
+NAMED_RISKS: tuple[str, ...] = (
+    "verification bias / selective labels: o triador so e avaliado onde ha rotulo nosso, "
+    "e os controles sao o unico sitio onde ha",
+    "confirmacao humana: a leitura post-hoc ve material JA sinalizado, entao ela mede "
+    "precisao entre sinalizados e nunca sensibilidade",
+    "falso cleared: uma linha que passa nao e uma linha sem PII — e uma linha que este "
+    "triador, nesta execucao, nao sinalizou",
+    "feedback adaptativo: usar o resultado da triagem para escolher material futuro "
+    "fecharia um laco que nenhuma medicao deste protocolo cobre",
+    "contaminacao por componente: dropar uma linha pode partir um componente de linhagem, "
+    "e o que sai do corpus nao e sempre so a linha sinalizada",
+    "conflito com split temporal ou OOD: um drop desigual entre blocos move a composicao "
+    "que o split pre-inscreve",
+    "mutacao de bytes: o par (id, digesto) so prova cobertura se o texto do registro for o "
+    "texto triado, e e por isso que a guarda recomputa o digesto do registro escrito",
+    "PII relacional: uma pessoa pode ser identificavel pela juncao de duas linhas que, "
+    "isoladas, nenhum triador sinalizaria",
+    "confusao de PPV: a taxa de acerto ENTRE OS SINALIZADOS nao e a sensibilidade nem o "
+    "FPR do corpus, e publicar uma pela outra inverte a leitura",
+)
+
+
 def planned_call_count(census: int) -> dict[str, int]:
     """O orcamento de chamadas, itemizado, para o operador confirmar ANTES da primeira.
 

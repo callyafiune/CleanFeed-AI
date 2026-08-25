@@ -12642,3 +12642,240 @@ automatizada faz isso certo, e foi a verificação manual que errou.
 «Não pagues por linha que não pode entrar no corpus» não é precedente de pesquisa. A ordem
 filtro-antes-da-cota é a mesma regra que o ESTADO já aplica à exclusão de família («linha que o
 corpus não vai conter não entra no denominador de ninguém»).
+
+## Os controles, os gates e o recibo: a metade do LAB do `llm-pii-screen` fechada (2026-08-24)
+
+Quarta e quinta unidades do lab. O que a § 7 listava como aberto — «os controles com `S_control` por
+estrato, os gates adversariais por pares, o teste de indistinguibilidade, o recibo
+`pii-screening-receipt.json` e o adaptador real do triador» — está em código. O que **não** está, e é
+material e não código, fica declarado no fim.
+
+### L-25 — a cegueira dos controles é a MESMA do censo, pelo mesmo tipo
+
+`probe_projection` devolve `pii_screen.ProjectionRow` — o tipo do censo, com três campos e nenhum
+deles a dizer se a linha carrega injecção. O gabarito vive no **catálogo**, que é objecto diferente e
+nunca é passado ao triador. **Razão de reusar em vez de criar um tipo próprio:** um tipo próprio para
+controles seria uma segunda forma capaz de ganhar um campo de gabarito, e a cegueira aqui é a forma
+do tipo e não uma convenção.
+
+E `screen_probes` chama `pii_screen.screen_census`, não o triador directamente: é ele que valida o
+veredito contra a taxonomia pré-inscrita e aborta na linha em que o triador levantar. Uma segunda
+porta de chamada teria uma segunda validação capaz de discordar. **O que NÃO viaja de lá:** o
+vocabulário de disposição. `flagged-dropped` nomeia uma acção — a linha sai do corpus — que sobre um
+controle não acontece, porque nenhum controle está no corpus. O log dos controles tem forma própria
+(`probeId`, `flagged`, `subtypes`), e um caso afirma que a cadeia `flagged-dropped` não aparece nele.
+
+### L-26 — o gate é sobre SINALIZAR, e a concordância de subtipo é diagnóstico ao lado
+
+Decisão que o desenho deixava implícita e que agora é literal no recibo
+(`gateIsOnFlagging`). **Razão:** o que protege o corpus é o sinalizar — D-12 dropa todo sinalizado,
+com subtipo certo ou errado —, então um piso que exigisse a categoria correcta mediria **competência
+taxonómica**, que é outra alegação. `subtypeAgreement` é medido e publicado por estrato, e não
+gateia nada.
+
+**E o par de gates é coerente por construção:** um triador que sinalize tudo alcança sensibilidade
+1,0 em todo estrato e falha o teto de sham. Há caso que mede exactamente isso.
+
+### L-27 — UM teto de sham, porque o protocolo pré-inscreve UM
+
+`SHAM_FALSE_POSITIVE_CEILING` é um literal, e o gate corre sobre a **união** dos shams. A divisão por
+família (taxonomia / adversarial) é publicada ao lado como diagnóstico. **Razão:** derivar três gates
+de um literal seria apertar a pré-inscrição depois de a escrever, e a pré-inscrição vale por não se
+mover.
+
+### L-28 — o catálogo é conferido ANTES da primeira chamada, e o total é DIGITADO
+
+`assert_the_*_catalogue_matches_the_plan` confere contagem por subtipo, pareamento 1:1 por `pair_id`,
+fracção escrita à mão, os quatro vectores e os cem pares — **contra os literais do protocolo**, e não
+contra números repetidos no validador. E `--confirm-calls` tem de casar **exactamente** com o total
+derivado: dinheiro acima do envelope é decisão nunca delegada, e um número digitado é a forma mais
+simples de a não delegar. As duas recusas acontecem antes de a primeira chamada sair.
+
+### L-29 — o prompt é DERIVADO da taxonomia, e o digesto move-se com ela
+
+`triage_prompt` compõe a instrução literal com a taxonomia lida de `protocol.TAXONOMY`. **Razão:** uma
+taxonomia que mudasse sem o prompt mudar publicaria alegação por subtipo sob um prompt que não nomeia
+esse subtipo. Derivando, `prompt_digest()` move-se com ela e o recibo diz que se moveu — e há caso que
+o mede acrescentando um subtipo e vendo o digesto andar. O digesto é do prompt **sem o texto da
+linha**, com um sentinela no lugar dele: um digesto que variasse por linha não identificaria instrução
+nenhuma.
+
+### L-30 — o parser da resposta é FECHADO, e a divisão de trabalho com o censo é declarada
+
+Chave a mais, `flagged` não booleano, `subtypes` que não é lista de texto, prosa livre: tudo recusa.
+Cerca de código em volta é aceita, porque é o desvio mais comum dos provedores e não muda o conteúdo.
+**E o subtipo inventado PASSA o parser** — de propósito: o parser confere a **forma**, e o censo
+confere o **vocabulário** (`TriagerNamedUnknownSubtype`). Duas validações do vocabulário poderiam
+discordar; há caso que exercita as duas pontas dessa divisão.
+
+### L-31 — o manifesto de corrida ao lado do log, para nada ser digitado duas vezes
+
+Quem tria escreve quem era (provedor, modelo, digesto do prompt, parâmetros, data,
+não-determinismo declarado); quem mede lê. **Razão:** um recibo que tomasse o modelo de um flag do
+passo de medição poderia nomear um modelo que não correu. O caminho do manifesto é **derivado** do
+caminho do log (`<log>.manifest.json`) e não um segundo flag, porque dois flags permitiriam medir um
+log com o manifesto de outra corrida.
+
+### L-32 — o recibo não se constrói sobre gate reprovado, e a guarda é dentro dele
+
+`build_receipt` chama `assert_the_gates_passed` antes de montar qualquer campo. **Razão:** um recibo
+de execução reprovada seria lido como recibo. E a recusa nomeia **TODOS** os gates que caíram, não o
+primeiro: parar no primeiro escolheria quais gates a execução reporta, e um relatório que só mostra o
+primeiro a cair esconde se os outros três também cairiam.
+
+O recibo carrega a **alegação verbatim** do registro e a lista do que ela **não** afirma, as duas
+escritas no artefato e não só no documento — porque o artefato é o que viaja, e um recibo lido sozinho
+tem de dizer o que não pode ser concluído dele. Os **nove riscos nomeados** entraram na
+pré-inscrição (`protocol.NAMED_RISKS`), para o recibo os citar de lá em vez de os retypar.
+
+**Emenda declarada:** acrescentar `NAMED_RISKS` ao protocolo move `protocol_digest()`. É legítimo
+porque **nenhuma execução correu** — não há recibo publicado que cite o digesto anterior — e o digesto
+não está pinado em literal nenhum (o teste dele recomputa o sha256 do arquivo). Depois da primeira
+execução, mover este arquivo é emenda com recibo a invalidar.
+
+### O que a indistinguibilidade mede, e o desfecho ruim é acertar DEMAIS
+
+A execução aborta se o discriminador acertar **fora** da margem em torno do azar — nas duas direcções.
+Acertar demais diz que as injecções têm forma própria e a sensibilidade medida sobre elas não viaja;
+acertar de menos também distingue os dois lados. Não há resultado bom fora do azar, porque a alegação
+é **equivalência** e não superioridade. Há caso para cada direcção.
+
+### O QUE FICA ABERTO, e é material e não código
+
+**O catálogo de controles não existe.** São 660 injecções + 660 shams (11 subtipos × 60 + 60), 320
+sondas adversariais e 100 pares de indistinguibilidade — e ao menos **1/3 das injecções de cada
+subtipo escritas à mão pelo operador**, com o resto de um gerador de família **diferente** do triador.
+O código valida o catálogo contra o protocolo e recusa antes de gastar; produzir o catálogo é
+recolha, e o piso manual é exactamente a parte que não se delega a um gerador.
+
+**Um recibo de execução REPROVADA não existe como artefato.** Os vereditos dos quatro gates são
+impressos e os logs ficam em disco, então a execução reprovada é auditável; o que ela não deixa é um
+JSON. Declarado, e não é omissão: o recibo é o artefato da alegação, e não há alegação a fazer.
+
+### As baterias
+
+`test_pii_screen_gates.py` (36 casos) e `test_pii_screen_run.py` (24 casos) correm sem falar com
+provedor nenhum. A bateria de mutação vai na entrada seguinte, com o cross-review.
+
+### Referências
+
+Nada de novo entra: o desenho já está ancorado em `references.md` § V (SPY, NAACL SRW 2025, e o
+estudo multilíngue com PII injectada por especialistas). O Wilson unilateral é o espelho de
+`benchmark/intervals.ts`, já prendido por teste que dirige o node. A regra de publicar piso ao lado da
+medição é regra da casa.
+
+## O segundo cross-review: SEIS achados, e dois deles eu já tinha encontrado por outro caminho (2026-08-24)
+
+Uma rodada adversarial sobre `e6d2ae2` + `a79af48` devolveu **REPROVA** com seis achados. Os seis
+eram reais, e dois confirmaram, por medição independente, o que eu tinha achado enquanto ele corria.
+
+### C-5 (alta) — a auto-referência passava por semente, e o buraco foi o meu FIXTURE que o abriu
+
+O guarda pós-construção saltava **toda** auto-referência, nos dois eixos de linhagem. Repro do
+revisor: uma linha gerada com `candidateId` vazio, `id` e `pairedWith` iguais a `src_ptwiki_h41`.
+`humanSeed` fica igual ao próprio `id`, o guarda salta, e a linha chega ao escritor **sem pai humano
+nenhum** — que é exactamente o estado que `assertDerivedParentsResolve` recusa, porque lá o apontado
+tem de ter rótulo `human` e um registro gerado não o tem.
+
+**E a origem do salto foi um fixture meu.** Ao escrever o caso do «pai presente que não é humano», dei
+à linha `ai` um `promptId` que a nomeia a ela própria, e acrescentei o salto para o fixture passar.
+Fixture a decidir mecanismo. A assimetria certa é a do guarda selado: `derivationRoot` pede
+**presença** (e o próprio registro está presente), `humanSeed` pede um registro **humano**. O fixture
+passou a não nomear semente nenhuma.
+
+### C-6 (média) — `funnel_key` tinha duas fontes, e o carimbo entrava sem normalização
+
+Duas coisas: o valor carimbado por `enforce_unique_keys` era devolvido **cru** — é token por
+construção, mas isso fazia da normalização uma propriedade de quem escreve —, e a linha com
+`candidateId` **vazio** e `id` preenchido tinha `ai_record` a ler `cand["id"]` por conta própria
+enquanto `funnel_key` caía no ramo da mista. As duas fontes divergiam exactamente nessa linha. Agora o
+`id` é um ramo de `funnel_key`, o carimbo passa pelo `slug`, e `ai_record` não lê identidade de sítio
+nenhum.
+
+### C-7 (média) — o corte de órfãs corria ANTES da ligação, e dropava a geração que o linker resolveria
+
+O corte compara com **identidades**; a referência nomeia a **cadeia antiga**. Então toda linha
+derivada cujo pai foi renomeado lia como órfã e saía — **uma geração perdida por um renomeio que o
+linker sabia resolver**. Duas mudanças: a ligação passou a alcançar **as duas** classes derivadas
+(`link_derived_to_parents`, com `named_seed_identity` a preferir o carimbo), e em `main()` ela corre
+**antes** do corte. A classe `ai` estava de fora da ligação desde o início, e este é o custo que isso
+tinha.
+
+### C-8 (média) — o caso da ordem não observava a poda que ele ordenava
+
+O caso espiava `enforce_unique_keys`, a ligação e a projecção — e **não** a poda. Mover a
+desambiguação para depois das podas, que é o defeito que ela existe para fechar, deixava a ordem
+observada intacta e o caso verde. A poda entrou na lista, e a ordem afirmada é
+`enforce_unique_keys → prune → ligação → órfãs → projecção`.
+
+### C-9 e C-10 — as duas que eu já tinha achado, e a confirmação vale mais que a coincidência
+
+O revisor mediu que as **5.000** linhas de `candidates/wikipedia_fresh.jsonl` que eu publiquei como
+população de substituição **não são expressáveis** — zero mantidas, 5.000 `MissingLabelEvidence`. Eu
+tinha chegado ao mesmo tipo de facto por outro caminho, no diretório certo: as **4.100** de
+`candidates-f3/` caem todas por `MissingExtractionRun`. **As duas medições dizem a mesma coisa:** a
+população de pais não se declara sem medir a expressabilidade dela, e eu declarei. Está retractado na
+§ 5.15.
+
+E ele estreitou a alegação de C-3: com o material de hoje a montagem **não chega** a produzir um
+corpus que o split recuse — ela para antes, no piso de documentos de origem, porque não há humana
+expressável. A frase «produz um corpus que o split recusa» vale para material expressável, e assim
+está escrita agora.
+
+### A bateria: 8 mutações, 8 mortas — e um caso DUPLICADO que ela encontrou
+
+| # | mutação | caso que ficou VERMELHO |
+|---|---|---|
+| M89 | o guarda volta a saltar a auto-referência nos dois eixos | *gerada que nomeia A SI PROPRIA como semente SAI* |
+| M90 | `funnel_key` devolve o carimbo sem slug | *o carimbo de identidade tambem passa pelo slug* |
+| M91 | `funnel_key` perde o ramo do `id` | *a linha da reserva nomeia-se por ID* |
+| M92 | a ligação deixa de alcançar a classe `ai` | *a gerada cuja semente foi RENOMEADA e repontada*, mais 1 |
+| M93 | a ligação da `ai` não carimba | *a gerada cuja semente foi RENOMEADA e repontada* |
+| M94 | `named_seed_identity` ignora o carimbo | *a gerada cuja semente foi RENOMEADA e repontada* |
+| M95 | a ambiguidade da semente escolhe a primeira | *semente que resolve em DUAS humanas RECUSA* |
+| M96 | `main()` corta as órfãs antes de ligar | *a ORDEM do funil*, mais 1 |
+
+**O caso duplicado:** M96 ficou vermelho em dois casos, e um deles era um que eu acreditava ter
+**substituído**. O arquivo tinha duas definições de `test_a_selecao_humana_RECEBE...` e o caso antigo
+da ligação ainda vivo — em Python a última definição vence, então uma das cópias media e a outra era
+letra morta. A bateria mostrou-o porque nomeia o caso vermelho; a suíte verde não mostrava nada.
+Os dois blocos mortos saíram.
+
+---
+
+## A pista mista lê a forma de CANDIDATO, e recusa pai que não pode ser registro (2026-08-24)
+
+### L-33 — duas formas em disco, uma normalização
+
+`reserved.jsonl` guarda `id`/`label`/`family` no topo; um pool escrito por `CandidateWriter` guarda
+`candidateId`/`domainSource` mais `meta`. A pista tinha de poder tomar pais do **segundo**, e a razão
+está medida na § 5.15: os pais do primeiro não podem ser registros do corpus. `normalize_parent_row`
+lê as duas e **recusa** um pool de geradas por nome — um pool de geradas também tem `candidateId`, e
+admiti-lo produziria mistas cujo «pai» é uma linha de IA. `domainSource` é o que separa os dois, e o
+`label: 0` da forma de candidato é construção e não valor lido.
+
+### L-34 — o pai que não nomeia aquisição é RECUSADO, e não projectado como `None` e esquecido
+
+`AXIS_STATE_RULE.sourceMaterialBatch` admite só `known` numa mista, então um pai sem lote produz mista
+que o montador recusa. A projecção continua a dizer `None` — é a verdade sobre a linha —, e o que mudou
+é a **admissibilidade**: antes a linha era gerada, a chamada gasta, e a mista caía na montagem.
+Medido: `reserved.jsonl` dá `{pai-nao-nomeia-aquisicao: 2.578, nao-e-classe-humana: 1.476}` e **zero**
+admissíveis.
+
+`parent_refusal_reason` é a autoridade **única** do filtro e do relatório, e `main()` imprime a
+itemização antes da primeira chamada: um total sozinho não diz se o arquivo de pais é o certo, e o
+arquivo errado custa uma corrida inteira.
+
+**A bateria achou código morto:** com a normalização a levantar o lote, o ramo do `meta` dentro de
+`parent_projection` nunca corria. Saiu — e a mutação que o apagava deixou de sobreviver porque a
+função deixou de o ter.
+
+### A bateria: 7 mutações, 7 mortas
+
+`M106`–`M112`, com os fixtures da janela a ganhar `sourceMaterialBatch` — eles medem a **borda da
+janela**, e sem o lote toda linha deles cairia pela outra razão e a medição da borda ficaria vácua.
+
+### Referências
+
+Nada de novo. A distinção entre as duas formas em disco é engenharia, e a regra de não pagar por linha
+que não pode entrar no corpus é a mesma que a § 7 já aplica à exclusão de família.

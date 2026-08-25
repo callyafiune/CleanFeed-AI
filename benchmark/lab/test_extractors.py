@@ -5270,7 +5270,12 @@ class GeneratorCaptureTests(unittest.TestCase):
         island = make_mixed.island_plan("ilha_03")
         cota = island["lines"]["mixed"]
         mine = [
-            {"id": f"pai_{index:04d}", "text": "x", "family": "ptwiki_lead"}
+            {
+                "id": f"pai_{index:04d}",
+                "text": "x",
+                "family": "ptwiki_lead",
+                "sourceMaterialBatch": "smb_ptwiki-20220301",
+            }
             for index in range(6000)
             if lab.island_of_seed(lab.ISLAND_PLAN, f"pai_{index:04d}")["island"]
             == island["island"]
@@ -5329,7 +5334,13 @@ class GeneratorCaptureTests(unittest.TestCase):
             pais.write_text(
                 "".join(
                     json.dumps(
-                        {"id": pid, "text": PROSE_60, "label": 0, "family": "ptwiki_lead"},
+                        {
+                            "id": pid,
+                            "text": PROSE_60,
+                            "label": 0,
+                            "family": "ptwiki_lead",
+                            "sourceMaterialBatch": "smb_ptwiki-20220301",
+                        },
                         ensure_ascii=False,
                     )
                     + chr(10)
@@ -5411,7 +5422,13 @@ class GeneratorCaptureTests(unittest.TestCase):
             pais.write_text(
                 "".join(
                     json.dumps(
-                        {"id": pid, "text": longo, "label": 0, "family": "ptwiki_lead"},
+                        {
+                            "id": pid,
+                            "text": longo,
+                            "label": 0,
+                            "family": "ptwiki_lead",
+                            "sourceMaterialBatch": "smb_ptwiki-20220301",
+                        },
                         ensure_ascii=False,
                     )
                     + chr(10)
@@ -5457,6 +5474,10 @@ class GeneratorCaptureTests(unittest.TestCase):
                 "text": " ".join(f"w{i}" for i in range(palavras)),
                 "label": label,
                 "family": "ptwiki_lead",
+                # O LOTE DE AQUISICAO e exigido desde 2026-08-24, e este caso mede a
+                # JANELA: sem ele toda linha do fixture cairia pela outra razao e a
+                # medicao da borda ficaria vacua. A recusa nova tem caso proprio.
+                "sourceMaterialBatch": "smb_ptwiki-20220301",
             }
 
         def admitidos(*linhas: dict) -> list[str]:

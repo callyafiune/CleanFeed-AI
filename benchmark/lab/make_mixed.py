@@ -620,15 +620,97 @@ def parent_projection(
     unwritable and does it QUIETLY — the assembler counts the drop and keeps going.
 
     `None` is the truthful value for a parent that names no acquisition (the reserved
-    pool predates the extractors that emit one). The row is then dropped at assembly
-    rather than filed under an invented batch.
+    pool predates the extractors that emit one). The projection keeps saying `None`
+    rather than inventing a batch — and `admissible_parents` no longer ADMITS such a
+    parent, which is the part that changed: a mixed row built on it cannot be a corpus
+    record, so generating it spends a paid call for nothing.
+
+    O LOTE VEM DO TOPO DA LINHA, e quem o poe la e `normalize_parent_row`: a linha de pool
+    escrita pelo extrator carrega-o em `meta` e a de arquivo de pares no topo, e levantar
+    as duas formas AQUI seria uma segunda normalizacao. A bateria mostrou-o: com a
+    normalizacao no sitio dela, o ramo do `meta` nesta funcao era codigo morto.
     """
     return {
         "id": row[id_key],
         "text": row[text_key],
-        "family": row.get("family", "?"),
+        "family": row.get("family") or row.get("domainSource") or "?",
         "sourceMaterialBatch": row.get("sourceMaterialBatch"),
     }
+
+
+class ParentsFileIsNotAHumanPool(RuntimeError):
+    """O arquivo de pais nao e um pool humano. Recusa ANTES de gastar chamada."""
+
+
+def normalize_parent_row(row: dict) -> dict:
+    """A linha de pai vinda de QUALQUER das duas formas em disco, na forma da pista.
+
+    Duas formas existem porque duas coisas as escreveram: `reserved.jsonl` guarda
+    `id`/`label`/`family` no topo, e um pool de candidatos escrito por `CandidateWriter`
+    guarda `candidateId`/`domainSource` mais `meta`. A pista tem de poder tomar pais do
+    SEGUNDO — e a razao esta medida: os pais do primeiro nao podem ser registros do corpus,
+    entao toda mista feita deles e dinheiro gasto num registro que o split recusa.
+
+    `label` NAO e inventado para a forma de candidato: um pool de candidatos HUMANOS e a
+    classe humana por construcao, e e por isso que `domainSource` e exigido — um pool de
+    geradas tambem tem `candidateId`, e admiti-lo aqui produziria mistas cujo "pai" e uma
+    linha de IA.
+    """
+    if "candidateId" in row:
+        if not row.get("domainSource"):
+            raise ParentsFileIsNotAHumanPool(
+                f"a linha {row.get('candidateId')!r} tem `candidateId` e nao tem "
+                "`domainSource`: e um pool de GERADAS, e uma mista feita dela teria por "
+                "pai uma linha de IA. O arquivo de pais e um pool humano"
+            )
+        meta = row.get("meta") or {}
+        return {
+            "id": row["candidateId"],
+            "text": row["text"],
+            # A classe humana por CONSTRUCAO, e nao um valor lido: e o que a exigencia de
+            # `domainSource` acima compra.
+            "label": 0,
+            "family": row["domainSource"],
+            "sourceMaterialBatch": meta.get("sourceMaterialBatch"),
+        }
+    return dict(row)
+
+
+def parent_refusal_reason(row: dict) -> str | None:
+    """`None` quando o pai e admissivel; senao a razao, nomeada.
+
+    UMA autoridade sobre a pergunta, porque `admissible_parents` e o relatorio de
+    admissibilidade tem de concordar sobre quantos pais ha e por que os outros nao contam.
+    """
+    lab = str(Path(__file__).resolve().parent)
+    if lab not in sys.path:
+        sys.path.insert(0, lab)
+    from common import MAXIMUM_WORDS, MINIMUM_WORDS, word_count
+
+    if row.get("label") != 0:
+        return "nao-e-classe-humana"
+    palavras = word_count(row["text"])
+    if palavras < MINIMUM_WORDS:
+        return "abaixo-da-janela-do-extrator"
+    if palavras > MAXIMUM_WORDS:
+        return "acima-da-janela-do-extrator"
+    # O LOTE DE AQUISICAO, e a recusa e nova: `AXIS_STATE_RULE.sourceMaterialBatch` admite
+    # so `known` numa mista, entao um pai que nao nomeia aquisicao produz mista que o
+    # montador recusa. Gerar a partir dele e pagar por linha que nao pode entrar.
+    if not parent_projection(row)["sourceMaterialBatch"]:
+        return "pai-nao-nomeia-aquisicao"
+    return None
+
+
+def parent_admissibility(rows) -> dict[str, int]:
+    """As contagens itemizadas, para o operador ler ANTES da primeira chamada."""
+    from collections import Counter
+
+    contagem: Counter = Counter()
+    for bruta in rows:
+        row = normalize_parent_row(bruta)
+        contagem[parent_refusal_reason(row) or "admissivel"] += 1
+    return dict(contagem)
 
 
 def admissible_parents(rows) -> list[dict]:
@@ -652,16 +734,11 @@ def admissible_parents(rows) -> list[dict]:
     Importado TARDE, no molde de `assembler()`: este arquivo roda como script, e um import
     de topo amarraria a cwd.
     """
-    lab = str(Path(__file__).resolve().parent)
-    if lab not in sys.path:
-        sys.path.insert(0, lab)
-    from common import MAXIMUM_WORDS, MINIMUM_WORDS, word_count
-
+    normalizadas = [normalize_parent_row(row) for row in rows]
     return [
         parent_projection(row)
-        for row in rows
-        if row.get("label") == 0
-        and MINIMUM_WORDS <= word_count(row["text"]) <= MAXIMUM_WORDS
+        for row in normalizadas
+        if parent_refusal_reason(row) is None
     ]
 
 
@@ -1096,7 +1173,12 @@ def main() -> None:
         if not keys["gemini"]:
             raise SystemExit("defina GEMINI_API_KEY (keys.env)")
 
-        parents = admissible_parents(read_jsonl(args.parents))
+        brutas = list(read_jsonl(args.parents))
+        # ITEMIZADO ANTES DA PRIMEIRA CHAMADA: quantos pais ha e por que os outros nao
+        # contam. Um total sozinho nao diz se o arquivo de pais e o certo, e o arquivo
+        # errado custa uma corrida inteira.
+        print(f"pais em {args.parents}: {parent_admissibility(brutas)}")
+        parents = admissible_parents(brutas)
         # E do BLOCO DE SEMENTES DESTA ILHA, imposto e nao prometido, no molde de
         # `generate_ai.select_humans`. Uma linha mista nomeia o pai em `derivationRoot` e
         # `humanSeed`, e `connected_components` une POR VALOR: um pai de outra ilha funde as

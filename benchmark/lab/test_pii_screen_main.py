@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 
 import assemble_corpus as ac
+import near_dupes
 import pii_screen
 from group_axes import NO_SINGLE_AUTHOR, known, not_applicable
 
@@ -579,44 +580,53 @@ class MainSnapshotTests(unittest.TestCase):
         for offset in range(5):
             self.assertIn(f"src_ptwiki_h{primeiro + offset}", ancoras)
 
-    def test_a_LIGACAO_pai_mista_corre_entre_a_desambiguacao_e_a_projecao(self) -> None:
-        # A POSICAO e a alegacao, e ela nao se le de nenhuma funcao pura: resolver a
-        # referencia antes da desambiguacao leria a identidade que vai mudar, e depois da
-        # projecao chegaria tarde para a cascata da triagem. O efeito de resolver — a
-        # ponte que mede UM componente e o pai renomeado que a leva consigo — esta medido
-        # em `test_funnel_identity.py`; o que falta e que `main()` a chame, aqui.
+    def test_a_ORDEM_do_funil_e_desambiguacao_poda_ligacao_orfas_projecao(self) -> None:
+        # A POSICAO de cada passo e a alegacao, e nenhuma funcao pura a carrega. O caso
+        # observa a PODA tambem, e o cross-review mediu por que: sem ela na lista, mover a
+        # desambiguacao para DEPOIS das podas — que e o defeito que ela existe para
+        # fechar — deixava esta ordem intacta e o caso verde.
+        #
+        # E a ligacao vem antes do corte de orfas pela razao inversa: o corte compara com
+        # IDENTIDADES, entao antes da ligacao ele le como orfa toda derivada cujo pai foi
+        # renomeado.
         self.write_humans(60)
         self.write_mixed(self.vinte_mistas(primeiro_pai=41))
         ordem: list[str] = []
-        originais = {
-            nome: getattr(ac, nome)
-            for nome in (
-                "enforce_unique_keys",
-                "link_mixed_to_parents",
-                "screening_projection",
-            )
-        }
+        no_ac = (
+            "enforce_unique_keys",
+            "link_derived_to_parents",
+            "drop_orphan_derived_rows",
+            "screening_projection",
+        )
+        originais = {nome: getattr(ac, nome) for nome in no_ac}
+        prune_original = near_dupes.prune
 
-        def espia(nome):
+        def espia(nome, alvo, funcao):
             def envolvida(*args, **kwargs):
                 ordem.append(nome)
-                return originais[nome](*args, **kwargs)
+                return funcao(*args, **kwargs)
 
-            return envolvida
+            setattr(alvo, nome, envolvida)
 
-        for nome in originais:
-            setattr(ac, nome, espia(nome))
+        for nome, funcao in originais.items():
+            espia(nome, ac, funcao)
+        espia("prune", near_dupes, prune_original)
         try:
             self.run_main()
         finally:
             for nome, funcao in originais.items():
                 setattr(ac, nome, funcao)
-        primeiras = ordem[:3]
+            near_dupes.prune = prune_original
         self.assertEqual(
-            primeiras,
-            ["enforce_unique_keys", "link_mixed_to_parents", "screening_projection"],
+            ordem[:5],
+            [
+                "enforce_unique_keys",
+                "prune",
+                "link_derived_to_parents",
+                "drop_orphan_derived_rows",
+                "screening_projection",
+            ],
         )
-
 
 if __name__ == "__main__":
     unittest.main()

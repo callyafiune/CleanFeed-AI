@@ -1526,6 +1526,12 @@ def named_seed_identity(row: dict) -> str | None:
     Devolve `None` quando a receita respondeu a um topico sem pai humano: nao ha semente a
     proteger nem linhagem a resolver.
     """
+    stamped = row.get(PARENT_IDENTITY_FIELD)
+    if stamped:
+        # O CARIMBO PRIMEIRO, pela mesma razao que `funnel_key` o le primeiro: depois de
+        # `link_derived_to_parents` a referencia crua pode nomear uma cadeia que mudou de
+        # dono, e o eixo tem de nomear o registro que esta no corpus.
+        return stamped
     meta = row.get("meta") or {}
     parent = meta.get("pairedWith") or parent_of_prompt(str(meta.get("promptId") or ""))
     if not parent:
@@ -1982,7 +1988,7 @@ def ai_record(cand: dict) -> dict:
     # licence never mentioned.
     license_id = generated_license(cand)
     meta = cand.get("meta") or {}
-    rec_id = funnel_key(cand) if cand.get("candidateId") else slug(cand["id"])
+    rec_id = funnel_key(cand)
     family_raw = meta.get("family") or cand.get("family") or "unknown"
     lane = lane_of(str(meta.get("provider") or ""), meta.get("generationLane"))
     # The governance audit compares generation.promptSha256 against the batch's
@@ -4071,10 +4077,21 @@ def funnel_key(row: dict) -> str:
     """
     stamped = row.get(FUNNEL_KEY_FIELD)
     if stamped:
-        return stamped
+        # O CARIMBO TAMBEM PASSA PELO SLUG. Escrito por `enforce_unique_keys` ele ja e
+        # token — chave slugada mais sufixo hexadecimal —, mas devolve-lo cru fazia da
+        # normalizacao uma propriedade de quem escreve em vez de uma propriedade desta
+        # funcao, e um carimbo posto a mao entrava sem passar por ela.
+        return slug(stamped)
     candidate_id = row.get("candidateId")
     if candidate_id:
         return slug(candidate_id)
+    # A LINHA GERADA DA RESERVA nomeia-se por `id` e nao por `candidateId`, e este ramo
+    # existe para que a identidade venha de UMA funcao: `ai_record` lia `cand["id"]` por
+    # conta propria, e as duas fontes divergiam exactamente na linha em que
+    # `candidateId` vinha vazio.
+    row_id = row.get("id")
+    if row_id:
+        return slug(row_id)
     return mixed_own_key(row)
 
 
@@ -4170,6 +4187,49 @@ def drop_orphan_derived_rows(
     return ai_left, mixed_left, counts
 
 
+def link_derived_to_parents(
+    ai: list[dict], mixed: list[dict], humans: list[dict]
+) -> dict[str, int]:
+    """Resolve a referencia das DUAS classes derivadas na identidade do pai, in place.
+
+    A classe `ai` estava de fora, e o cross-review mediu o custo: quando uma humana e
+    renomeada, a linha gerada continua a nomear a cadeia antiga em `humanSeed`, e o corte
+    de orfas — que compara com IDENTIDADES — lia-a como orfa e dropava-a. Uma geracao
+    perdida por um renomeio que o linker sabia resolver.
+
+    Devolve as contagens das duas, somadas por categoria: `resolved` e `repointed` contam
+    linha derivada, e `unresolved` e o que o corte de orfas vai tirar.
+    """
+    counts = {"resolved": 0, "repointed": 0, "unresolved": 0}
+    identity_by_reference: dict[str, list[str]] = {}
+    for human in humans:
+        identity_by_reference.setdefault(
+            group_axes.axis_token(human["candidateId"]), []
+        ).append(funnel_key(human))
+    for row in ai:
+        seed = named_seed_identity(row)
+        if seed is None:
+            continue
+        identities = identity_by_reference.get(seed, [])
+        if len(identities) > 1:
+            raise ParentIdentityAmbiguous(
+                f"a linha gerada {funnel_key(row)!r} nomeia a semente {seed!r}, e o pool "
+                f"humano tem {len(identities)} linhas com esse `candidateId` "
+                f"({', '.join(identities)}). Qual delas e a semente nao esta no dado"
+            )
+        if not identities:
+            counts["unresolved"] += 1
+            continue
+        counts["resolved"] += 1
+        if identities[0] != seed:
+            counts["repointed"] += 1
+        row[PARENT_IDENTITY_FIELD] = slug(identities[0])
+    mistas = link_mixed_to_parents(mixed, humans)
+    for chave in counts:
+        counts[chave] += mistas[chave]
+    return counts
+
+
 def link_mixed_to_parents(mixed: list[dict], humans: list[dict]) -> dict[str, int]:
     """Resolve a referencia de cada mista na IDENTIDADE do pai, in place.
 
@@ -4245,8 +4305,19 @@ def drop_records_whose_parent_is_absent(
         motivo: str | None = None
         for axis in SPLIT_PARENT_LINKAGE_AXES:
             named = group_axes.identity_of((record.get("groups") or {}).get(axis))
-            if named is None or named == record["id"]:
+            if named is None:
                 continue
+            # A AUTO-REFERENCIA E SALTADA SO EM `derivationRoot`, e a assimetria e a do
+            # guarda selado: la, `humanSeed` exige que o apontado seja HUMANO, e um
+            # registro gerado que se aponte a si proprio falha essa condicao. Saltar a
+            # auto-referencia nos dois eixos — como esta funcao fazia — deixava passar
+            # exactamente a linha gerada cuja semente e o proprio id, que e o estado em
+            # que ela nao tem pai humano nenhum.
+            if named == record["id"]:
+                if axis == "derivationRoot":
+                    continue
+                motivo = "parent-not-human"
+                break
             parent = by_id.get(named)
             if parent is None:
                 motivo = "parent-absent"
@@ -5051,6 +5122,12 @@ def main() -> None:
     else:
         print(f"!! sem indice de vistos em {args.seen_index}: fumaca sem poda global")
 
+    # A REFERENCIA SEGUE O REFERENTE PRIMEIRO, e a ordem foi medida: o corte de orfas
+    # compara com IDENTIDADES, entao corre-lo antes da ligacao lia como orfa toda linha
+    # derivada cujo pai foi renomeado — e dropava a geracao que o linker resolveria.
+    linked = link_derived_to_parents(ai, mixed, humans)
+    print(f"ligacao pai/derivada: {linked}")
+
     # AS ORFAS SAEM ANTES DA SELECAO: linha derivada sem pai no pool nao pode entrar no
     # corpus, e ocupar cota com ela e fazer o corpus sair curto sem ninguem escolher isso.
     ai, mixed, orphans = drop_orphan_derived_rows(humans, ai, mixed)
@@ -5065,17 +5142,6 @@ def main() -> None:
         )
     print(f"pools (com pai): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
 
-    # A REFERENCIA segue o referente, e so aqui: e o passo que impede a uniao do split de
-    # ligar uma mista ao registro errado quando o pai foi renomeado. DEPOIS das podas e do
-    # corte das orfas, e nao antes: uma resolucao tomada antes deles apontaria para pai
-    # que a poda derruba.
-    linked = link_mixed_to_parents(mixed, humans)
-    print(f"ligacao pai/mista: {linked}")
-    if linked["unresolved"]:
-        print(
-            f"!! mistas cujo pai nao esta no pool humano: {linked['unresolved']} — a "
-            "linhagem delas nomeia registro ausente, e o splitter nao as une a nada"
-        )
 
     # A CONTA ANTES DA CHAMADA PAGA, e ela vem antes da projecao de proposito: uma linha
     # que o construtor recusa nao pode entrar no corpus por caminho nenhum, entao nao pode

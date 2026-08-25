@@ -166,6 +166,130 @@ class AIdentidadeEOIdDoRegistro(unittest.TestCase):
         self.assertEqual(ac.mixed_record(mista)["id"], ac.funnel_key(mista))
 
 
+class AAutoReferenciaNaoESemente(unittest.TestCase):
+    """Uma linha gerada cuja semente e o proprio id NAO tem pai humano.
+
+    O guarda saltava toda auto-referencia, nos dois eixos, e era assim que esta linha
+    passava. A assimetria certa e a do guarda selado: `derivationRoot` pede presenca — e o
+    proprio registro esta presente —, `humanSeed` pede um registro HUMANO, e um registro
+    gerado nao o e nem quando aponta para si mesmo.
+    """
+
+    @staticmethod
+    def _ai(**meta_extra) -> dict:
+        meta = {
+            "provider": "gemini",
+            "family": "gemini-3.5-flash-lite",
+            "model": "gemini-3.5-flash-lite",
+            "version": "gemini-3.5-flash-lite",
+            "recipe": "original",
+            "generationLane": "gemini-api",
+            "temperature": "0.8",
+            "promptSha256": "b" * 64,
+            "promptTemplateDigest": "c" * 64,
+            "generatedAt": "2026-07-24T13:51:05.004170+00:00",
+        }
+        meta.update(meta_extra)
+        return {
+            "candidateId": "src_ptwiki_h41",
+            "text": "gerado " * 40,
+            "wordCount": 40,
+            "meta": meta,
+        }
+
+    def test_gerada_que_nomeia_A_SI_PROPRIA_como_semente_SAI(self) -> None:
+        registro = ac.ai_record(self._ai(pairedWith="src_ptwiki_h41"))
+        self.assertEqual(registro["groups"]["humanSeed"]["id"], registro["id"])
+        kept, counts = ac.drop_records_whose_parent_is_absent([registro])
+        self.assertEqual(kept, [])
+        self.assertEqual(counts["parent-not-human"], 1)
+
+    def test_a_linha_da_reserva_nomeia_se_por_ID_e_a_identidade_e_UMA(self) -> None:
+        # `load_ai` normaliza a linha reservada para `candidateId`, mas uma linha que
+        # chegue com `candidateId` vazio e `id` preenchido tinha DUAS fontes de
+        # identidade: `funnel_key` caia no ramo da mista (e levantava) e `ai_record` lia
+        # `cand["id"]` por conta propria.
+        row = {
+            "candidateId": "",
+            "id": "src_ai_ollama_0001",
+            "text": "gerado " * 40,
+            "wordCount": 40,
+            "meta": {"family": "qwen2.5-7b-q4km", "provider": "ollama"},
+        }
+        self.assertEqual(ac.funnel_key(row), "src_ai_ollama_0001")
+
+    def test_o_carimbo_de_identidade_tambem_passa_pelo_slug(self) -> None:
+        row = human_candidate("src_ptwiki_p1", "pagina_1")
+        row[ac.FUNNEL_KEY_FIELD] = "mau.id"
+        self.assertEqual(ac.funnel_key(row), "mau_id")
+        self.assertEqual(ac.human_record(row, "ptwiki", None)["id"], "mau_id")
+
+
+class ALigacaoAlcancaAsDuasClasses(unittest.TestCase):
+    @staticmethod
+    def _ai(candidate_id: str, paired: str) -> dict:
+        return {
+            "candidateId": candidate_id,
+            "text": "gerado " * 40,
+            "wordCount": 40,
+            "meta": {
+                "provider": "gemini",
+                "family": "gemini-3.5-flash-lite",
+                "model": "gemini-3.5-flash-lite",
+                "version": "gemini-3.5-flash-lite",
+                "recipe": "original",
+                "generationLane": "gemini-api",
+                "temperature": "0.8",
+                "promptSha256": "b" * 64,
+                "promptTemplateDigest": "c" * 64,
+                "pairedWith": paired,
+                "generatedAt": "2026-07-24T13:51:05.004170+00:00",
+            },
+        }
+
+    def test_a_gerada_cuja_semente_foi_RENOMEADA_e_repontada_e_NAO_e_orfa(self) -> None:
+        # O achado do cross-review: o corte de orfas compara com IDENTIDADES, entao antes
+        # da ligacao a gerada cujo pai foi renomeado lia como orfa — e uma geracao, que e
+        # chamada paga, saia por um renomeio que o linker sabia resolver.
+        colidente = self._ai("src_ptwiki_p1", "src_ptwiki_ausente")
+        humans = [human_candidate("src_ptwiki_p1", "pagina_1")]
+        gerada = self._ai("src_ai_0002", "src_ptwiki_p1")
+        ai = [colidente, gerada]
+        ac.enforce_unique_keys([ai, [], humans])
+        self.assertNotEqual(ac.funnel_key(humans[0]), "src_ptwiki_p1")
+
+        counts = ac.link_derived_to_parents(ai, [], humans)
+        self.assertEqual(counts["repointed"], 1)
+        ai_left, _mixed, orphans = ac.drop_orphan_derived_rows(humans, ai, [])
+        self.assertIn(gerada, ai_left)
+        self.assertEqual(orphans["ai-seed-absent"], 1)  # a colidente, que nomeia ausente
+
+        registro = ac.ai_record(gerada)
+        humano = ac.human_record(humans[0], "ptwiki", None)
+        self.assertEqual(registro["groups"]["humanSeed"]["id"], humano["id"])
+        kept, absent = ac.drop_records_whose_parent_is_absent([humano, registro])
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(absent["parent-absent"], 0)
+
+    def test_semente_que_resolve_em_DUAS_humanas_RECUSA(self) -> None:
+        humans = [
+            human_candidate("src_ptwiki_p1", "pagina_1"),
+            human_candidate("src_ptwiki_p1", "pagina_2", PROSE + " outro"),
+        ]
+        ai = [self._ai("src_ai_0001", "src_ptwiki_p1")]
+        ac.enforce_unique_keys([ai, [], humans])
+        with self.assertRaises(ac.ParentIdentityAmbiguous) as caught:
+            ac.link_derived_to_parents(ai, [], humans)
+        self.assertIn("src_ptwiki_p1", str(caught.exception))
+
+    def test_a_gerada_SEM_semente_nao_e_contada_em_lado_nenhum(self) -> None:
+        humans = [human_candidate("src_ptwiki_p1", "pagina_1")]
+        ai = [self._ai("src_ai_0001", "")]
+        ai[0]["meta"]["promptId"] = "original"
+        counts = ac.link_derived_to_parents(ai, [], humans)
+        self.assertEqual(counts, {"resolved": 0, "repointed": 0, "unresolved": 0})
+
+
 class ASementeNomeada(unittest.TestCase):
     @staticmethod
     def _ai(paired: str) -> dict:
@@ -326,11 +450,12 @@ class OPaiAusenteSaiContado(unittest.TestCase):
                 "recipe": "original",
                 "generationLane": "gemini-api",
                 "temperature": "0.8",
-                # O `promptId` nomeia a SEMENTE, e `ai_record` deriva `humanSeed` dele
-                # (`<receita>_<candidateId>`). Aqui aponta para a propria linha de
-                # proposito: o caso mede o pai da MISTA, e uma semente ausente na linha
-                # `ai` fa-la-ia sair por outra razao.
-                "promptId": "original_src_ptwiki_p1",
+                # SEM SEMENTE (`promptId` sem sublinhado nao nomeia pai): o caso mede o
+                # pai da MISTA, e a linha `ai` esta aqui so para ser um registro PRESENTE
+                # com rotulo diferente de humano. Apontar a semente dela a si propria —
+                # como a primeira versao deste fixture fazia — era o estado que o guarda
+                # tem de recusar, e foi ele que o cross-review achou por essa porta.
+                "promptId": "original",
                 "promptSha256": "b" * 64,
                 "promptTemplateDigest": "c" * 64,
                 "generatedAt": "2026-07-24T13:51:05.004170+00:00",
@@ -627,6 +752,101 @@ class ODesacordoEntreOsDoisConstrutores(unittest.TestCase):
         from collections import Counter
 
         ac.assert_the_builders_agree_with_the_filter(Counter(), {})
+
+
+class APistaMistaRecusaPaiInutilizavel(unittest.TestCase):
+    """A pista mista le a forma de CANDIDATO e recusa pai que nao pode ser registro.
+
+    A razao e dinheiro: uma mista feita de pai que o corpus nao pode conter e uma chamada
+    paga por um registro que o split recusa. As duas condicoes vivem em
+    `make_mixed.parent_refusal_reason`, que e a autoridade unica do relatorio e do filtro.
+    """
+
+    @staticmethod
+    def _reservada(**extra) -> dict:
+        linha = {
+            "id": "res_0001",
+            "text": PROSE,
+            "label": 0,
+            "family": "ptwiki_lead",
+        }
+        linha.update(extra)
+        return linha
+
+    @staticmethod
+    def _candidata(**extra) -> dict:
+        linha = {
+            "candidateId": "src_wikipedia_pt_0001",
+            "text": PROSE,
+            "domainSource": "ptwiki_lead",
+            "meta": {"sourceMaterialBatch": "smb_ptwiki-20220301"},
+        }
+        linha.update(extra)
+        return linha
+
+    def test_pai_que_nao_nomeia_aquisicao_e_RECUSADO_e_nao_projetado_como_None(
+        self,
+    ) -> None:
+        import make_mixed
+
+        # A projecao continua a dizer `None` — e a verdade sobre a linha —, e o que mudou
+        # e a ADMISSIBILIDADE: antes a linha era gerada e a mista dela caia na montagem,
+        # o que gastava a chamada e perdia o registro.
+        reservada = self._reservada()
+        self.assertIsNone(
+            make_mixed.parent_projection(reservada)["sourceMaterialBatch"]
+        )
+        self.assertEqual(
+            make_mixed.parent_refusal_reason(
+                make_mixed.normalize_parent_row(reservada)
+            ),
+            "pai-nao-nomeia-aquisicao",
+        )
+        self.assertEqual(make_mixed.admissible_parents([reservada]), [])
+
+    def test_a_forma_de_CANDIDATO_e_lida_e_o_lote_vem_do_meta(self) -> None:
+        import make_mixed
+
+        candidata = self._candidata()
+        normalizada = make_mixed.normalize_parent_row(candidata)
+        self.assertEqual(normalizada["id"], "src_wikipedia_pt_0001")
+        self.assertEqual(normalizada["label"], 0)
+        self.assertEqual(normalizada["family"], "ptwiki_lead")
+        self.assertIsNone(make_mixed.parent_refusal_reason(normalizada))
+        (projetada,) = make_mixed.admissible_parents([candidata])
+        self.assertEqual(projetada["sourceMaterialBatch"], "smb_ptwiki-20220301")
+
+    def test_um_pool_de_GERADAS_recusa_por_nome(self) -> None:
+        import make_mixed
+
+        # Um pool de geradas tambem tem `candidateId`, e admiti-lo produziria mistas cujo
+        # "pai" e uma linha de IA. `domainSource` e o que separa os dois pools.
+        with self.assertRaises(make_mixed.ParentsFileIsNotAHumanPool) as caught:
+            make_mixed.normalize_parent_row(
+                {"candidateId": "src_ai_0001", "text": PROSE, "meta": {}}
+            )
+        self.assertIn("src_ai_0001", str(caught.exception))
+
+    def test_a_itemizacao_e_a_MESMA_autoridade_do_filtro(self) -> None:
+        import make_mixed
+
+        # Duas contagens da mesma pergunta divergiriam no dia em que uma delas ganhasse
+        # uma condicao que a outra nao tem, e a que decide o gasto tem de ser a que
+        # decide o relatorio.
+        curta = self._candidata(candidateId="src_curta", text="tres palavras so")
+        linhas = [self._reservada(), self._candidata(), curta]
+        relatorio = make_mixed.parent_admissibility(linhas)
+        self.assertEqual(
+            relatorio,
+            {
+                "pai-nao-nomeia-aquisicao": 1,
+                "admissivel": 1,
+                "abaixo-da-janela-do-extrator": 1,
+            },
+        )
+        self.assertEqual(
+            len(make_mixed.admissible_parents(linhas)), relatorio["admissivel"]
+        )
 
 
 if __name__ == "__main__":
