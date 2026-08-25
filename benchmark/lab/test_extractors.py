@@ -2820,7 +2820,7 @@ class AssemblerRealGroupTests(unittest.TestCase):
             human_record(rows[0], "ptwiki", None)
 
     def test_the_loader_stamps_neither_the_run_nor_the_acquisition(self) -> None:
-        from assemble_corpus import load_humans
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
 
         # Asserted over the ROWS the loader returns, not over its source text: a stamp
         # written under a computed key (`"extraction" + "Run"`, a module constant, a
@@ -2828,7 +2828,7 @@ class AssemblerRealGroupTests(unittest.TestCase):
         # literal spelling.
         with tempfile.TemporaryDirectory() as raw:
             cand = Path(raw)
-            (cand / "wikipedia_fresh.jsonl").write_text(
+            (cand / f"{HUMAN_POOL_FILES[0]}.jsonl").write_text(
                 json.dumps(
                     {
                         "candidateId": "ptwiki_0001",
@@ -3155,7 +3155,7 @@ class DeclaredFrameTests(unittest.TestCase):
         )
 
     def test_a_pool_row_outside_the_frame_never_reaches_the_selection(self) -> None:
-        from assemble_corpus import load_humans
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
 
         # TWO screens, and the fixture separates them. The register filter has to drop a
         # Carolina row planted INSIDE the frame's own pool file, which is what the
@@ -3168,7 +3168,7 @@ class DeclaredFrameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             cand = Path(raw)
             rows = {
-                "wikipedia_fresh": [
+                HUMAN_POOL_FILES[0]: [
                     ("src_wiki_in", "ptwiki_lead"),
                     ("src_wiki_jud", "carolina_judicial_branch"),
                 ],
@@ -3395,6 +3395,112 @@ class DeclaredFrameTests(unittest.TestCase):
             - set(assemble_corpus.OUT_OF_FRAME_DOMAIN_SOURCES),
             set(),
         )
+
+
+class HumanPoolSelectionTests(unittest.TestCase):
+    """Quais arquivos de pool a montagem ABRE, e por que a lista e argumento.
+
+    O pool de 2026-08-06 nao carrega `extractionRun` — o extrator so passou a carimbar
+    em 2026-08-11 — e `human_record` recusa as 4.100 linhas dele. A montagem lia esse
+    arquivo por nome constante, entao a classe humana dela era zero enquanto o pool
+    carimbado estava em disco ao lado.
+    """
+
+    def _row(self, candidate_id: str) -> dict:
+        from group_axes import NO_SINGLE_AUTHOR, known, not_applicable
+
+        return {
+            "candidateId": candidate_id,
+            "text": PROSE_60,
+            "wordCount": 60,
+            "domainSource": "ptwiki_lead",
+            "licenseId": document_license_of("ptwiki_lead"),
+            "meta": {
+                "dateField": "pages-articles.xml@revision/timestamp",
+                "observedValue": "2021-05-21T00:00:00+00:00",
+                "snapshot": "ptwiki",
+                "sourceMaterialBatch": "smb_ptwiki-20220301",
+                "extractionRun": FIXTURE_EXTRACTION_RUN,
+                "groupAxes": {
+                    "source": known("ptwiki_page_1"),
+                    "author": not_applicable(NO_SINGLE_AUTHOR),
+                },
+            },
+        }
+
+    def _write(self, cand: Path, stem: str, ids: list[str]) -> None:
+        (cand / f"{stem}.jsonl").write_text(
+            "\n".join(json.dumps(self._row(cid)) for cid in ids) + "\n",
+            encoding="utf-8",
+        )
+
+    def test_the_default_list_is_the_one_the_loader_reads(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            for stem in HUMAN_POOL_FILES:
+                self._write(cand, stem, [f"src_{stem}"])
+            colhidas = {
+                r["candidateId"]
+                for r in load_humans(cand, cand / "sem-reservadas.jsonl")
+            }
+        self.assertEqual(
+            colhidas, {f"src_{stem}" for stem in HUMAN_POOL_FILES}
+        )
+
+    def test_the_pool_list_is_an_ARGUMENT_and_the_default_is_reachable_past(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        # A prova de que a lista deixou de ser constante: um pool que a default NAO nomeia
+        # e lido quando pedido, e a default NAO e lida no mesmo lance. Sem as duas metades
+        # um `pools` ignorado passaria — a lista antiga continuaria a decidir.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            for stem in HUMAN_POOL_FILES:
+                self._write(cand, stem, ["src_da_default"])
+            self._write(cand, "wikipedia_outra_extracao", ["src_do_argumento"])
+            colhidas = {
+                r["candidateId"]
+                for r in load_humans(
+                    cand,
+                    cand / "sem-reservadas.jsonl",
+                    pools=("wikipedia_outra_extracao",),
+                )
+            }
+        self.assertEqual(colhidas, {"src_do_argumento"})
+
+    def test_the_default_does_not_name_the_pool_of_2026_08_06(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES
+
+        # Medido em 2026-08-25: as 4.100 linhas de `wikipedia_fresh.jsonl` sao recusadas
+        # por `MissingExtractionRun`, uma a uma, e o arquivo fica em disco como evidencia.
+        # Readmiti-lo na default poe a classe humana da montagem de volta em zero.
+        self.assertNotIn("wikipedia_fresh", HUMAN_POOL_FILES)
+
+    def test_two_pools_that_share_a_candidate_id_are_refused(self) -> None:
+        from assemble_corpus import OverlappingHumanPools, load_humans
+
+        # POR QUE RECUSAR em vez de deduplicar: `dedup` colapsa por hash de TEXTO e guarda
+        # a PRIMEIRA ocorrencia, entao com dois pools sobrepostos e a ordem da tupla que
+        # decide qual linha sobrevive. Medido nos dois pools reais: o texto e identico nos
+        # 4.100 ids e a unica chave que difere e `meta.extractionRun`, logo a ordem decide
+        # se a montagem colhe 4.100 registros ou zero.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, "pool_a", ["src_partilhado", "src_so_de_a"])
+            self._write(cand, "pool_b", ["src_partilhado"])
+            with self.assertRaises(OverlappingHumanPools) as erro:
+                load_humans(
+                    cand,
+                    cand / "sem-reservadas.jsonl",
+                    pools=("pool_a", "pool_b"),
+                )
+        mensagem = str(erro.exception)
+        self.assertIn("src_partilhado", mensagem)
+        self.assertIn("pool_a", mensagem)
+        self.assertIn("pool_b", mensagem)
+        self.assertNotIn("src_so_de_a", mensagem)
 
 
 class CollectionTargetTests(unittest.TestCase):
@@ -8839,7 +8945,14 @@ class AssemblyRunTests(unittest.TestCase):
         wiki = [
             self._human("ptwiki_lead", index, document_license) for index in range(41)
         ]
-        self._write(cand / "wikipedia_fresh.jsonl", wiki)
+        import assemble_corpus
+
+        # O NOME VEM DA PRODUCAO. Com o literal, este fixture media o nome do arquivo:
+        # a montagem deixou de abrir `wikipedia_fresh` e doze corridas desta classe
+        # passaram a montar sobre classe humana vazia sem que nada apontasse a causa.
+        self._write(
+            cand / f"{assemble_corpus.HUMAN_POOL_FILES[0]}.jsonl", wiki
+        )
         # Out of frame since the amendment, and written anyway: a run that opened it would
         # take these rows, and no cell counts them.
         self._write(
@@ -8958,7 +9071,11 @@ class AssemblyRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             tmp = Path(raw)
             self._pools(tmp)
-            pool = tmp / "candidates" / "wikipedia_fresh.jsonl"
+            import assemble_corpus
+
+            pool = (
+                tmp / "candidates" / f"{assemble_corpus.HUMAN_POOL_FILES[0]}.jsonl"
+            )
             unstamped = []
             for line in pool.read_text(encoding="utf-8").splitlines():
                 row = json.loads(line)

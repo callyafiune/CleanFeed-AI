@@ -3818,7 +3818,30 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
 # --- loading + selection -----------------------------------------------------
 
 
-def load_humans(cand: Path = CAND, reserved: Path | None = None) -> list[dict]:
+# Os pools humanos que a montagem ABRE, por radical de nome. `wikipedia_fresh` — a
+# extracao de 2026-08-06 — fica FORA: o extrator so passou a carimbar `extractionRun` por
+# linha em 2026-08-11, e sem o carimbo `human_record` recusa a linha, entao aquele arquivo
+# rende zero registro. Ele continua em disco como evidencia da extracao anterior, e e por
+# isso que a lista nomeia radicais em vez de varrer o diretorio.
+HUMAN_POOL_FILES: tuple[str, ...] = ("wikipedia_fresh_v2",)
+
+
+class OverlappingHumanPools(RuntimeError):
+    """Dois pools da selecao oferecem o mesmo `candidateId`.
+
+    NAO se deduplica em silencio: `dedup` colapsa por hash de TEXTO e guarda a PRIMEIRA
+    ocorrencia, logo com pools sobrepostos e a ORDEM da tupla que decide qual linha
+    sobrevive. Medido nos dois pools reais de `candidates-f3`: o texto e identico nos 4.100
+    ids e a unica chave que difere e `meta.extractionRun`, entao a ordem decidiria entre
+    4.100 registros e zero — e o resultado nao mudaria de forma visivel, so de contagem.
+    """
+
+
+def load_humans(
+    cand: Path = CAND,
+    reserved: Path | None = None,
+    pools: tuple[str, ...] = HUMAN_POOL_FILES,
+) -> list[dict]:
     """Fresh pools + reserved-clean humans, each tagged with its quota cell.
 
     TWO screens, and both are needed. The pool FILES read are the frame's own: the
@@ -3830,14 +3853,29 @@ def load_humans(cand: Path = CAND, reserved: Path | None = None) -> list[dict]:
     Carolina rows arrive at this loader and have to be dropped by cell rather than by
     file name.
 
+    `pools` is a parameter for the reason `reserved` already is: while the list of pool
+    names was a constant, a re-extraction written beside the old pool was invisible here,
+    and the assembly kept opening the file whose lines `human_record` refuses.
+
     `cand` is a parameter so a RE-EXTRACTION can be assembled without overwriting
     the pools of the failed run: §7 of the plan puts benchmark/data/corpus-build in
     "Descarte", and reading from a fresh directory is how C2 proves the identity
     comes out right end to end without destroying the evidence of the diagnosis."""
     rows: list[dict] = []
-    for fname in ("wikipedia_fresh",):
+    origem: dict[str, str] = {}
+    for fname in pools:
         for r in read_jsonl(cand / f"{fname}.jsonl"):
             if r["domainSource"] in REGISTER:
+                anterior = origem.get(r["candidateId"])
+                if anterior is not None:
+                    raise OverlappingHumanPools(
+                        f"o candidato {r['candidateId']!r} e oferecido por "
+                        f"{anterior!r} e por {fname!r}: com pools sobrepostos e a ordem "
+                        "da selecao que decide qual linha sobrevive ao dedup por texto, "
+                        "e as duas podem diferir no carimbo que decide se ela e "
+                        "expressavel"
+                    )
+                origem[r["candidateId"]] = fname
                 # NOTHING is stamped here, and the absence is the point. This loader knows
                 # which FILE it opened, and a file is not an execution: `CandidateWriter`
                 # takes `append=True`/`start_sequence`, so one pool file can hold the lines
@@ -5007,6 +5045,16 @@ def main() -> None:
         "benchmark/data/corpus-build, que é a evidência da execução reprovada",
     )
     parser.add_argument(
+        "--human-pool",
+        action="append",
+        default=None,
+        metavar="RADICAL",
+        help="radical do arquivo de pool humano a abrir, repetivel (default: "
+        f"{', '.join(HUMAN_POOL_FILES)}). ARGUMENTO e nao lista fixa: uma re-extracao "
+        "escrita ao lado do pool antigo era invisivel para a montagem, que continuava a "
+        "abrir o arquivo cujas linhas `human_record` recusa",
+    )
+    parser.add_argument(
         "--reserved",
         type=Path,
         default=DATASET / "reserved.jsonl",
@@ -5055,7 +5103,13 @@ def main() -> None:
 
     seen: set[str] = set()
     humans = dedup(
-        load_humans(args.candidates_dir, args.reserved), lambda r: r["text"], seen
+        load_humans(
+            args.candidates_dir,
+            args.reserved,
+            tuple(args.human_pool) if args.human_pool else HUMAN_POOL_FILES,
+        ),
+        lambda r: r["text"],
+        seen,
     )
     ai = dedup(load_ai(args.candidates_dir), lambda r: r["text"], seen)
     mixed = dedup(load_mixed(args.candidates_dir), lambda r: r["text"], seen)

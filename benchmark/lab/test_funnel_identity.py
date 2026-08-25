@@ -713,7 +713,7 @@ class OCaminhoDasReservadas(unittest.TestCase):
         import inspect
 
         parametros = list(inspect.signature(ac.load_humans).parameters)
-        self.assertEqual(parametros, ["cand", "reserved"])
+        self.assertEqual(parametros, ["cand", "reserved", "pools"])
 
     def test_reservada_de_um_caminho_dado_entra_no_pool(self) -> None:
         import json
@@ -721,7 +721,7 @@ class OCaminhoDasReservadas(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             raiz = Path(tmp)
-            (raiz / "wikipedia_fresh.jsonl").write_text(
+            (raiz / f"{ac.HUMAN_POOL_FILES[0]}.jsonl").write_text(
                 json.dumps(human_candidate("src_ptwiki_p1", "pagina_1"))
                 + chr(10),
                 encoding="utf-8",

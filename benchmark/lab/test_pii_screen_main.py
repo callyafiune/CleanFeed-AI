@@ -153,7 +153,7 @@ class MainSnapshotTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.candidates = self.root / "candidates"
         self.candidates.mkdir()
-        (self.candidates / "wikipedia_fresh.jsonl").write_text(
+        (self.candidates / f"{ac.HUMAN_POOL_FILES[0]}.jsonl").write_text(
             "".join(
                 json.dumps(human_row(index), ensure_ascii=False) + "\n"
                 for index in range(1, 46)
@@ -453,7 +453,7 @@ class MainSnapshotTests(unittest.TestCase):
         )
 
     def write_humans(self, quantos: int) -> None:
-        (self.candidates / "wikipedia_fresh.jsonl").write_text(
+        (self.candidates / f"{ac.HUMAN_POOL_FILES[0]}.jsonl").write_text(
             "".join(
                 json.dumps(human_row(index), ensure_ascii=False) + chr(10)
                 for index in range(1, quantos + 1)

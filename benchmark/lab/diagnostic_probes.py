@@ -1514,8 +1514,10 @@ def rows_from_pools(candidates: Path, names: Sequence[str] | None = None) -> lis
     (Stack Overflow — blocked by name by F0-6 —, B2W, Carolina) and the generator family
     the plan reserves for OOD, which together are most of the directory. A probe run over
     them reports the stylometry of a population the claim does not name.
-    `load_humans` opens `wikipedia_fresh.jsonl` and nothing else; `IN_FRAME_POOLS` is the
-    selection that reproduces the published rates.
+    `load_humans` opens the pools named by `HUMAN_POOL_FILES` and nothing else, and this
+    selection is NOT that one: `IN_FRAME_POOLS` is the nine files that reproduce the rates
+    published for `benchmark/data/candidates`, so moving it would move the population of a
+    published number.
 
     Every row carries the pool file it came from (`poolFile`), so `input_provenance` can
     put the material in the report: a report that does not name its input cannot be told

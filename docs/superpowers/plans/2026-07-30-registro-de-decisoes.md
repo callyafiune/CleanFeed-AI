@@ -12882,3 +12882,56 @@ janela**, e sem o lote toda linha deles cairia pela outra razão e a medição d
 
 Nada de novo. A distinção entre as duas formas em disco é engenharia, e a regra de não pagar por linha
 que não pode entrar no corpus é a mesma que a § 7 já aplica à exclusão de família.
+
+## A lista de pools da montagem passa a ser argumento, e a sobreposição é recusada (2026-08-25)
+
+O operador re-extraiu o pool humano da Fase 3 para `wikipedia_fresh_v2.jsonl` — caminho novo, porque
+o escritor acrescenta e o pool de 06/08 é evidência — e a medição de expressabilidade que eu devia a
+seguir deu **4.100 de 4.100**, contra 0 de 4.100 no pool antigo. A geometria saiu idêntica (20 ilhas,
+menor 187, rendimento mínimo 53,5 %) e, medido campo a campo, as duas populações são a mesma: os
+4.100 `candidateId` coincidem, o `text` é idêntico nos 4.100, e a única chave que difere em qualquer
+linha é `meta.extractionRun`.
+
+**O que a medição descobriu e eu não tinha previsto:** re-extrair para caminho novo não torna o pool
+utilizável. `load_humans` percorria `("wikipedia_fresh",)`, uma constante, então a montagem continuava
+a abrir o arquivo cujas linhas `human_record` recusa. A classe humana da montagem era zero com o pool
+carimbado em disco ao lado, e nada apontava a causa.
+
+### Três decisões, minhas
+
+**D-a: a lista de pools é o terceiro parâmetro de `load_humans`, com `HUMAN_POOL_FILES` de default.**
+É a mesma família de defeito que o caminho das reservadas já pagou nesta árvore — constante onde devia
+haver argumento —, e o precedente é registrado. `--human-pool` é repetível na CLI. Custo de reversão:
+nulo, é assinatura de função de lab.
+
+**D-b: pools que partilhem `candidateId` são RECUSADOS, não deduplicados.** A alternativa parecia mais
+barata e é armadilha: `dedup` colapsa por hash de texto e guarda a PRIMEIRA ocorrência, então com os
+dois pools reais — texto idêntico, só o carimbo a diferir — seria a **ordem da tupla** a decidir entre
+4.100 registros e zero, e o resultado não mudaria de forma visível, só de contagem. Varrer o diretório
+(`glob`) cai pela mesma medição, e com o agravante de ser silencioso.
+
+**D-c: `diagnostic_probes.IN_FRAME_POOLS` e `ner_pilot.DEFAULT_POOLS` NÃO entram nesta unidade.** Eu
+tinha escrito na § 3.9 que a unidade os alcançava; medido, os dois já são default de argumento
+(`--pool-file`, `--pools`), e `IN_FRAME_POOLS` é a receita que reproduz as taxas publicadas em § 5.7
+sobre `benchmark/data/candidates` — movê-la moveria a população de um número publicado sem que nada
+avisasse. O que entrou de lá foi a docstring que afirmava «`load_humans` opens `wikipedia_fresh.jsonl`
+and nothing else», que a unidade tornaria falsa.
+
+### A prova
+
+Bateria de **quatro** mutações, quatro mortas, restauração conferida por sha256 do arquivo inteiro:
+a recusa de sobreposição, o laço a ler `pools` em vez da constante, a default a admitir o pool de
+06/08, e a default a deixar de ser a lista que o loader lê. Fora da bateria, a corrida sobre o
+material real mede as três pontas: default 4.100 → 4.100; `pools=("wikipedia_fresh",)` 4.100 → 0, todas
+`MissingExtractionRun`; os dois juntos recusados nomeando o `candidateId` e os dois arquivos.
+
+**Um achado de forma que custou tempo e fica escrito:** cinco fixtures escreviam
+`wikipedia_fresh.jsonl` por literal, então mediam o **nome do arquivo** em vez do comportamento do
+loader — doze corridas de `AssemblyRunTests` passaram a montar sobre classe humana vazia quando a
+default mudou. Agora o fixture lê o nome da produção, e um `assertEqual` de assinatura em
+`test_funnel_identity` cresceu para os três parâmetros.
+
+### Referências
+
+Nada de novo. «O caminho é argumento» é lição já registrada nesta árvore, e esta unidade é a segunda
+aplicação dela.
