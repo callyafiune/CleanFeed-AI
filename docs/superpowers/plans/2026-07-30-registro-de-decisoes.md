@@ -11385,8 +11385,11 @@ Ela **não** foi ratificada como resolvida. O estimando é explicitamente pós-g
 publicado é o que o sustenta, e provar que a cobertura sobreviveu exige conferir os níveis realizados
 contra a alocação depois da corrida.
 
-Também não cobre nada da lista fechada: gastar a cota, o recibo humano do selo, a permutação de tarefas
-das ilhas reservadas, a assinatura de B1, `consume-holdout` e a publicação.
+Também não cobre nada da lista fechada: gastar a cota, o recibo humano do selo, a assinatura de B1,
+`consume-holdout` e a publicação. **A permutação de tarefas das ilhas reservadas saiu desta
+enumeração pela retificação abaixo:** ela não é decisão aberta, e o que sobra dela é limitação de
+model card.
+
 ## Retificação: a razão de não permutar as tarefas apoiava-se num custo que não existe (2026-08-23)
 
 A § 7 justificava não permutar as tarefas das três ilhas reservadas assim: *"permutar trocaria os 40
