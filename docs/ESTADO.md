@@ -270,43 +270,41 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 ## 3.9 O PRÓXIMO PASSO
 
 Escrito aqui e não deduzido da § 7, porque quem retoma lê esta seção primeiro. Estado de
-**2026-08-24**, depois da unidade da identidade do funil, do cross-review que a reprovou, e da
-medição que ele abriu.
+**2026-08-25**, depois da re-extração do pool humano e da medição de expressabilidade que ela abriu.
 
-**A ORDEM MUDOU, e a razão é uma medição: o pool humano da Fase 3 não produz um único registro.**
-As 4.100 linhas de `benchmark/data/candidates-f3/wikipedia_fresh.jsonl` são **todas** recusadas por
-`MissingExtractionRun` (§ 5.15) — o pool foi extraído em 2026-08-06 e o extrator passou a carimbar o
-eixo em 2026-08-11. Enquanto isso não se resolver, montagem nenhuma produz corpus e geração nenhuma
-tem pai que possa acompanhá-la. **Gerar antes disto é pagar por linhas que o corpus não vai conter.**
+**O POOL HUMANO EXISTE E É EXPRESSÁVEL, e a porta que sobrou é de CÓDIGO.**
+`benchmark/data/candidates-f3/wikipedia_fresh_v2.jsonl` tem 4.100 linhas carimbadas e
+`human_record` constrói **as 4.100** (§ 5.15). O que a montagem abre, no entanto, continua a ser o
+pool de 06/08: `load_humans` percorre uma tupla de nomes com `("wikipedia_fresh",)` dentro, então o
+pool de registro é invisível para ela e a classe humana continua em zero **na montagem**. A geração
+não tem esse vínculo — `generate_ai.py` recebe `--humans` por argumento —, mas gerar contra um pool
+que a montagem não lê é pagar por linhas cujo pai o corpus não vai conter.
 
 **Ordem:**
 
-1. **RE-EXTRAIR o pool humano — dele.** O dump está em
-   `repositorios/snapshots/ptwiki-20220301-pages-articles.xml.bz2` e `extract_wikipedia.py` carimba
-   `extractionRun` por linha. É ato sobre material, e o escritor **acrescenta**, então a saída vai
-   para um caminho **novo** e o pool de 2026-08-06 fica como evidência:
-   `py -3.13 extract_wikipedia.py --input <dump> --output ../data/candidates-f3/wikipedia_fresh_v2.jsonl
-   --limit 4100 --snapshot-version ptwiki-20220301`;
-2. **medir a expressabilidade do pool novo — minha, e é uma conta.** `partition_by_expressibility`
-   sobre `human_record` diz quantas linhas o corpus pode conter, por razão. O número de hoje é
-   **0 de 4.100**, e é por isso que ele não se presume: publicar o novo é o que fecha esta porta;
-3. **o CATÁLOGO DE CONTROLES da triagem — dele.** O código valida e recusa antes de gastar
+1. **ensinar o pool de registro à montagem — minha, e é código.** O caminho das reservadas já é
+   argumento por esta mesma razão medida; a lista de pools ainda é constante. A unidade é fazer dela
+   argumento com o pool de registro como padrão, com prova por mutação, e alcança também
+   `diagnostic_probes.IN_FRAME_POOLS` e `ner_pilot.py`, que pinam o nome antigo;
+2. **o CATÁLOGO DE CONTROLES da triagem — dele.** O código valida e recusa antes de gastar
    (§ 5.16), e o que falta é material: 660 injecções + 660 shams, 320 sondas adversariais, 100 pares
    de indistinguibilidade, com **ao menos 1/3 das injecções de cada subtipo escritas à mão** e o
    resto de um gerador de família **diferente** do triador. O piso manual é exactamente a parte que
    não se delega a um gerador;
-4. **gastar a cota de geração, botão dele** — e agora com **três** condições que a corrida declara
+3. **gastar a cota de geração, botão dele** — e agora com **três** condições que a corrida declara
    antes da primeira chamada: a **matriz de cobertura** (`assert_generation_coverage`), a
    **itemização dos pais** (`parent_admissibility`, que recusa pai que não nomeia aquisição), e o
-   **rendimento de banda** medido (`ilha_01` e `ilha_04` fecham com **53,5 %** sobre o pool da Fase 3,
-   e nenhuma corrida mediu o real). A geração pareia com o pool **re-extraído**, e não com
-   `reserved.jsonl`: os pais de lá não podem ser registros do corpus (§ 5.15);
-5. **apagar o material antigo — dele.** As 400 linhas de qwen e as 2.135 mistas, com os snapshots já
+   **rendimento de banda** medido (`ilha_01` e `ilha_04` fecham com **53,5 %** sobre o pool de
+   registro, e nenhuma corrida mediu o real). A geração pareia com `wikipedia_fresh_v2.jsonl`, e não
+   com `reserved.jsonl`: os pais de lá não podem ser registros do corpus (§ 5.15);
+4. **apagar o material antigo — dele.** As 400 linhas de qwen e as 2.135 mistas, com os snapshots já
    fora do repositório. A razão engrossou: além da representação antiga, esse material é de **outra
    moldura** — 1.597 das mistas têm `parentFamily` fora dela, e 2.319 das 4.048 linhas `ai` nomeiam
    semente que a moldura já não declara.
 
-**O que está FEITO e sai desta ordem:** a metade de contrato do `llm-pii-screen` (§ 5.14), a metade
+**O que está FEITO e sai desta ordem:** a **re-extração do pool humano** e a **medição de
+expressabilidade** dele — 4.100 de 4.100, geometria idêntica à do pool de 06/08 e a única chave que
+difere é o carimbo (§ 5.15) —, a metade de contrato do `llm-pii-screen` (§ 5.14), a metade
 do lab dele — censo, ledger, triagem no funil, `S_control` por estrato, gates adversariais por pares,
 indistinguibilidade, recibo e o driver com o total de chamadas digitado (§ 5.16) —, a cadeia de
 linhagem fechada em todas as etapas e a pista mista a ler a forma de candidato e a recusar pai
@@ -324,7 +322,7 @@ botão de publicação externa — os três dele, os três de fase posterior. E 
 |---|---|
 | **B1** — o **ramo** está escolhido: **risco assumido por escrito**, não parecer jurídico. Falta a **assinatura** — nome, data e a razão de assumir em vez de consultar —, que é do operador e espera o pacote da Fase 6 | publicação de pesos (Fase 7); `license-review.json` → `approved` |
 | **`consume-holdout`** — o botão irreversível da medição | Fase 5 |
-| **gastar a cota de geração**, e ela deixou de ser a próxima porta: o § 3.9 põe a **re-extração do pool humano** à frente dela, porque as 4.100 linhas em disco não produzem um único registro (§ 5.15). Nada em código barra uma corrida além da chave de API — os dois slates servem o plano, 40 identidades de geração e 60 de mistura, e `island_plan` aceita toda ilha nas DUAS pistas —, e o que a corrida agora **declara antes da primeira chamada** são três coisas: a matriz de cobertura, a itemização dos pais (`parent_admissibility`, que recusa pai sem lote de aquisição) e o rendimento de banda. **A razão da cota `mixed = 2000` saiu desta tabela: está derivada na § 5.13, registada como D4 e ratificada em 2026-08-23** | depois da re-extração e da medição de expressabilidade |
+| **gastar a cota de geração**, e o que a trava mudou: o pool humano já é expressável — 4.100 de 4.100 em `wikipedia_fresh_v2.jsonl` (§ 5.15) —, e o que falta antes dela é a montagem **abrir** esse pool (§ 3.9, item 1). Nada em código barra uma corrida além da chave de API: os dois slates servem o plano, 40 identidades de geração e 60 de mistura, e `island_plan` aceita toda ilha nas DUAS pistas. O que a corrida **declara antes da primeira chamada** são três coisas: a matriz de cobertura, a itemização dos pais (`parent_admissibility`, que recusa pai sem lote de aquisição) e o rendimento de banda. **A razão da cota `mixed = 2000` saiu desta tabela: está derivada na § 5.13, registada como D4 e ratificada em 2026-08-23** | depois de a montagem ler o pool de registro |
 | **como satisfazer o recibo humano que o selo de release exige, sob a auditoria amostral que ele mesmo decidiu.** Medido: `sealDataset` recusa com `DATASET_REVIEW_INVALID` um corpus `release` em que **qualquer** registro não sustente alegação de revisão, e o comentário do sítio declara que o desfecho é intencional — os 10.000 registros do corpus morto declaravam `agreement: "agree"` e uma auditoria de PII que nunca houve, e `reviewOf` lê todos como `automated/unreviewed`. O montador **proíbe-se** de produzir recibo (`NO_HUMAN_AUDIT`, com um "DO NOT ADD A RECEIPT BUILDER HERE" escrito), porque quem escreve toda linha é o único que teria os meios de fabricá-lo. `automated/unreviewed` é legítimo e sela `infrastructure-only`; o que ele não pode é sustentar alegação de que alguém olhou. Isso colide com R4 (§ 3.3), que é decisão **dele**: auditoria amostral, sem `passed` por registro. As duas pontas são dele, e reconciliá-las custa horas de revisão humana — ou o selo de release é inalcançável. **Nota de 2026-08-24 — o CAMINHO já não é o que esta linha trava.** O operador escolheu a triagem em censo com perfil de garantia **pré-inscrito** (§ 3.9, § 5.14): o `release` passa a ser alcançável por **outro perfil**, com alegação estreitada e declarada, e o recibo humano por registro fica como o que um perfil de revisão humana integral exigiria — não como o único caminho até o selo. A colisão com R4 **permanece** e é aceita: este caminho não satisfaz R4 nem produz recibo por registro. **O que resta dele nesta linha, e é só isto:** ratificar o perfil `census-pii-screen-v1` **antes do primeiro selo `release`** — a ativação é marco, e marco não se atravessa sem ratificação (§ 3.7) | Fase 3, antes do primeiro selo `release`; hoje nenhum corpus chega lá |
 | re-rodar o codex em **R1** e **R2** — **feito em 2026-08-22**, sob o mandato em pé de manter o codex na revisão gastando menos, e não era item desta tabela: rodar a janela não é dinheiro, e a fronteira escrita é COMPRAR crédito. Os dois voltaram **REPROVA** com um achado cada mais um não nomeado, e os quatro estão consertados no mesmo dia (§ 7 e o registro) | fechado |
 
@@ -1282,7 +1280,7 @@ condições independentes:
 contra o piso de 200. **1.800** passa o piso (216) e falha a alocação (4,5 por célula). **2.400**
 passa as duas e custa 400 linhas geradas por 48 positivos. O teto de material não é o vínculo — e o número **mudou**: eram
 2.578 pais admissíveis de `reserved.jsonl` (§ 5.4c), que é a população **errada**, e são
-**5.000** da extração fresca (§ 5.15), contra 2.000.
+**4.100** do pool re-extraído (§ 5.15), contra 2.000.
 
 ### 5.14 O perfil de garantia `census-pii-screen-v1`, e a sequência até o `release` (2026-08-24)
 
@@ -1377,37 +1375,38 @@ controles.
 sustente a alegação, e verificar só os sinalizados deixa ~9.900 em `automated/unreviewed`. Ele é
 qualidade e custo; o selo vem do perfil.
 
-### 5.15 O pool humano da Fase 3 NÃO PRODUZ UM ÚNICO REGISTRO, e a geração em disco é de outra moldura (2026-08-24)
+### 5.15 O pool humano da Fase 3, re-extraído e carimbado, e a geração em disco de outra moldura (2026-08-25)
 
-**Retractação minha, no mesmo dia.** A primeira versão desta seção mediu
-`benchmark/data/candidates/`, que é o diretório **pré-emenda da moldura**, e publicou dele uma
-população de substituição de 5.000 pais com rendimento mínimo de 43,5 %. O diretório da Fase 3 é
-`benchmark/data/candidates-f3/`, e os números certos estão abaixo. O que a medição errada **não**
-falsificou: a estrutura do achado — uma linha derivada cujo pai não pode ser registro do corpus é
-dinheiro gasto num registro que o split recusa.
+O diretório da Fase 3 é `benchmark/data/candidates-f3/`. `benchmark/data/candidates/` é o
+**pré-emenda da moldura**, e número tirado de lá não é desta célula: uma população de 5.000 pais com
+rendimento mínimo de 43,5 % já foi publicada aqui por essa confusão e não vale.
 
-#### O bloqueio de primeira ordem: o pool humano não é expressável
+#### O pool de registro é `wikipedia_fresh_v2.jsonl`, e ele é inteiramente expressável
 
-| medição | valor |
-|---|---:|
-| `candidates-f3/wikipedia_fresh.jsonl` | **4.100** linhas |
-| que `human_record` consegue construir | **0** |
-| razão, em todas | `MissingExtractionRun` |
+| medição | `wikipedia_fresh.jsonl` (06/08) | `wikipedia_fresh_v2.jsonl` (25/08) |
+|---|---:|---:|
+| linhas | 4.100 | **4.100** |
+| na moldura (`REGISTER`) | 4.100 | **4.100** |
+| que `human_record` constrói | **0** | **4.100** |
+| recusas | `MissingExtractionRun`, todas | **nenhuma** |
+| `meta.extractionRun` | ausente em todas | `er_extract_wikipedia_ptwiki-20220301_24f7092dbaf7`, em todas |
 
-**Por que, com datas:** o pool foi extraído em **2026-08-06** (mtime do arquivo, e é o corpo que a
-§ 5.4b mede). O extrator passou a carimbar `extractionRun` por linha em **2026-08-11** (`94a7e07`), e
-no mesmo lance o `setdefault` do loader saiu — a regra vigente é «pool que o extrator não carimbou é
-contado fora» (§ 3.3). Logo **todo** o pool cai, e a classe humana fica em zero: nenhuma montagem
-produz corpus, e nenhuma geração tem pai que possa acompanhá-la.
+A corrida de 2026-08-25 sobre `repositorios/snapshots/ptwiki-20220301-pages-articles.xml.bz2` fechou
+em `kept=4100 scanned=394414`, com `drop_words` 231.441, `drop_sampled_out` 158.834, `drop_pii` 39 e
+`drop_license` 0 (`wikipedia_fresh_v2.stats.json`).
 
-**O remédio é re-extrair, e é do operador:** o dump está em
-`repositorios/snapshots/ptwiki-20220301-pages-articles.xml.bz2`, e `extract_wikipedia.py` carimba. É
-ato sobre material (escreve o pool), então não se delega. **Depois de re-extrair**, a expressabilidade
-tem de ser medida outra vez — este número é a evidência de que ela não é presumível.
+**As duas populações são a MESMA, medido campo a campo:** os 4.100 `candidateId` coincidem — zero de
+cada lado sem par —, o `text` é idêntico nos 4.100, e a **única** chave que difere em qualquer linha é
+`meta.extractionRun`. Logo o corpo que a § 5.4b mede transfere para o pool de registro, e isso é
+medido e não presumido.
 
-#### A geometria do pool da Fase 3, que a re-extração deve preservar
+**Por que o de 06/08 não serve, e ele continua em disco:** o extrator passou a carimbar
+`extractionRun` por linha em **2026-08-11** (`94a7e07`), e no mesmo lance o `setdefault` do loader
+saiu — a regra vigente é «pool que o extrator não carimbou é contado fora» (§ 3.3). O arquivo antigo
+fica como evidência, e é ele que a montagem ainda abre: `load_humans` percorre a tupla
+`("wikipedia_fresh",)` e não conhece o nome do pool de registro (§ 7).
 
-Medido sobre as 4.100 linhas como estão (a janela e o bloco de semente não dependem do carimbo):
+#### A geometria, medida no pool de registro
 
 | medição | valor |
 |---|---:|
@@ -1747,6 +1746,7 @@ artefato da alegação, e não há alegação a fazer.
 | a **geometria da operação é conferida no que o gerador devolve**, e o **eco do pai é recusado no `emit`**. `assert_the_geometry_matches` lê a sobrevivência do pai do MESMO diff por palavra de `mixture_spans` — remove palavra do pai? sobra pai depois do enxerto? — e essas duas respostas separam as três operações (`GEOMETRY_SURVIVAL`). A tolerância de remoção incidental **deriva** de `MIX_LEVELS` (um terço do menor nível, 5 %), porque "removeu zero" recusaria a insercao legítima em que o provedor conserta uma gralha. `assert_the_pair_is_not_an_echo` lê `near_dupes.JACCARD_THRESHOLD` — a MESMA condição que a poda aplicaria, não uma segunda autoridade — e o que ela muda é o momento. As duas correm como **descarte** no laço, no molde do veredito de banda, e a corrida publica `descartados por guarda: {…}` **sempre**, porque a ausência da linha e o zero não podem parecer iguais | **feita** em 2026-08-23 |
 | **PAGA em 2026-08-24 — identidade não é referência, e o defeito era de tipo.** `funnel_key` devolve a identidade da linha, que **é** o id do registro que ela produz, e a mista carrega a dela própria (`mix_<pai>`); `enforce_unique_keys` deixou de receber nome de campo — a ausência do parâmetro é o mecanismo, porque com ele era *possível* apontá-la a uma referência — e escreve o valor desambiguado em campo próprio; `link_mixed_to_parents` corre entre a desambiguação e a projecção, resolve `parentId` na identidade do pai, **recusa** quando resolve em duas linhas humanas (`ParentIdentityAmbiguous`) e **conta** quando não resolve em nenhuma. **O defeito custava TRÊS sítios e a dívida publicava um.** O segundo é **perda de material**: `near_dupes.prune` devolve **nomes**, e duas linhas com o mesmo nome morrem juntas mesmo em clusters diferentes — as **homónimas** (duas mistas do mesmo pai, duas lanes `ai` do mesmo pai; **27** linhas medidas na poda global). **RETRACTADO em 2026-08-24, no mesmo dia:** a primeira versão desta linha dizia que a poupança era o par pai/mista, e não é — a mista precisa do pai **presente**, então guardar a filha e derrubar o pai não guarda nada, e as duas saem antes e depois do conserto. O terceiro é o carimbo `_originalKey`, que **saiu**: com `candidateId` imutável ele seria segunda autoridade sobre um valor de fonte única. **11 mutações, 11 mortas**, duas âncoras refeitas. **O que a ponte a funcionar traz, e não é defeito:** componentes maiores, então a interacção com a reserva OOD e com o passeio guloso pode recusar a montagem (`ReserveFillsTheBlindBlock`, `UnsplittableCorpus`) — as duas com entrada de teste agora, e o remédio é escolha de material, não código | fechada; o atrito ponte × reserva vence na Fase 3, com material real |
 | **PAGA em 2026-08-24, e eram duas dívidas numa.** (i) O caminho das reservadas é **argumento** (`--reserved`, `load_humans(cand, reserved)`), então o arquivo de teste do funil deixou de reescrever `ac.DATASET` por dentro para não colher as 583 linhas reais do disco. (ii) A linha que o construtor recusa sai **antes da selecção e da projecção** (`partition_by_expressibility`, com o **mesmo** construtor da montagem), então não ocupa cota nem paga chamada de triagem — as reservadas são o caso extremo, todas recusadas por `MissingDocumentLicense`. Medido no efeito: a contagem publicada passou de **40** para **41** no pool sem `extractionRun`, e a diferença é o que a leitura antiga escondia (contava o subconjunto selecionado, não o pool). O desacordo entre as duas execuções do construtor **levanta** (`assert_the_builders_agree_with_the_filter`), e é função nomeada porque nenhuma entrada real a alcança. **7 mutações, 7 mortas**, três a sobreviver a primeira volta | fechada |
+| a **montagem não conhece o nome do pool de registro**: `load_humans` percorre a tupla `("wikipedia_fresh",)` e abre o pool de 06/08, cujas 4.100 linhas `human_record` recusa por `MissingExtractionRun` — então a classe humana da montagem é **zero** enquanto o pool expressável (`wikipedia_fresh_v2.jsonl`, § 5.15) fica fechado. É a mesma família de defeito que o caminho das reservadas já pagou — constante onde devia haver argumento —, e alcança também `diagnostic_probes.IN_FRAME_POOLS` e `ner_pilot.py`, que pinam o nome antigo. A geração **não** está travada por isto, porque `--humans` é argumento | antes de gerar: gerar contra pool que a montagem não lê é pagar por linha cujo pai o corpus não conterá |
 | a **triagem de PII por censo está FECHADA em código, e o que falta é MATERIAL.** O desenho `llm-pii-screen` passou por quatro rodadas de codex (REPROVA ×3, APROVA na v4) e uma quinta pela emenda do perfil de garantia; está no registro (2026-08-24) com referências em § V de `references.md`. **A metade de contrato** está paga (§ 5.14): membro de `AUTOMATED_FILTERS`, o perfil `census-pii-screen-v1` pré-inscrito com as três recusas do selo, `evaluatorDigest` movido a uma vez orçada. **A metade do lab** está paga (§ 5.16): protocolo pré-inscrito com o Wilson espelho da bancada, censo e ledger de disposições com a cegueira na forma do tipo, triagem no funil em dois passos, `S_control` por estrato, teto de sham, par adversarial por vetor, indistinguibilidade nas duas direções, o recibo `pii-screening-receipt.json` que não se constrói sobre gate reprovado, e o driver com o total de chamadas **digitado**. **O que falta é o CATÁLOGO** — 660 injeções + 660 shams + 320 sondas adversariais + 100 pares, com ao menos 1/3 das injeções de cada subtipo escritas à mão pelo operador — e a **ratificação do perfil** antes do primeiro selo `release`. **E uma execução reprovada não deixa JSON**, declarado | catálogo: dele, antes da primeira execução; ratificação: marco |
 | a **poda morde em `insercao/25`, e o VALOR do regime de eco continua não medido.** § 5.4d: 11 cruzamentos em 618.720 sorteios, todos nessa célula, **0,036** linhas esperadas por corrida, e quatro dos onze de pai que o teto anterior já admitia. O regime de eco está **fechado por protocolo** e não por medição: `assert_the_pair_is_not_an_echo` recusa no `emit` e o descarte entra no denominador publicado, então a alegação passa a ser condicional a saídas pós-guarda em vez de silenciosa. O que continua sem número é a **taxa** com que um gerador real ecoa, e medi-la exige saída de gerador real | a taxa, na primeira corrida; o protocolo está fechado |
 | a **pista de geração da reserva existe** — `generate_ai.py --provider ollama`, que reusa ilha, semente, pareamento de comprimento, janela de palavras, PII, resume e lote —, e o que fica aberto é a decisão do operador sobre as 400 linhas que já estão em disco. **Quatro medições, e cada uma é razão para regerar em vez de completar:** (i) o template daquelas 400 **não foi recuperado** — `promptSha256` `f823530d215fffe8…`, bytes ausentes do repositório e do snapshot, quinze reconstruções testadas contra o digesto sem casar (um acerto seria prova, uma falha não é) —, então **com o template que o repositório carrega** as 50 que faltam até 450 carregam outro digesto de prompt; o que não está aferido é necessidade — os bytes podem reaparecer; (ii) **67 das 400 estão abaixo do mínimo de 50 palavras** e uma não está na forma canônica, porque o script não commitado não passou pelo `CandidateWriter`; (iii) **328 das 400 têm pai fora das ilhas reservadas**, e a reserva assenta por COMPONENTE — uma linha reservada semeada em ilha de núcleo arrasta as linhas de núcleo que o pai humano une para o bloco cego; (iv) o runtime local está em **0.32.15** e as 400 gravaram **0.32.6**, então a reprodutibilidade delas contra o binário instalado deixou de valer. A pista nova fecha (ii), (iii) e (iv) por construção e não pode consertar (i). **Regerar é apagar material, que é nunca delegado** | a decisão das 400 é **do operador**; a pista está feita |
