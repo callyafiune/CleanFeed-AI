@@ -7695,11 +7695,7 @@ class GeneratorVersionIsTheFamilyTests(unittest.TestCase):
             assemble_corpus.load_mixed(), lambda r: r["text"], seen
         )
         assemble_corpus.enforce_unique_keys(
-            [
-                (cls.ai_pool, "candidateId"),
-                (cls.mixed_pool, "parentId"),
-                (cls.humans, "candidateId"),
-            ]
+            [cls.ai_pool, cls.mixed_pool, cls.humans]
         )
 
     @staticmethod

@@ -12265,3 +12265,118 @@ unidade acrescenta — o snapshot como contrato, a chave carimbada, a recusa de 
 rastreado, a recusa de chave repetida — é engenharia. A publicação de `parent-unresolved` com
 denominador é a regra da casa sobre ausência declarada, que já está escrita em vários sítios do
 ESTADO e não é precedente externo.
+
+## Identidade não é referência: o defeito de tipo do funil, e os TRÊS sítios que ele custava (2026-08-24)
+
+A dívida que a § 7 abria como «`enforce_unique_keys` renomeia o PAI» está paga, e o que ela dizia
+era **menos** do que o defeito. O diagnóstico registado estava certo — `parentId` é chave
+estrangeira e passá-la a um impositor de unicidade que a mutila é tratar referência como
+identidade —, mas a consequência publicada era só a ponte. Medidas nesta unidade, são três, e a
+segunda é perda de material.
+
+### L-19 — a identidade da linha no funil É o id do registro que ela produz
+
+`funnel_key` devolve a identidade, e a mista carrega a dela própria: `mix_<pai>`, a mesma cadeia
+que `mixed_record` escreve em `id`. **Razão:** com duas grafias da identidade, funil e registro
+podiam discordar; com uma, `test_a_chave_do_funil_E_o_id_do_registro_construido` prende as duas
+juntas. O `parentId` fica **referência pura**, e `parent_key` existe para poder ser lida como o
+que é.
+
+### L-20 — `enforce_unique_keys` não recebe nome de campo, e a ausência é o mecanismo
+
+Ela toma `list[list[dict]]` e escreve o valor desambiguado num campo próprio
+(`_funnelKey`). **Razão:** enquanto havia um parâmetro de campo, era *possível* apontá-la a uma
+referência — e foi o que se fez. Sem o parâmetro, o defeito de tipo fica irrepresentável, e o
+teste que o prende afirma a assinatura (`inspect.signature`) e não uma excepção, porque é a
+assinatura que é o mecanismo. **Custo de reversão:** um parâmetro.
+
+### L-21 — a REFERÊNCIA segue o referente, e recusa quando resolve em duas
+
+`link_mixed_to_parents` corre entre a desambiguação e a projecção, e resolve `parentId` na
+identidade do pai. O caso que a obriga a existir: uma linha `ai` toma a chave primeiro, o humano é
+renomeado, e sem resolução o `derivationRoot` da mista continuaria a nomear a cadeia antiga — que
+agora pertence a **outro** registro. A união do split ligaria a mista ao registro **errado**, e em
+silêncio, que é pior do que não unir. Resolver em **mais de uma** linha humana **recusa**
+(`ParentIdentityAmbiguous`): qual delas é o pai não está no dado, e escolher a primeira escreveria
+linhagem que ninguém mediu. Não resolver em **nenhuma** é resultado legítimo — o pai pode ter
+caído na poda, ou ser uma reservada que `load_humans` exclui de propósito — e por isso é
+**contado** e impresso, não levantado.
+
+---
+
+## O segundo sítio é PERDA DE MATERIAL, e não estava na dívida
+
+`near_dupes.prune` devolve um **conjunto de ids**, e o montador filtra os três pools por
+pertença a esse conjunto. Com a mista chaveada pelo pai, as duas linhas tinham **o mesmo nome**:
+
+| estado | cluster | o que `prune` escolhe | o que o montador remove |
+|---|---|---|---|
+| chave partilhada | pai e mista juntos | guarda a **mista** (prioridade 1), derruba o pai | **as duas**, porque o nome devolvido nomeia ambas |
+| identidade própria | pai e mista juntos | guarda a mista, derruba o pai | **só o pai** |
+
+E o cluster não é hipotético: **a mista É o texto do pai com trechos enxertados**, então o par cai
+no mesmo cluster por construção. O fixture do caso mede Jaccard **0,8361** sobre shingles de 5
+tokens, acima do limite de 0,82 — a mesma faixa que o § U.3 de `references.md` mediu em material
+(0,848–0,869 em `insercao/25`). Medido ponta a ponta em `main()`:
+`test_a_poda_derruba_o_pai_e_a_mista_CHEGA_ao_corpus`.
+
+**A correcção que isto obriga à dívida antiga:** a linha da § 7 dizia que nas células de Jaccard
+≥ 0,82 «o pai já cai e a ponte já não existe, que é o achado antigo». Estava **incompleta**: nessas
+células a **mista caía também**, e o custo era da classe cuja cota é a mais apertada.
+
+## O terceiro é o `_originalKey`, que deixou de ter trabalho
+
+A entrada L-16 de 2026-08-24 introduziu o carimbo `_originalKey` porque «dois renomeios podem
+partir da mesma chave antiga e um mapa velho → novo guarda um deles». O carimbo **saiu**, e não por
+gosto: com `candidateId` imutável, «a chave original» e «o `candidateId` da linha» passaram a ser a
+**mesma cadeia**, e manter o campo seria uma segunda autoridade sobre um valor com uma só fonte. A
+cascata da triagem liga por referência (`parentId` contra `candidateId`) e a ligação vale em
+qualquer ponto do caminho. L-16 fica **superseditada** por L-19/L-20.
+
+## O que esta unidade NÃO fecha, e é consequência real da ponte consertada
+
+A ponte a funcionar faz **componentes maiores**, e componente maior é mais difícil de assentar. Dois
+casos apareceram na própria montagem de teste, os dois legítimos e nenhum defeito desta unidade:
+
+* uma mista derivada do mesmo pai que semeou uma linha **reservada** entra no componente da
+  reservada, e o componente reservado assenta **inteiro** no bloco cego — cinco mistas arrastadas
+  para um bloco que aguenta quatro fazem `main()` recusar com `ReserveFillsTheBlindBlock`;
+* vinte mistas todas em componentes `{human, ai, mixed}` esgotam a cota mista das partições antes
+  da humana, e o passeio guloso deixa o último componente sem sítio (`UnsplittableCorpus`).
+
+É **exactamente** o atrito que a § 5.12 declara entre a ponte e a reserva, e agora tem entrada de
+teste. Os dois fixtures foram ajustados para o evitar — pais mistos disjuntos dos que semeiam a
+reserva —, e o ajuste está comentado no sítio com a razão. **Consequência para a Fase 3, e fica
+escrita:** com material real, a interacção entre a ponte, a reserva OOD e o passeio guloso pode
+recusar a montagem, e o remédio é escolha de material (quais pais a pista de mistura toma), não
+código.
+
+### A bateria: 11 mutações, 11 mortas, e duas âncoras refeitas
+
+| # | mutação | caso que ficou VERMELHO |
+|---|---|---|
+| M60 | `mixed_own_key` devolve a chave do pai | *a chave do funil da mista e o ID DELA*, mais 7 |
+| M61 | a desambiguação escreve no `candidateId` | *o mapa de renomeios*, mais 3 |
+| M62 | a ligação não carimba a identidade resolvida | *o pai RENOMEADO leva a ponte consigo* |
+| M63 | a ambiguidade escolhe a primeira em vez de recusar | *pai que resolve em DUAS humanas RECUSA* |
+| M64 | o pai que não resolve conta como resolvido | *mista cujo pai nao esta no pool e CONTADA* |
+| M65 | o id do registro misto vem do pai resolvido | *duas mistas do MESMO pai recebem ids distintos* |
+| M66 | `main()` não liga a mista ao pai | *a LIGACAO corre entre a desambiguacao e a projecao* |
+| M67 | a poda volta a chavear a mista pelo pai | *a poda derruba o pai e a mista CHEGA ao corpus* |
+| M68 | `funnel_key` ignora o campo carimbado | *o mapa de renomeios*, mais 4 |
+| M69 | `parent_identity` não passa pelo `slug` | *a identidade do pai e um TOKEN de eixo* |
+| M70 | a ligação resolve por identidade e não por referência | *o pai RENOMEADO leva a ponte consigo*, mais 1 |
+
+**Duas âncoras minhas estavam mal escritas, e declaro-o porque mutante que não muta contado como
+morto é pior que mutante nenhum.** A de M67 (`key = funnel_key`) casava **três** sítios do arquivo e
+foi refeita com o bloco seguinte incluído. E **M69 sobreviveu à primeira volta com o teste novo já
+escrito**: o caso exercitava a linha **ligada**, que lê o carimbo, e a mutação vivia no ramo de
+**derivação** — o que uma linha não ligada usa. O caso passou a afirmar **as duas pontas**, e é a
+segunda vez que a lição aparece: *medição não transfere entre formas.*
+
+### Referências: nada de novo, e por quê
+
+A distinção identidade/referência é normalização elementar (chave primária contra chave
+estrangeira), e a regra de que um impositor de unicidade não muta chave estrangeira não é
+precedente de pesquisa — é o modelo relacional. A faixa de Jaccard do par pai/mista é a medição do
+§ U.3 de `references.md`, já ancorada. Nada entra.

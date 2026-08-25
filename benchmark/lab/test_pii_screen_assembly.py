@@ -11,11 +11,10 @@ O que este arquivo prende:
   * o SELO: a corrida `llm-pii-screen` e estampada DEPOIS da guarda, nunca antes;
   * o PREFLIGHT: os sobreviventes reais sao contados por classe depois do drop.
 
-A ponte pai/mista e MEDIDA aqui e nao raciocinada: `enforce_unique_keys` renomeia o lado
-HUMANO quando `mixed.parentId` colide com `human.candidateId` — medido, e nao o contrario —,
-entao a chave que a mista nomeia deixa de existir. A cascata atravessa isso pela chave
-ORIGINAL carimbada na propria linha, e nao por um mapa velho -> novo: dois renomeios podem
-partir da mesma chave antiga, e um mapa nao os distingue.
+A ligacao pai/mista e por REFERENCIA e nao por identidade: a cascata compara o `parentId`
+da mista com o `candidateId` da humana, e nenhum dos dois e reescrito no funil — a
+desambiguacao move so a identidade, num campo proprio. `test_funnel_identity.py` mede a
+distincao e os tres sitios que a confusao custava.
 """
 
 from __future__ import annotations
@@ -76,27 +75,25 @@ def mixed_candidate(parent_id: str, text: str) -> dict:
 
 class RenameMapTests(unittest.TestCase):
     def test_enforce_unique_keys_devolve_o_mapa_de_renomeios(self) -> None:
+        # A colisao e entre IDENTIDADES: uma linha `ai` e uma humana com o mesmo
+        # `candidateId`. O par pai/mista deixou de colidir, porque a mista carrega a
+        # identidade dela propria.
+        ai = [{"candidateId": "src_p1", "text": "gerado " * 20}]
         humans = [human_candidate("src_p1", "ptwiki_page_1")]
-        mixed = [mixed_candidate("src_p1", "outro texto " * 20)]
-        renames = ac.enforce_unique_keys(
-            [([], "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
-        )
+        renames = ac.enforce_unique_keys([ai, [], humans])
         # O mapa e para o operador ler no log: e o unico sitio que diz quantas chaves
-        # foram desambiguadas e quais. A cascata nao o usa (usa o carimbo na linha).
+        # foram desambiguadas e quais.
         self.assertEqual(list(renames), ["src_p1"])
-        self.assertEqual(renames["src_p1"], humans[0]["candidateId"])
-        self.assertNotEqual(humans[0]["candidateId"], "src_p1")
-        self.assertEqual(mixed[0]["parentId"], "src_p1")
+        self.assertEqual(renames["src_p1"], ac.funnel_key(humans[0]))
+        # A desambiguacao move a IDENTIDADE e nao o campo de origem: `candidateId`
+        # continua a ser a cadeia que outra linha pode citar.
+        self.assertEqual(humans[0]["candidateId"], "src_p1")
+        self.assertNotEqual(ac.funnel_key(humans[0]), "src_p1")
 
     def test_sem_colisao_o_mapa_e_vazio(self) -> None:
         humans = [human_candidate("src_p1", "ptwiki_page_1")]
         mixed = [mixed_candidate("src_p9", "outro texto " * 20)]
-        self.assertEqual(
-            ac.enforce_unique_keys(
-                [([], "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
-            ),
-            {},
-        )
+        self.assertEqual(ac.enforce_unique_keys([[], mixed, humans]), {})
 
 
 class ProjectionTests(unittest.TestCase):
@@ -105,7 +102,9 @@ class ProjectionTests(unittest.TestCase):
         ai = [{"candidateId": "a1", "text": "texto ai " * 20}]
         mixed = [mixed_candidate("h9", "texto misto " * 20)]
         projection = ac.screening_projection(humans, ai, mixed)
-        self.assertEqual([row.row_id for row in projection], ["a1", "h9", "h1"])
+        # A mista entra pela identidade DELA — `mix_<pai>` —, que e o id do registro que
+        # ela produz, e nao pelo nome do pai.
+        self.assertEqual([row.row_id for row in projection], ["a1", "mix_h9", "h1"])
 
     def test_o_digesto_e_o_da_regra_SELADA_e_nao_o_da_regra_do_lab(self) -> None:
         # `norm_hash` e a regra que a ingestao aplica (CRLF/CR para LF, depois NFC) e e o
@@ -124,20 +123,21 @@ class ProjectionTests(unittest.TestCase):
         )
 
     def test_recusa_a_projecao_tomada_ANTES_da_desambiguacao(self) -> None:
-        # A mista e chaveada pelo `parentId`, que e o `candidateId` do pai: antes de
-        # `enforce_unique_keys` as duas linhas partilham a chave, e uma projecao tomada
-        # ali leria o mesmo id duas vezes.
-        humans = [human_candidate("src_p1", "p1")]
-        mixed = [mixed_candidate("src_p1", "outro texto " * 20)]
+        # Duas mistas do MESMO pai partilham a identidade `mix_<pai>` — possivel porque o
+        # funil le dois arquivos e `already_done` chaveia por pai dentro de UM. Uma
+        # projecao tomada antes da desambiguacao leria o mesmo id com dois textos, e o
+        # ledger deixaria de dizer qual deles passou.
+        mixed = [
+            mixed_candidate("src_p1", "outro texto " * 20),
+            mixed_candidate("src_p1", "texto diferente " * 20),
+        ]
         with self.assertRaises(ac.ProjectionKeyCollision) as caught:
-            ac.screening_projection(humans, [], mixed)
-        self.assertIn("src_p1", str(caught.exception))
+            ac.screening_projection([], [], mixed)
+        self.assertIn("mix_src_p1", str(caught.exception))
         self.assertIn("enforce_unique_keys", str(caught.exception))
         # E DEPOIS dela a mesma projecao passa: e a ordem, e nao o material.
-        ac.enforce_unique_keys(
-            [([], "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
-        )
-        self.assertEqual(len(ac.screening_projection(humans, [], mixed)), 2)
+        ac.enforce_unique_keys([[], mixed, []])
+        self.assertEqual(len(ac.screening_projection([], [], mixed)), 2)
 
     def test_o_texto_da_projecao_e_o_texto_da_linha(self) -> None:
         projection = ac.screening_projection(
@@ -255,13 +255,8 @@ class DropTests(unittest.TestCase):
     def test_a_mista_cujo_PAI_saiu_sai_em_categoria_propria(self) -> None:
         humans = [human_candidate("h1", "p1")]
         mixed = [mixed_candidate("h1", "misto derivado " * 20)]
-        # `enforce_unique_keys` PRIMEIRO, que e a ordem real: antes dele a mista e o pai
-        # partilham a chave do funil, e a projecao recusa.
-        ac.enforce_unique_keys(
-            [([], "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
-        )
         projection = ac.screening_projection(humans, [], mixed)
-        ledger = self.ledger_for(projection, {humans[0]["candidateId"]})
+        ledger = self.ledger_for(projection, {ac.funnel_key(humans[0])})
         result = ac.drop_the_flagged(humans, [], mixed, ledger)
         self.assertEqual(result.humans, [])
         self.assertEqual(result.mixed, [])
@@ -271,21 +266,17 @@ class DropTests(unittest.TestCase):
         self.assertEqual(result.counts["cascade-parent-flagged"], 1)
 
     def test_a_cascata_atravessa_o_RENOMEIO_do_pai(self) -> None:
-        # O caso medido: `enforce_unique_keys` renomeia o lado humano, entao a chave que a
-        # mista nomeia deixou de existir. Sem o mapa a cascata nao acha o pai e a mista
-        # derivada de um pai sinalizado FICA.
+        # O pai E renomeado — uma linha `ai` tomou a identidade primeiro —, e a cascata
+        # continua a acha-lo: ela liga pela REFERENCIA, e a referencia nao se move.
+        ai = [{"candidateId": "src_p1", "text": "gerado " * 20}]
         humans = [human_candidate("src_p1", "p1")]
         mixed = [mixed_candidate("src_p1", "misto derivado " * 20)]
-        renames = ac.enforce_unique_keys(
-            [([], "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
-        )
+        renames = ac.enforce_unique_keys([ai, mixed, humans])
         self.assertEqual(list(renames), ["src_p1"])
-        # A ligacao NAO vem de um mapa lateral: vem carimbada na propria linha, porque
-        # dois renomeios podem partir da MESMA chave antiga e um mapa velho -> novo nao
-        # os distingue.
-        projection = ac.screening_projection(humans, [], mixed)
-        ledger = self.ledger_for(projection, {humans[0]["candidateId"]})
-        result = ac.drop_the_flagged(humans, [], mixed, ledger)
+        self.assertNotEqual(ac.funnel_key(humans[0]), "src_p1")
+        projection = ac.screening_projection(humans, ai, mixed)
+        ledger = self.ledger_for(projection, {ac.funnel_key(humans[0])})
+        result = ac.drop_the_flagged(humans, ai, mixed, ledger)
         self.assertEqual(result.counts["cascade-parent-flagged"], 1)
         self.assertEqual(result.mixed, [])
 

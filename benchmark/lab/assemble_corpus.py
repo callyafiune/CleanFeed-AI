@@ -1821,7 +1821,7 @@ def human_record(
     hard_neg: str | None,
     evidence_sink: list | None = None,
 ) -> dict:
-    rec_id = slug(cand["candidateId"])
+    rec_id = slug(funnel_key(cand))
     cell, source_id = cell_of(cand)
     license_id = document_license(cand)
     if register != cell:
@@ -1963,7 +1963,7 @@ def ai_record(cand: dict) -> dict:
     # licence never mentioned.
     license_id = generated_license(cand)
     meta = cand.get("meta") or {}
-    rec_id = slug(cand.get("candidateId") or cand["id"])
+    rec_id = slug(funnel_key(cand) if cand.get("candidateId") else cand["id"])
     family_raw = meta.get("family") or cand.get("family") or "unknown"
     lane = lane_of(str(meta.get("provider") or ""), meta.get("generationLane"))
     # The governance audit compares generation.promptSha256 against the batch's
@@ -2059,8 +2059,8 @@ def ai_record(cand: dict) -> dict:
 
 def mixed_record(cand: dict) -> dict:
     license_id = generated_license(cand)
-    parent = slug(cand["parentId"])
-    rec_id = f"mix_{parent}"
+    parent = parent_identity(cand)
+    rec_id = funnel_key(cand)
     text = cand["text"]
     spans = cand["mixture"]["spans"]
     total = len(text)
@@ -3994,35 +3994,67 @@ def recipe_temperature(generation: dict) -> float | None:
     return decoding.get("temperature")
 
 
-ORIGINAL_KEY_FIELD = "_originalKey"
+# --- identidade e referencia, e a distincao e o desenho ---------------------------
+#
+# `parentId` e chave ESTRANGEIRA: e o nome com que a linha mista aponta para o pai
+# humano. `candidateId` e IDENTIDADE. Sao papeis diferentes, e o custo de os confundir
+# foi medido em tres sitios: a uniao do split e saltada em silencio quando o valor
+# apontado deixa de ser id de registro presente; `near_dupes.prune` devolve NOMES, entao
+# duas linhas com o mesmo nome vivem e morrem juntas mesmo em clusters diferentes; e quem
+# e renomeado passa a depender da ORDEM dos pools.
+#
+# A regra deste bloco: a identidade da linha no funil e a identidade do REGISTRO que ela
+# vai produzir, e so ela e desambiguavel.
+
+MIXED_ID_PREFIX = "mix_"
+FUNNEL_KEY_FIELD = "_funnelKey"
+PARENT_IDENTITY_FIELD = "_parentIdentity"
 
 
-def original_key(row: dict) -> str:
-    """A chave do funil ANTES de qualquer desambiguacao.
+class ParentIdentityAmbiguous(RuntimeError):
+    """A referencia de uma mista resolve em MAIS DE UMA linha humana do pool."""
 
-    Carimbada por `enforce_unique_keys` na propria linha, e nao devolvida so num mapa,
-    porque DOIS renomeios podem partir da mesma chave antiga — uma linha mista e uma
-    humana que colidiram no mesmo valor — e um mapa `velho -> novo` guarda um deles. A
-    cascata pai-dropado precisa da ligacao exacta, entao a ligacao viaja com a linha.
 
-    O campo comeca por `_` e nenhum construtor de registro o le: os construtores leem
-    campos nomeados, e uma chave a mais na linha de pool e inerte.
+def mixed_own_key(row: dict) -> str:
+    """A identidade da linha mista: o id do registro que ela produz, `mix_<pai>`.
+
+    Derivada do pai e ainda assim identidade, e a distincao nao e verbal: o valor NOMEIA
+    esta linha, entao e este que a desambiguacao pode mover. `mixed_record` le a mesma
+    funcao para escrever `id`, de modo que funil e registro nao tem duas grafias da
+    mesma identidade.
     """
-    return row.get(ORIGINAL_KEY_FIELD) or funnel_key(row)
+    return f"{MIXED_ID_PREFIX}{slug(row['parentId'])}"
 
 
 def funnel_key(row: dict) -> str:
-    """A chave que o funil usa para esta linha, hoje.
+    """A identidade desta linha no funil, que E o id do registro que ela vai produzir.
 
-    Mistas sao chaveadas por `parentId` (o id do registro delas e `mix_<parent>`); as
-    outras carregam `candidateId`. Uma funcao e nao uma lambda porque a triagem, a poda
-    e a desambiguacao tem de concordar sobre o que e "a chave desta linha".
+    Uma funcao e nao uma lambda porque a triagem, a poda, a desambiguacao e os
+    construtores tem de concordar sobre o que e "a identidade desta linha". O campo
+    carimbado vem primeiro porque a desambiguacao escreve nele — e escreve NELE e nao no
+    `candidateId` da linha, para que nenhuma referencia guardada por outra linha se mova.
     """
-    return row.get("candidateId") or row["parentId"]
+    stamped = row.get(FUNNEL_KEY_FIELD)
+    if stamped:
+        return stamped
+    candidate_id = row.get("candidateId")
+    if candidate_id:
+        return candidate_id
+    return mixed_own_key(row)
 
 
-def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> dict[str, str]:
-    """Make the candidate key unique across ALL pools, in place.
+def parent_key(row: dict) -> str:
+    """A chave do pai que esta linha mista nomeia. REFERENCIA, nunca identidade.
+
+    Nomeada para poder ser lida como o que e: nada no funil a reescreve, entao ela casa
+    com o `candidateId` do pai em qualquer ponto do caminho — antes ou depois da
+    desambiguacao.
+    """
+    return row["parentId"]
+
+
+def enforce_unique_keys(pools: list[list[dict]]) -> dict[str, str]:
+    """Make each row's IDENTITY unique across ALL pools, in place.
 
     A candidate id is derived from (provider, parent), so two generation lanes
     asked for the same parent produce DIFFERENT texts under the SAME id —
@@ -4035,12 +4067,17 @@ def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> dict[str, str]:
     run to discover. The suffix is a digest of the record's own text: stable
     across runs, and it keeps both texts instead of discarding hard-won
     generations that are only accidentally named alike.
+
+    NAO RECEBE NOME DE CAMPO, e a ausencia do parametro e o mecanismo: com um nome de
+    campo era possivel — e foi feito — apontar esta funcao a `parentId`, que e uma
+    referencia. A identidade sai de `funnel_key` e o valor desambiguado entra em
+    `FUNNEL_KEY_FIELD`, entao nenhum campo que outra linha cita e tocado aqui.
     """
     seen: set[str] = set()
     renames: dict[str, str] = {}
-    for rows, field in pools:
+    for rows in pools:
         for row in rows:
-            key = row[field]
+            key = funnel_key(row)
             if key not in seen:
                 seen.add(key)
                 continue
@@ -4050,16 +4087,61 @@ def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> dict[str, str]:
             while candidate in seen:  # digest collision: still must be unique
                 suffix += 1
                 candidate = f"{key}_{digest[:8]}_{suffix}"
-            row[field] = candidate
-            # The ORIGINAL, on the row. MEASURED, and it is why this stamp exists: the
-            # pools are handed over as (ai, mixed, humans), so a human whose
-            # `candidateId` equals a mixed row's `parentId` is the one renamed — the
-            # mixed row keeps the value it uses to name its parent, and the parent's own
-            # key moves out from under it. The cascade needs to find that parent.
-            row[ORIGINAL_KEY_FIELD] = key
+            row[FUNNEL_KEY_FIELD] = candidate
             seen.add(candidate)
             renames[key] = candidate
     return renames
+
+
+def link_mixed_to_parents(mixed: list[dict], humans: list[dict]) -> dict[str, int]:
+    """Resolve a referencia de cada mista na IDENTIDADE do pai, in place.
+
+    Corre DEPOIS de `enforce_unique_keys`, e existe por causa do unico caso em que a
+    referencia e a identidade do pai deixam de coincidir: o pai foi renomeado porque
+    outra linha tomou a chave primeiro. Sem resolucao, `derivationRoot` continuaria a
+    nomear a cadeia antiga — que agora pertence a OUTRO registro —, e a uniao do split
+    ligaria a mista ao registro errado sem dizer nada.
+
+    RECUSA quando a referencia resolve em mais de uma linha humana: qual delas e o pai
+    nao esta no dado, e escolher a primeira seria inventar a linhagem. Nao encontrar
+    NENHUMA e resultado legitimo — o pai pode ter caido na poda, ou ser uma reservada que
+    `load_humans` exclui de proposito — e por isso e contado e nao levantado.
+    """
+    identity_by_reference: dict[str, list[str]] = {}
+    for human in humans:
+        identity_by_reference.setdefault(human["candidateId"], []).append(
+            funnel_key(human)
+        )
+    counts = {"resolved": 0, "repointed": 0, "unresolved": 0}
+    for row in mixed:
+        reference = parent_key(row)
+        identities = identity_by_reference.get(reference, [])
+        if len(identities) > 1:
+            raise ParentIdentityAmbiguous(
+                f"a linha mista {funnel_key(row)!r} nomeia o pai {reference!r}, e o pool "
+                f"humano tem {len(identities)} linhas com esse `candidateId` "
+                f"({', '.join(identities)}). Qual delas e o pai nao esta no dado, e "
+                "escolher uma escreveria linhagem que ninguem mediu"
+            )
+        if not identities:
+            counts["unresolved"] += 1
+            continue
+        counts["resolved"] += 1
+        if identities[0] != reference:
+            counts["repointed"] += 1
+        row[PARENT_IDENTITY_FIELD] = slug(identities[0])
+    return counts
+
+
+def parent_identity(row: dict) -> str:
+    """A identidade do pai desta mista, resolvida se `link_mixed_to_parents` correu.
+
+    O `slug` da referencia e o valor de partida e nao um valor de recurso: quando o pai
+    nao foi renomeado, os dois sao a mesma cadeia, e quando o pai nao esta no pool nao ha
+    identidade a apontar — `named in ids` do splitter recusa o valor, que e o desfecho
+    correcto para uma linhagem cujo outro extremo nao esta no corpus.
+    """
+    return row.get(PARENT_IDENTITY_FIELD) or slug(parent_key(row))
 
 
 
@@ -4124,11 +4206,12 @@ def screening_projection(
         for row in pool:
             key = funnel_key(row)
             _, digest = norm_hash(row["text"])
-            # A ORDEM E UMA CONDICAO, e esta e a linha que a impoe. Uma linha mista e
-            # chaveada pelo `parentId`, que e o `candidateId` do pai — logo antes de
-            # `enforce_unique_keys` correr as duas partilham a chave, e uma projecao
-            # tomada ali carregaria o mesmo id duas vezes. O par continuaria unico, mas
-            # o snapshot deixaria de ser legivel por id, e a cascata leria o pai errado.
+            # O SNAPSHOT E LEGIVEL POR ID, e esta e a linha que o impoe: duas linhas com
+            # a mesma chave e textos diferentes tornariam o par unico e o snapshot
+            # ambiguo, e o ledger de disposicoes deixaria de identificar QUAL delas
+            # passou. Acontece quando duas linhas do mesmo pool nomeiam a mesma
+            # identidade — o caso que `enforce_unique_keys` resolve, e por isso a
+            # projecao e tomada depois dele.
             if key in seen and seen[key] != digest:
                 raise ProjectionKeyCollision(
                     f"duas linhas de pool chegaram a projecao com a chave {key!r}: a "
@@ -4193,9 +4276,9 @@ def drop_the_flagged(
 
     A CASCATA e categoria propria na contagem, e nao um somatorio com os sinalizados: a
     mista nao foi sinalizada, saiu porque o pai saiu, e somar as duas esconderia o custo
-    de um falso positivo no pai. Ela atravessa o renomeio pela chave ORIGINAL carimbada na
-    linha — medido: `enforce_unique_keys` renomeia o lado HUMANO, entao a chave que a mista
-    nomeia deixou de existir no pool.
+    de um falso positivo no pai. Ela liga-se ao pai pela REFERENCIA — `parentId` contra o
+    `candidateId` da linha humana —, e a ligacao vale em qualquer ponto do caminho porque
+    nada no funil reescreve nenhum dos dois.
 
     A mista cujo pai NAO RESOLVE no pool humano e contada em `parent-unresolved` e fica.
     Uma ligacao quebrada tem de ser um numero: contada como zero na cascata, ela leria como
@@ -4208,11 +4291,8 @@ def drop_the_flagged(
         _, digest = norm_hash(row["text"])
         return ledger[(funnel_key(row), digest)].disposition == "passed"
 
-    flagged_original_keys = {
-        original_key(row)
-        for pool in (ai, mixed, humans)
-        for row in pool
-        if not kept(row)
+    flagged_parent_references = {
+        row["candidateId"] for row in humans if not kept(row)
     }
     flagged_count = sum(
         1 for pool in (ai, mixed, humans) for row in pool if not kept(row)
@@ -4222,17 +4302,17 @@ def drop_the_flagged(
     ai_left = [row for row in ai if kept(row)]
     mixed_survived = [row for row in mixed if kept(row)]
 
-    human_original_keys = {original_key(row) for row in humans}
+    human_references = {row["candidateId"] for row in humans}
     cascaded = 0
     unresolved = 0
     mixed_left: list[dict] = []
     for row in mixed_survived:
-        parent = original_key(row)
-        if parent not in human_original_keys:
+        parent = parent_key(row)
+        if parent not in human_references:
             unresolved += 1
             mixed_left.append(row)
             continue
-        if parent in flagged_original_keys:
+        if parent in flagged_parent_references:
             cascaded += 1
             continue
         mixed_left.append(row)
@@ -4663,10 +4743,11 @@ def main() -> None:
     # pools at once (a human and its AI paraphrase is exactly the dangerous
     # case). AI is the scarcest class, so it outranks mixed, which outranks the
     # human surplus.
-    def key(row: dict) -> str:
-        # mixed rows are keyed by parentId (their record id is mix_<parent>);
-        # the other pools carry candidateId.
-        return row.get("candidateId") or row["parentId"]
+    # `prune` DEVOLVE NOMES, e e por isso que a chave aqui tem de ser identidade: com a
+    # mista chaveada pelo pai, o nome devolvido nomeava as duas linhas, e a poda que
+    # escolhe guardar a mista e derrubar o pai derrubava as duas — pai e mista sao
+    # quase-duplicatas por construcao, que e exactamente o cluster onde isso morde.
+    key = funnel_key
 
     docs = (
         [(key(r), r["text"], 0) for r in ai]
@@ -4710,11 +4791,19 @@ def main() -> None:
     else:
         print(f"!! sem indice de vistos em {args.seen_index}: fumaca sem poda global")
 
-    renames = enforce_unique_keys(
-        [(ai, "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
-    )
+    renames = enforce_unique_keys([ai, mixed, humans])
     if renames:
         print(f"ids desambiguados (colisao entre lanes): {len(renames)}")
+
+    # A REFERENCIA segue o referente, e so aqui: e o passo que impede a uniao do split de
+    # ligar uma mista ao registro errado quando o pai foi renomeado.
+    linked = link_mixed_to_parents(mixed, humans)
+    print(f"ligacao pai/mista: {linked}")
+    if linked["unresolved"]:
+        print(
+            f"!! mistas cujo pai nao esta no pool humano: {linked['unresolved']} — a "
+            "linhagem delas nomeia registro ausente, e o splitter nao as une a nada"
+        )
 
     # A TRIAGEM DE PII POR CENSO, e esta e a posicao: depois da ultima poda
     # determinística e da desambiguacao, antes da selecao, da cota e do split.

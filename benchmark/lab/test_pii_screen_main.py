@@ -121,6 +121,31 @@ def core_ai_row(index: int) -> dict:
     }
 
 
+def mixed_row(index: int, text: str) -> dict:
+    """Uma linha mista cujo pai e `src_ptwiki_h<index>`, presente no pool humano."""
+    import hashlib
+
+    return {
+        "parentId": f"src_ptwiki_h{index}",
+        "text": text,
+        "provider": "gemini",
+        "generationLane": "gemini-api",
+        "model": "gemini-3.5-flash-lite",
+        "promptTemplateId": "mix-insercao-ilha-00",
+        "promptTemplateDigest": hashlib.sha256(f"m{index}".encode("utf-8")).hexdigest(),
+        "parentFamily": "ptwiki_lead",
+        "sourceMaterialBatch": "smb_ptwiki-20220301",
+        "temperature": "0.8",
+        "generatedAt": "2026-07-24T13:51:05.004170+00:00",
+        "mixture": {
+            "spans": [
+                {"start": 0, "end": 40, "origin": "human"},
+                {"start": 40, "end": len(text), "origin": "ai"},
+            ]
+        },
+    }
+
+
 class MainSnapshotTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -319,6 +344,124 @@ class MainSnapshotTests(unittest.TestCase):
             self.assertFalse(forbidden.exists(), f"{forbidden} foi ESCRITO")
         finally:
             forbidden.unlink(missing_ok=True)
+
+    def write_mixed(self, rows: list[dict]) -> None:
+        (self.candidates / "mixed_from_pairs.jsonl").write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + chr(10) for row in rows),
+            encoding="utf-8",
+            newline=chr(10),
+        )
+
+    def write_humans(self, quantos: int) -> None:
+        (self.candidates / "wikipedia_fresh.jsonl").write_text(
+            "".join(
+                json.dumps(human_row(index), ensure_ascii=False) + chr(10)
+                for index in range(1, quantos + 1)
+            ),
+            encoding="utf-8",
+            newline=chr(10),
+        )
+
+    # Os pais das mistas comecam DEPOIS dos cinco que as linhas reservadas semeiam
+    # (`pairedWith` de `qwen_row` e h1..h5). A razao e uma consequencia real da ponte
+    # consertada: uma mista derivada do mesmo pai que semeou uma reservada entra no
+    # componente da reservada, e o componente reservado assenta INTEIRO no bloco cego —
+    # cinco mistas arrastadas para um bloco que aguenta quatro fazem `main()` recusar
+    # com `ReserveFillsTheBlindBlock`. E o mesmo atrito que o § 5.12 do ESTADO
+    # declara, e nao um defeito deste caso.
+    PRIMEIRO_PAI_MISTO = 6
+
+    def vinte_mistas(
+        self, primeira_text: str | None = None, primeiro_pai: int | None = None
+    ) -> list[dict]:
+        """A cota mista da escala de amostra e 20, e um componente que valha a classe
+        inteira nao cabe em particao nenhuma — o preflight do split recusa antes."""
+        rows = []
+        base = self.PRIMEIRO_PAI_MISTO if primeiro_pai is None else primeiro_pai
+        for offset in range(20):
+            index = base + offset
+            text = " ".join(f"mistura{index}_{n}" for n in range(60))
+            if offset == 0 and primeira_text is not None:
+                text = primeira_text
+            rows.append(mixed_row(index, text))
+        return rows
+
+    def records(self) -> list[dict]:
+        return [
+            json.loads(line)
+            for line in (self.root / "out" / "records.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+
+    def test_a_mista_entra_no_funil_pela_identidade_DELA(self) -> None:
+        self.write_mixed(self.vinte_mistas())
+        snapshot = self.root / "snapshot.jsonl"
+        self.run_main("--emit-screening-snapshot", str(snapshot))
+        ids = {
+            json.loads(line)["id"]
+            for line in snapshot.read_text(encoding="utf-8").splitlines()
+        }
+        pai = f"src_ptwiki_h{self.PRIMEIRO_PAI_MISTO}"
+        # As DUAS linhas estao na projecao com nomes distintos: a mista pelo id dela, o
+        # pai pelo dele. Enquanto a mista era chaveada pelo pai, uma delas nao tinha nome
+        # proprio no snapshot.
+        self.assertIn(f"mix_{pai}", ids)
+        self.assertIn(pai, ids)
+
+    def test_a_poda_derruba_o_pai_e_a_mista_CHEGA_ao_corpus(self) -> None:
+        # A mista E o texto do pai com um trecho enxertado, entao as duas caem no mesmo
+        # cluster de quase-duplicata. A poda guarda a de prioridade menor — a mista — e
+        # derruba o pai. Com a chave partilhada, o nome devolvido por `prune` nomeava as
+        # duas e as duas morriam: perda de material que ninguem escolheu.
+        self.write_humans(50)
+        pai = human_row(self.PRIMEIRO_PAI_MISTO)
+        enxertada = pai["text"].replace(
+            f"palavra{self.PRIMEIRO_PAI_MISTO}_7", "enxerto"
+        )
+        self.write_mixed(self.vinte_mistas(enxertada))
+        self.run_main()
+        ids = [record["id"] for record in self.records()]
+        self.assertIn(f"mix_{pai['candidateId']}", ids)
+        self.assertNotIn(pai["candidateId"], ids)
+
+    def test_a_LIGACAO_pai_mista_corre_entre_a_desambiguacao_e_a_projecao(self) -> None:
+        # A POSICAO e a alegacao, e ela nao se le de nenhuma funcao pura: resolver a
+        # referencia antes da desambiguacao leria a identidade que vai mudar, e depois da
+        # projecao chegaria tarde para a cascata da triagem. O efeito de resolver — a
+        # ponte que mede UM componente e o pai renomeado que a leva consigo — esta medido
+        # em `test_funnel_identity.py`; o que falta e que `main()` a chame, aqui.
+        self.write_humans(60)
+        self.write_mixed(self.vinte_mistas(primeiro_pai=41))
+        ordem: list[str] = []
+        originais = {
+            nome: getattr(ac, nome)
+            for nome in (
+                "enforce_unique_keys",
+                "link_mixed_to_parents",
+                "screening_projection",
+            )
+        }
+
+        def espia(nome):
+            def envolvida(*args, **kwargs):
+                ordem.append(nome)
+                return originais[nome](*args, **kwargs)
+
+            return envolvida
+
+        for nome in originais:
+            setattr(ac, nome, espia(nome))
+        try:
+            self.run_main()
+        finally:
+            for nome, funcao in originais.items():
+                setattr(ac, nome, funcao)
+        primeiras = ordem[:3]
+        self.assertEqual(
+            primeiras,
+            ["enforce_unique_keys", "link_mixed_to_parents", "screening_projection"],
+        )
 
 
 if __name__ == "__main__":
