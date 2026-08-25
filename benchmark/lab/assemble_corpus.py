@@ -3812,7 +3812,7 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
 # --- loading + selection -----------------------------------------------------
 
 
-def load_humans(cand: Path = CAND) -> list[dict]:
+def load_humans(cand: Path = CAND, reserved: Path | None = None) -> list[dict]:
     """Fresh pools + reserved-clean humans, each tagged with its quota cell.
 
     TWO screens, and both are needed. The pool FILES read are the frame's own: the
@@ -3841,11 +3841,17 @@ def load_humans(cand: Path = CAND) -> list[dict]:
                 rows.append(r)
     # reserved-clean humans (never trained, not mixed parents) reuse the same
     # candidate shape; their family field is the domainSource.
+    #
+    # O CAMINHO E ARGUMENTO, e a razao e medida: enquanto ele era `DATASET /
+    # "reserved.jsonl"` fixo, uma corrida `--sample` sobre um `--candidates-dir` de tres
+    # linhas colhia 583 humanas do disco real, porque este loader ignorava o
+    # `--candidates-dir` que o resto do funil respeita. Um teste do funil tinha de desviar
+    # `DATASET` por dentro para nao medir o material da maquina.
     parents = set()
     for f in ("mixed_candidates.jsonl", "mixed_from_pairs.jsonl"):
         for r in read_jsonl(cand / f):
             parents.add(r["parentId"])
-    for r in read_jsonl(DATASET / "reserved.jsonl"):
+    for r in read_jsonl(reserved if reserved is not None else DATASET / "reserved.jsonl"):
         if r.get("label") == 0 and r["id"] not in parents:
             fam = r.get("family", "?")
             if fam in REGISTER:
@@ -4273,7 +4279,9 @@ def parent_identity(row: dict) -> str:
 #
 # A POSICAO, e ela resolve cota e cegueira de uma vez: a projecao e tomada depois da
 # ultima poda determinística (dedup exacto, poda de quase-duplicata, poda contra o corpus
-# morto) e depois de `enforce_unique_keys`, e ANTES da selecao, da cota e do split. Logo
+# morto), depois de `enforce_unique_keys` e depois do filtro de expressabilidade — uma
+# linha que o construtor recusa nao pode entrar no corpus, entao nao paga chamada —, e
+# ANTES da selecao, da cota e do split. Logo
 # um drop nunca quebra a cota exacta — 4.000/4.000/2.000 fecham sobre linhas ja triadas —
 # e a barreira das duas cegas nao e tocada, porque pre-split nao ha particao.
 #
@@ -4505,6 +4513,74 @@ def stamp_the_screen_run(record: dict) -> None:
             "outcome": "passed",
         }
     )
+
+
+class BuilderRefusalAfterTheFilter(RuntimeError):
+    """Um construtor recusou linha que o filtro de expressabilidade tinha aprovado.
+
+    Nao e recusa de material: e DESACORDO entre duas execucoes do mesmo construtor sobre
+    a mesma linha, e um desacordo aqui significa que o filtro e o construtor deixaram de
+    ser a mesma autoridade. Levanta em vez de contar, porque contar deixaria a cota curta
+    outra vez pela razao que o filtro existe para fechar.
+    """
+
+
+def assert_the_builders_agree_with_the_filter(
+    refused: Mapping[str, int], examples: Mapping[str, str]
+) -> None:
+    """O construtor da montagem recusou linha que o filtro aprovou. NAO e recusa de
+    material: e desacordo entre duas execucoes do MESMO construtor sobre a mesma linha, e
+    um desacordo aqui significa que o filtro e o construtor deixaram de ser a mesma
+    autoridade.
+
+    Levanta em vez de contar, porque contar deixaria a cota curta outra vez pela razao que
+    o filtro existe para fechar. Funcao nomeada e nao um `if` em `main()`: por construcao
+    nenhuma entrada real a alcanca — as duas chamadas sao do mesmo construtor —, entao a
+    unica maneira de a exercitar e chama-la, e uma guarda sem entrada de teste e a familia
+    de defeito que a § 7 do ESTADO nomeia.
+    """
+    if not refused:
+        return
+    primeiro = next(iter(examples.values()), "") if examples else ""
+    raise BuilderRefusalAfterTheFilter(
+        "o filtro de expressabilidade aprovou linha(s) que o construtor recusou na "
+        f"montagem: {dict(refused)}. Ex.: {primeiro[:200]}"
+    )
+
+
+def partition_by_expressibility(
+    rows: list[dict], make
+) -> tuple[list[dict], Counter, dict[str, str]]:
+    """As linhas que o construtor CONSEGUE expressar, e as recusas contadas por razao.
+
+    POR QUE ANTES DA SELECAO, e nao depois como era. Duas consequencias, medidas:
+
+      * a COTA. `balanced_humans` escolhia 4.000 linhas de um pool que continha linhas
+        que o construtor ia recusar, e o corpus saia curto — as reservadas, por exemplo,
+        entram no pool com `domainSource` em moldura e sao TODAS recusadas
+        (`MissingDocumentLicense` e a primeira das quatro). A cota era preenchida com
+        linhas que desapareciam depois;
+      * o DINHEIRO. A projecao do censo e tomada dos pools, entao cada uma dessas linhas
+        pagava uma chamada de triagem para nao poder entrar no corpus de nenhum modo. Uma
+        conta antes de uma chamada paga.
+
+    O construtor e o MESMO que a montagem usa depois — passado como `make` e nao
+    reimplementado —, porque duas regras de "esta linha e expressavel?" poderiam
+    discordar, e a que decide a cota tem de ser a que decide o registro.
+    """
+    kept: list[dict] = []
+    refused: Counter = Counter()
+    examples: dict[str, str] = {}
+    for row in rows:
+        try:
+            make(row)
+        except UnwritableInV3 as error:
+            reason = type(error).__name__
+            refused[reason] += 1
+            examples.setdefault(reason, str(error))
+            continue
+        kept.append(row)
+    return kept, refused, examples
 
 
 def assert_the_survivors_meet_the_quota(
@@ -4855,6 +4931,15 @@ def main() -> None:
         "benchmark/data/corpus-build, que é a evidência da execução reprovada",
     )
     parser.add_argument(
+        "--reserved",
+        type=Path,
+        default=DATASET / "reserved.jsonl",
+        help="linhas humanas reservadas (nunca treinadas, nao pais de mistura). "
+        "ARGUMENTO e nao caminho fixo: com o caminho fixo, uma corrida --sample sobre um "
+        "--candidates-dir pequeno colhia as reservadas do disco real e pagava uma chamada "
+        "de triagem por cada uma",
+    )
+    parser.add_argument(
         "--seen-index",
         type=Path,
         default=SEEN_INDEX_PATH,
@@ -4893,7 +4978,9 @@ def main() -> None:
     )
 
     seen: set[str] = set()
-    humans = dedup(load_humans(args.candidates_dir), lambda r: r["text"], seen)
+    humans = dedup(
+        load_humans(args.candidates_dir, args.reserved), lambda r: r["text"], seen
+    )
     ai = dedup(load_ai(args.candidates_dir), lambda r: r["text"], seen)
     mixed = dedup(load_mixed(args.candidates_dir), lambda r: r["text"], seen)
     print(f"pools (dedup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
@@ -4990,8 +5077,36 @@ def main() -> None:
             "linhagem delas nomeia registro ausente, e o splitter nao as une a nada"
         )
 
+    # A CONTA ANTES DA CHAMADA PAGA, e ela vem antes da projecao de proposito: uma linha
+    # que o construtor recusa nao pode entrar no corpus por caminho nenhum, entao nao pode
+    # ocupar cota nem pagar uma chamada de triagem.
+    refused_total: Counter = Counter()
+    refused_all: dict[str, str] = {}
+    for label, pool, make in (
+        ("human", humans, lambda c: human_record(c, cell_of(c)[0], None)),
+        ("ai", ai, ai_record),
+        ("mixed", mixed, mixed_record),
+    ):
+        kept, refused, examples = partition_by_expressibility(pool, make)
+        if refused:
+            print(f"!! {label}: linhas que a v3 nao consegue expressar (saem antes da")
+            print("   projecao, entao nao ocupam cota nem pagam chamada de triagem):")
+            for reason, count in sorted(refused.items()):
+                print(f"   {reason}: {count} — ex.: {examples[reason][:160]}")
+        refused_total.update(refused)
+        for reason, example in examples.items():
+            refused_all.setdefault(reason, example)
+        if label == "human":
+            humans = kept
+        elif label == "ai":
+            ai = kept
+        else:
+            mixed = kept
+    print(f"pools (expressaveis): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
+
     # A TRIAGEM DE PII POR CENSO, e esta e a posicao: depois da ultima poda
-    # determinística e da desambiguacao, antes da selecao, da cota e do split.
+    # determinística, da desambiguacao e do filtro de expressabilidade, antes da selecao,
+    # da cota e do split.
     projection = screening_projection(humans, ai, mixed)
     if args.emit_screening_snapshot is not None:
         digest = emit_screening_snapshot(args.emit_screening_snapshot, projection)
@@ -5133,10 +5248,7 @@ def main() -> None:
     )
     records += build(ai_sel, ai_record)
     records += build(mixed_sel, mixed_record)
-    if refused:
-        print("!! registros que a v3 nao consegue expressar (descartados):")
-        for reason, count in sorted(refused.items()):
-            print(f"   {reason}: {count} — ex.: {refused_examples[reason][:160]}")
+    assert_the_builders_agree_with_the_filter(refused, refused_examples)
 
     # O PAI AUSENTE SAI AQUI, antes de qualquer contagem: `assertDerivedParentsResolve`
     # recusa o corpus inteiro por um destes, e o sitio que a chama e o comando de split.

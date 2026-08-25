@@ -8952,10 +8952,15 @@ class AssemblyRunTests(unittest.TestCase):
             self._write(pool, unstamped)
             with contextlib.suppress(Exception):
                 self._main(tmp, seen_texts=[])
-        # 40 and not 41: the class quota selects 40 of the 41 rows, and every selected one
-        # leaves as a COUNTED drop — the same vocabulary `MissingMaterialBatch` uses for
-        # legacy pools, and never an abort.
-        self.assertIn("MissingExtractionRun: 40", self.stdout)
+        # 41 and not 40: the count is of the POOL, because the expressibility filter now
+        # runs before the selection and the census projection. It used to read 40 — the
+        # subset the class quota happened to select — which under-reported the pool by the
+        # rows that were cut for another reason. Counted, never an abort: the same
+        # vocabulary `MissingMaterialBatch` uses for legacy pools.
+        self.assertIn("MissingExtractionRun: 41", self.stdout)
+        # And the class comes out EMPTY rather than short-by-one: a line the builder
+        # refuses cannot fill a quota slot, which is the whole point of counting it here.
+        self.assertIn("pools (expressaveis): human=0", self.stdout)
 
     def test_the_quota_truncation_cuts_core_rows_and_never_the_reserve(self) -> None:
         import assemble_corpus

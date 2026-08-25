@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import inspect
 import unittest
+from pathlib import Path
 
 import assemble_corpus as ac
 import near_dupes
@@ -502,6 +503,130 @@ class APonteMedeUmComponente(unittest.TestCase):
         counts = ac.link_mixed_to_parents(mixed, humans)
         self.assertEqual(counts["unresolved"], 1)
         self.assertEqual(counts["resolved"], 0)
+
+
+class AContaAntesDaChamadaPaga(unittest.TestCase):
+    """A linha que o construtor recusa sai ANTES da projecao do censo.
+
+    Duas consequencias, e as duas eram reais. A COTA: `balanced_humans` escolhia 4.000 de
+    um pool que continha linhas que o construtor ia recusar, e o corpus saia curto. O
+    DINHEIRO: a projecao do censo e tomada dos pools, entao cada uma dessas linhas pagava
+    uma chamada de triagem para nao poder entrar no corpus de modo nenhum.
+    """
+
+    def test_a_linha_inexpressavel_sai_e_a_razao_e_contada(self) -> None:
+        boa = human_candidate("src_ptwiki_p1", "pagina_1")
+        # Sem `meta`: e a forma das linhas de `reserved.jsonl`, que nao carregam licenca,
+        # data nem eixos. `human_record` recusa-as, e `MissingDocumentLicense` e a
+        # primeira das quatro recusas a disparar.
+        ma = {
+            "candidateId": "src_reservada_1",
+            "text": PROSE,
+            "wordCount": 60,
+            "domainSource": "ptwiki_lead",
+            "meta": {},
+        }
+        kept, refused, examples = ac.partition_by_expressibility(
+            [boa, ma], lambda c: ac.human_record(c, ac.cell_of(c)[0], None)
+        )
+        self.assertEqual([r["candidateId"] for r in kept], ["src_ptwiki_p1"])
+        self.assertEqual(sum(refused.values()), 1)
+        self.assertEqual(list(refused), ["MissingDocumentLicense"])
+        self.assertIn("src_reservada_1", examples["MissingDocumentLicense"])
+
+    def test_o_construtor_e_o_MESMO_que_a_montagem_usa_depois(self) -> None:
+        # Uma regra propria de "esta linha e expressavel?" poderia discordar da que decide
+        # o registro, e a que decide a cota tem de ser a que decide o registro. Medido: o
+        # filtro aprova exactamente as linhas que o construtor consegue construir.
+        linhas = [
+            human_candidate("src_ptwiki_p1", "pagina_1"),
+            {
+                "candidateId": "src_reservada_1",
+                "text": PROSE,
+                "wordCount": 60,
+                "domainSource": "ptwiki_lead",
+                "meta": {},
+            },
+        ]
+        kept, _refused, _ex = ac.partition_by_expressibility(
+            linhas, lambda c: ac.human_record(c, ac.cell_of(c)[0], None)
+        )
+        for linha in kept:
+            ac.human_record(linha, ac.cell_of(linha)[0], None)
+        for linha in linhas:
+            if linha not in kept:
+                with self.assertRaises(ac.UnwritableInV3):
+                    ac.human_record(linha, ac.cell_of(linha)[0], None)
+
+
+class OCaminhoDasReservadas(unittest.TestCase):
+    def test_load_humans_le_o_caminho_que_lhe_dao_e_nao_um_FIXO(self) -> None:
+        # Medido antes do conserto: uma corrida `--sample` sobre um `--candidates-dir` de
+        # tres linhas colhia 583 humanas, porque este loader lia `DATASET/reserved.jsonl`
+        # ignorando o diretorio que o resto do funil respeita.
+        import inspect
+
+        parametros = list(inspect.signature(ac.load_humans).parameters)
+        self.assertEqual(parametros, ["cand", "reserved"])
+
+    def test_reservada_de_um_caminho_dado_entra_no_pool(self) -> None:
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raiz = Path(tmp)
+            (raiz / "wikipedia_fresh.jsonl").write_text(
+                json.dumps(human_candidate("src_ptwiki_p1", "pagina_1"))
+                + chr(10),
+                encoding="utf-8",
+                newline=chr(10),
+            )
+            reservada = raiz / "reservada.jsonl"
+            reservada.write_text(
+                json.dumps(
+                    {
+                        "id": "src_reservada_1",
+                        "text": PROSE,
+                        "label": 0,
+                        "family": "ptwiki_lead",
+                        "wordCount": 60,
+                    }
+                )
+                + chr(10),
+                encoding="utf-8",
+                newline=chr(10),
+            )
+            colhidas = ac.load_humans(raiz, reservada)
+            vazio = ac.load_humans(raiz, raiz / "nao-existe.jsonl")
+        self.assertEqual(len(colhidas), 2)
+        self.assertEqual(len(vazio), 1)
+
+
+class ODesacordoEntreOsDoisConstrutores(unittest.TestCase):
+    def test_recusa_DEPOIS_do_filtro_levanta_em_vez_de_contar(self) -> None:
+        # Nao e recusa de material: e desacordo entre duas execucoes do mesmo construtor
+        # sobre a mesma linha. Contar deixaria a cota curta outra vez, pela razao que o
+        # filtro existe para fechar.
+        #
+        # Chamada DIRECTA porque nenhuma entrada real a alcanca — as duas execucoes sao do
+        # mesmo construtor —, e uma guarda que so uma mutacao exercita e a familia de
+        # defeito que a § 7 nomeia.
+        from collections import Counter
+
+        with self.assertRaises(ac.BuilderRefusalAfterTheFilter) as caught:
+            ac.assert_the_builders_agree_with_the_filter(
+                Counter({"MissingDocumentLicense": 3}),
+                {"MissingDocumentLicense": "a linha src_x nao declara licenca"},
+            )
+        mensagem = str(caught.exception)
+        self.assertIn("MissingDocumentLicense", mensagem)
+        self.assertIn("src_x", mensagem)
+        self.assertFalse(issubclass(ac.BuilderRefusalAfterTheFilter, ac.UnwritableInV3))
+
+    def test_sem_recusa_o_guarda_do_desacordo_cala(self) -> None:
+        from collections import Counter
+
+        ac.assert_the_builders_agree_with_the_filter(Counter(), {})
 
 
 if __name__ == "__main__":

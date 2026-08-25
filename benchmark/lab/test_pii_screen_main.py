@@ -177,16 +177,9 @@ class MainSnapshotTests(unittest.TestCase):
             newline=chr(10),
         )
         self.argv = sys.argv
-        # HERMETICO de proposito, e o desvio mede uma coisa: `load_humans` le
-        # `reserved.jsonl` de um caminho FIXO, fora de `--candidates-dir`. Sem este
-        # desvio a corrida colhe o material real em disco — medido, 580 linhas
-        # reservadas — e um teste que depende do que esta em benchmark/data nao e teste.
-        self.dataset = ac.DATASET
-        ac.DATASET = self.root / "dataset-vazio"
 
     def tearDown(self) -> None:
         sys.argv = self.argv
-        ac.DATASET = self.dataset
         self.tmp.cleanup()
 
     def run_main(self, *extra: str) -> None:
@@ -202,6 +195,12 @@ class MainSnapshotTests(unittest.TestCase):
             # aviso, e ler o indice real tornaria o caso dependente do disco.
             "--seen-index",
             str(self.root / "sem-indice.json"),
+            # HERMETICO por ARGUMENTO, e nao por desvio de modulo: enquanto o caminho das
+            # reservadas era fixo, este arquivo tinha de reescrever `ac.DATASET` por
+            # dentro para nao colher as 583 linhas reais do disco — um teste que depende
+            # do que esta em benchmark/data nao e teste.
+            "--reserved",
+            str(self.root / "sem-reservadas.jsonl"),
             *extra,
         ]
         ac.main()
@@ -222,6 +221,106 @@ class MainSnapshotTests(unittest.TestCase):
         )
         # PAROU: nada da montagem foi escrito, porque triar e o passo seguinte.
         self.assertFalse((self.root / "out" / "records.jsonl").exists())
+
+    def test_a_reservada_entra_no_pool_e_NAO_paga_chamada_de_triagem(self) -> None:
+        # AS DUAS PONTAS, e sao duas alegacoes diferentes. (1) O caminho das reservadas e
+        # ARGUMENTO: a linha escrita aqui e colhida, e um loader que lesse um caminho fixo
+        # colheria as 583 do disco em vez desta. (2) Ela NAO entra na projecao do censo:
+        # `human_record` recusa-a (nao carrega licenca, data nem eixos), entao pagar uma
+        # chamada por ela seria pagar por linha que nao pode entrar no corpus de modo
+        # nenhum — uma conta antes de uma chamada paga.
+        import json as _json
+
+        reservada = self.root / "reservadas.jsonl"
+        reservada.write_text(
+            _json.dumps(
+                {
+                    "id": "src_reservada_1",
+                    "text": " ".join(f"reservada_{n}" for n in range(60)),
+                    "label": 0,
+                    "family": "ptwiki_lead",
+                    "wordCount": 60,
+                }
+            )
+            + chr(10),
+            encoding="utf-8",
+            newline=chr(10),
+        )
+        snapshot = self.root / "snapshot.jsonl"
+        argv = [
+            "assemble_corpus.py",
+            "--out-dir",
+            str(self.root / "out"),
+            "--candidates-dir",
+            str(self.candidates),
+            "--sample",
+            "100",
+            "--seen-index",
+            str(self.root / "sem-indice.json"),
+            "--reserved",
+            str(reservada),
+            "--emit-screening-snapshot",
+            str(snapshot),
+        ]
+        import contextlib
+        import io as _io
+
+        class Capturada(_io.StringIO):
+            # `main()` chama `sys.stdout.reconfigure`, que um StringIO nao tem: o
+            # montador fixa a codificacao da saida de proposito, porque os nomes de fonte
+            # levam acento e a consola do Windows nao e utf-8 por omissao.
+            def reconfigure(self, **_kwargs):
+                return None
+
+        saida = Capturada()
+        sys.argv = argv
+        with contextlib.redirect_stdout(saida):
+            ac.main()
+        log = saida.getvalue()
+        # (1) colhida: 45 do arquivo fresco mais esta.
+        self.assertIn("pools (dedup): human=46", log)
+        # (2) e fora da projecao, contada pela razao.
+        self.assertIn("MissingDocumentLicense: 1", log)
+        ids = {
+            _json.loads(linha)["id"]
+            for linha in snapshot.read_text(encoding="utf-8").splitlines()
+        }
+        self.assertNotIn("src_reservada_1", ids)
+        self.assertIn("src_ptwiki_h1", ids)
+
+    def test_a_gerada_inexpressavel_tambem_NAO_paga_chamada(self) -> None:
+        # A metade `ai` da mesma alegacao, e ela precisa de caso proprio: o pool humano e
+        # o pool gerado sao substituidos em ramos diferentes do mesmo laco, e apagar um
+        # deles deixava a suite verde enquanto o outro tinha caso.
+        import json as _json
+
+        # A SEMENTE TEM DE EXISTIR, e a primeira versao deste caso errava aqui: com
+        # `pairedWith` a nomear uma humana que o pool nao tem, a linha saia como ORFA um
+        # passo antes e o caso media o corte errado.
+        quebrada = core_ai_row(1)
+        quebrada["candidateId"] = "src_ai_gemini_0099"
+        # TEXTO PROPRIO, e a segunda coisa que este caso precisou de aprender: com o
+        # texto de `core_ai_row(1)` a linha era descartada pelo dedup exacto e nunca
+        # chegava ao filtro — o caso passava a medir o dedup.
+        quebrada["text"] = " ".join(f"quebrada_{n}" for n in range(60))
+        # OS DOIS, porque `ai_record` cai para `promptSha256` quando o digesto do template
+        # falta: sem os dois o eixo `promptTemplate` nao tem identidade nenhuma e
+        # `MissingRecipe` dispara.
+        del quebrada["meta"]["promptTemplateDigest"]
+        del quebrada["meta"]["promptSha256"]
+        (self.candidates / "ai_fresh_gemini_multi.jsonl").write_text(
+            _json.dumps(quebrada, ensure_ascii=False) + chr(10),
+            encoding="utf-8",
+            newline=chr(10),
+        )
+        snapshot = self.root / "snapshot.jsonl"
+        self.run_main("--emit-screening-snapshot", str(snapshot))
+        ids = {
+            _json.loads(linha)["id"]
+            for linha in snapshot.read_text(encoding="utf-8").splitlines()
+        }
+        self.assertNotIn(quebrada["candidateId"], ids)
+        self.assertIn("src_ai_gemini_0001", ids)
 
     def test_o_par_do_snapshot_e_o_par_que_o_ledger_vai_carregar(self) -> None:
         snapshot = self.root / "snapshot.jsonl"

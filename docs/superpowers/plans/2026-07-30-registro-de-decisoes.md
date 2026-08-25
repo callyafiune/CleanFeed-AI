@@ -12561,3 +12561,84 @@ continua verdadeira; a primeira **não**, desde que `commands/split.ts` passou a
 no mesmo commit, porque é a regra da § U.4 de `references.md`: o comentário não pode declarar uma
 limitação que o mecanismo deixou de ter. Nada de precedente externo entra: identidade contra
 referência é modelo relacional, e a aritmética das ilhas é medição própria.
+
+## A conta antes da chamada paga, e o caminho das reservadas (2026-08-24)
+
+A dívida da § 7 «`load_humans` lê `reserved.jsonl` de caminho FIXO, e essas linhas seriam triadas
+por nada» está paga, e tinha **duas** metades que a linha juntava numa.
+
+### L-22 — o caminho é ARGUMENTO, e o desvio de módulo saiu do teste
+
+`load_humans(cand, reserved)` e `--reserved` no CLI, com o antigo `DATASET / "reserved.jsonl"` como
+omissão. **A medição que a obrigou:** uma corrida `--sample` sobre um `--candidates-dir` de três
+linhas colhia **583** humanas, porque este loader ignorava o `--candidates-dir` que o resto do funil
+respeita. O arquivo de teste do funil tinha de reescrever `ac.DATASET` **por dentro** para não medir
+o material da máquina; agora passa `--reserved` e o desvio saiu. Um teste que depende do que está em
+`benchmark/data` não é teste.
+
+### L-23 — a linha que o construtor recusa sai ANTES da selecção e da projecção
+
+`partition_by_expressibility(rows, make)` corre o construtor sobre cada linha do pool, guarda as que
+constroem e conta as recusas por razão. **Duas consequências, e as duas eram reais:**
+
+- **a COTA.** `balanced_humans` escolhia 4.000 de um pool que continha linhas que o construtor ia
+  recusar, e o corpus saía curto. As reservadas são o caso extremo: entram no pool com
+  `domainSource` em moldura e são **todas** recusadas (`MissingDocumentLicense` é a primeira das
+  quatro), então ocupavam cota e desapareciam depois;
+- **o DINHEIRO.** A projecção do censo é tomada dos pools, então cada uma dessas linhas pagava **uma
+  chamada de triagem** para não poder entrar no corpus de modo nenhum. É uma conta antes de uma
+  chamada paga.
+
+O construtor é o **mesmo** que a montagem usa depois — passado como argumento e não reimplementado —,
+porque duas regras de «esta linha é expressável?» poderiam discordar, e a que decide a cota tem de
+ser a que decide o registro. **Medido no efeito:** a contagem que o log publica passou de **40** para
+**41** no caso do pool sem `extractionRun`, e a diferença é exactamente o que a leitura antiga
+escondia — ela contava o subconjunto que a cota tinha selecionado, não o pool.
+
+### L-24 — o desacordo entre as duas execuções LEVANTA, e a guarda tem entrada de teste
+
+Se o construtor recusar, depois da selecção, uma linha que o filtro aprovou, isso não é recusa de
+material: é **desacordo entre duas execuções do mesmo construtor sobre a mesma linha**, e significa
+que o filtro e o construtor deixaram de ser a mesma autoridade. Levanta em vez de contar, porque
+contar deixaria a cota curta outra vez pela razão que o filtro existe para fechar.
+
+E é **função nomeada** (`assert_the_builders_agree_with_the_filter`) e não um `if` dentro de
+`main()`, por uma razão que a bateria mostrou: por construção nenhuma entrada real a alcança, então
+sem a função a única maneira de a exercitar era uma mutação — que é a família de defeito que a § 7 já
+nomeia («guarda que nenhuma entrada alcança»). Nomeada, tem caso próprio que a chama.
+
+### A bateria: 7 mutações, 7 mortas, e TRÊS sobreviveram à primeira volta
+
+| # | mutação | caso que ficou VERMELHO |
+|---|---|---|
+| M82 | `load_humans` volta ao caminho fixo | *reservada de um caminho dado entra no pool* |
+| M83 | `main()` não passa o caminho | *a reservada entra no pool e NAO paga chamada* |
+| M84 | o filtro não filtra | *a pool the extractor never stamped…*, mais 1 |
+| M85 | o filtro conta mas não tira a linha | *a linha inexpressavel sai e a razao e contada*, mais 3 |
+| M86 | o guarda do desacordo volta a ser contagem | *recusa DEPOIS do filtro levanta em vez de contar* |
+| M87 | o filtro não substitui o pool **humano** | *a reservada… NAO paga chamada*, mais 1 |
+| M88 | o filtro não substitui o pool **`ai`** | *a gerada inexpressavel tambem NAO paga chamada* |
+
+**As três sobrevivências, e cada uma ensinou algo diferente:**
+
+1. **M83** foi mascarada pelo próprio conserto: com o filtro no lugar, ler as 583 reservadas reais
+   ou não lê-las dá o mesmo corpus, porque todas são filtradas. O caso passou a afirmar o **pool
+   colhido** (`human=46`) e não só o resultado.
+2. **M86** não tinha entrada alcançável — é o que motivou L-24.
+3. **M88 exigiu TRÊS tentativas**, e as duas primeiras mediam outra coisa: a linha quebrada nomeava
+   uma semente ausente e saía como **órfã** um passo antes; corrigida a semente, o texto dela era o
+   de outra linha e o **dedup exacto** a descartava; e `ai_record` **cai para `promptSha256`** quando
+   o digesto do template falta, então apagar só um dos dois não a torna inexpressável. É a mesma
+   lição da § 7 outra vez: *a mutação prova o que o caso mede, não o que ele diz medir.*
+
+**E uma perda minha, declarada:** ao verificar M88 à mão corri `git checkout -- assemble_corpus.py`
+para desfazer a mutação, e isso apagou a unidade inteira do arquivo, que não estava commitada. Foi
+reaplicada pelos scripts do patch e a suíte voltou ao mesmo número, mas a regra fica: **desfazer
+mutação é restaurar o texto guardado, nunca `git checkout` sobre trabalho não commitado** — a bateria
+automatizada faz isso certo, e foi a verificação manual que errou.
+
+### Referências: nada de novo
+
+«Não pagues por linha que não pode entrar no corpus» não é precedente de pesquisa. A ordem
+filtro-antes-da-cota é a mesma regra que o ESTADO já aplica à exclusão de família («linha que o
+corpus não vai conter não entra no denominador de ninguém»).
