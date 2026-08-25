@@ -13106,3 +13106,49 @@ quedas com 66 números de linha distintos, dedup remove zero, constrói 4.100.
 ### Referências
 
 Nada de novo.
+
+## R4: REPROVA, e o padrão fecha — três de quatro rodadas acharam regressão do conserto anterior (2026-08-25)
+
+Quarta rodada de codex sobre `1dc205a` (`EXIT=0`), apontada de propósito ao risco que as três
+anteriores expuseram. Confirmou os dois testes das pernas pré-existentes («nada para medir essas duas
+pernas»), confirmou que a assinatura de `load_humans` ainda descreve a função, e refutou quatro.
+
+**O defeito real, e é regressão do meu conserto da R3:** publicar as quedas no fim perdia evidência.
+Com uma queda válida seguida de colisão de texto divergente, o `extend` final nunca corria — o sink
+ficava intocado e a queda **já decidida** desaparecia. Em `6a1fc96` o registro era no momento da
+decisão; eu o tornei transacional sem notar. O registro voltou a ser **incremental**, e a impressão
+foi para um `finally`, então as duas metades sobrevivem ao abort. Duas pernas, dois mutantes.
+
+**Duas frases minhas eram mais largas que o código, outra vez:**
+
+- «**a queda nunca é silenciosa**» é falsa para chamador que passa sink e o ignora. A alegação certa,
+  que é a que ficou escrita, é «a queda é publicada no **canal que o chamador escolheu**»: passar o
+  sink é o chamador afirmar que o lê. Exigir os dois canais faria `main` imprimir duas vezes;
+- «**número da linha** do arquivo das reservadas» é falsa perante linha em branco — `read_jsonl`
+  descarta-as antes de a contagem começar. É **ordinal do registro**, e o campo passou a chamar-se
+  `reservedRecord`. O fixture ganhou uma linha vazia no meio, que é o que separa as duas leituras.
+
+**E uma inconsistência documental que a minha mudança criou na § 5.4b:** ela dizia que `load_humans`
+devolve 4.680 e que a dedup derruba 66. Depois desta unidade o loader derruba as 66 antes de devolver:
+entrega 4.614 e a dedup derruba zero. Os números a jusante — 4.613 após a poda intra-pool, 4.607 após
+a global — não se movem, porque a população que chega às podas é a mesma; o que mudou é **onde** as 66
+saem, e isso é justamente o que remove a dependência de ordem.
+
+**Fechada também a falta que duas rodadas nomearam:** `main` com colisão tem teste ponta a ponta, com
+mutante — «main imprime a contagem» era afirmação sem perna.
+
+**Onde eu PARO de aceitar mudança de forma, e a razão é o padrão:** três das quatro rodadas acharam
+regressão introduzida pelo conserto da rodada anterior — o `origem`/`oferecidos`, a queda silenciosa,
+e agora a evidência não monotónica. Cada troca de forma que eu aceitei para satisfazer um achado abriu
+o seguinte. As sugestões que restam são de forma e não de defeito medido (`collision_sink`
+obrigatório, retorno estruturado no lugar do sink, leitor que devolva a linha física), e as três
+custam assinatura nova em quinze chamadores para proteger invariantes que já têm perna. Ficam
+declaradas aqui e não aplicadas. Defeito medido continua a ser consertado; forma, não.
+
+**A prova:** quatro mutações, quatro mortas, restauração por sha256 — o registro incremental, a
+impressão no `finally`, o ordinal no sink, e a contagem de `main`. Lab **996 passed / 972 subtests**.
+Material real inalterado: 66 quedas com 66 ordinais distintos, dedup remove zero, constrói 4.100.
+
+### Referências
+
+Nada de novo.

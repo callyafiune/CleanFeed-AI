@@ -3962,59 +3962,68 @@ def load_humans(
     # onde nao havia — uma reservada de `label` 1 nunca seria anexada — e tirava-lhes a
     # palavra sobre a linha, que e invariante que existia antes desta guarda.
     #
-    # A QUEDA NUNCA E SILENCIOSA, e a invariante sobrevive ao canal: o `collision_sink` e o
-    # canal estruturado — nomeia id, pool e o NUMERO DA LINHA do arquivo das reservadas, que
-    # e o que distingue duas linhas sob um id — e a impressao e o piso de quem nao o passa.
-    # Trocar a impressao pelo sink sozinho deixou `collision_sink=None` a derrubar sem sinal
-    # nenhum, medido: 66 quedas e stdout vazio.
+    # A QUEDA E PUBLICADA NO CANAL QUE O CHAMADOR ESCOLHEU, e a alegacao e essa e nao mais
+    # larga: passar `collision_sink` e o chamador a afirmar que o le, e nao passa-lo faz a
+    # impressao ser o piso. Trocar a impressao pelo sink sozinho deixou `collision_sink=None`
+    # a derrubar sem sinal nenhum, medido: 66 quedas e stdout vazio.
+    #
+    # O REGISTRO E INCREMENTAL, e a publicacao no fim perdia evidencia: com uma queda valida
+    # seguida de uma colisao de texto divergente, o `extend` no fim nunca corria e o sink
+    # ficava intocado — a evidencia parcial da queda que JA fora decidida desaparecia. A
+    # entrada entra no sink no momento em que e decidida, e a impressao vai num `finally`.
+    #
+    # `reservedRecord` e o ORDINAL DO REGISTRO nao vazio, nao a linha fisica: `read_jsonl`
+    # descarta linha em branco antes de a contagem comecar. E o que distingue duas linhas sob
+    # um mesmo id, que e para o que serve; quem quiser a coordenada fisica precisa de um
+    # leitor que a devolva.
     textos_anexados: dict[str, str] = {r["candidateId"]: r["text"] for r in rows}
     caidas: list[dict] = []
-    for indice, r in enumerate(
-        read_jsonl(reserved if reserved is not None else DATASET / "reserved.jsonl"),
-        start=1,
-    ):
-        if r.get("label") == 0 and r["id"] not in parents:
-            fam = r.get("family", "?")
-            if fam in REGISTER:
-                if r["id"] in oferecidos:
-                    anexado = textos_anexados[r["id"]]
-                    if r["text"] != anexado:
-                        raise ReservedTextDiffersFromThePool(
-                            f"a reservada {r['id']!r} colide com um id que um pool ja "
-                            "anexou e o TEXTO difere: duas linhas distintas sob um id sao "
-                            "conflito de material, e derrubar uma delas por igualdade de "
-                            "id apagaria conteudo em silencio"
-                        )
-                    caidas.append(
-                        {
+    try:
+        for indice, r in enumerate(
+            read_jsonl(reserved if reserved is not None else DATASET / "reserved.jsonl"),
+            start=1,
+        ):
+            if r.get("label") == 0 and r["id"] not in parents:
+                fam = r.get("family", "?")
+                if fam in REGISTER:
+                    if r["id"] in oferecidos:
+                        anexado = textos_anexados[r["id"]]
+                        if r["text"] != anexado:
+                            raise ReservedTextDiffersFromThePool(
+                                f"a reservada {r['id']!r} colide com um id que um pool ja "
+                                "anexou e o TEXTO difere: duas linhas distintas sob um id sao "
+                                "conflito de material, e derrubar uma delas por igualdade de "
+                                "id apagaria conteudo em silencio"
+                            )
+                        queda = {
                             "candidateId": r["id"],
                             "pool": str(origem[r["id"]]),
-                            "reservedLine": indice,
+                            "reservedRecord": indice,
+                        }
+                        caidas.append(queda)
+                        if collision_sink is not None:
+                            collision_sink.append(queda)
+                        continue
+                    rows.append(
+                        {
+                            "candidateId": r["id"],
+                            "text": r["text"],
+                            "wordCount": len(r["text"].split()),
+                            "domainSource": fam,
+                            # EMPTY, and every gap in it is a fact about these rows: they
+                            # predate the extractors that emit identity, so their author/source
+                            # axes are `unknown`, they carry no date evidence, and they name no
+                            # acquisition event, no extraction run and no document licence.
+                            # `human_record` refuses them (MissingDocumentLicense is the first
+                            # of the four to fire) and main() counts them — a v2 corpus could
+                            # take them and a sealed one cannot, which is a real cost of the
+                            # reserved pool and not something to fill in by hand. Naming a run
+                            # for them here would be a name for an execution that never ran.
+                            "meta": {},
                         }
                     )
-                    continue
-                rows.append(
-                    {
-                        "candidateId": r["id"],
-                        "text": r["text"],
-                        "wordCount": len(r["text"].split()),
-                        "domainSource": fam,
-                        # EMPTY, and every gap in it is a fact about these rows: they
-                        # predate the extractors that emit identity, so their author/source
-                        # axes are `unknown`, they carry no date evidence, and they name no
-                        # acquisition event, no extraction run and no document licence.
-                        # `human_record` refuses them (MissingDocumentLicense is the first
-                        # of the four to fire) and main() counts them — a v2 corpus could
-                        # take them and a sealed one cannot, which is a real cost of the
-                        # reserved pool and not something to fill in by hand. Naming a run
-                        # for them here would be a name for an execution that never ran.
-                        "meta": {},
-                    }
-                )
-    if caidas:
-        if collision_sink is not None:
-            collision_sink.extend(caidas)
-        else:
+    finally:
+        if caidas and collision_sink is None:
             print(f"reservadas caidas por id que um pool ja anexou: {len(caidas)}")
     return rows
 

@@ -3730,9 +3730,11 @@ class HumanPoolSelectionTests(unittest.TestCase):
 
         # «O sink NOMEIA as linhas» nao vale so por carregar o id: sem unicidade de id no
         # arquivo das reservadas, duas linhas caidas davam dois dicionarios indistinguiveis
-        # e a alegacao era mais forte que o dado. O numero de linha do arquivo e o que a
-        # torna verdadeira. Medido: `reserved.jsonl` nao tem id repetido hoje, entao isto
-        # prende a propriedade e nao o material.
+        # e a alegacao era mais forte que o dado. O ordinal do REGISTRO e o que a torna
+        # verdadeira — e e ordinal de registro e nao linha fisica, porque `read_jsonl`
+        # descarta linha em branco antes de a contagem comecar, o que a linha vazia deste
+        # fixture mede. Medido: `reserved.jsonl` nao tem id repetido hoje, entao isto prende
+        # a propriedade e nao o material.
         with tempfile.TemporaryDirectory() as raw:
             cand = Path(raw)
             self._write(cand, HUMAN_POOL_FILES[0], ["src_partilhado"])
@@ -3746,10 +3748,13 @@ class HumanPoolSelectionTests(unittest.TestCase):
                     "wordCount": 60,
                 }
             )
-            reservada.write_text(uma + "\n" + uma + "\n", encoding="utf-8")
+            reservada.write_text(
+                uma + "\n" + "\n" + uma + "\n",
+                encoding="utf-8",
+            )
             colisoes: list[dict] = []
             load_humans(cand, reservada, collision_sink=colisoes)
-        self.assertEqual([c["reservedLine"] for c in colisoes], [1, 2])
+        self.assertEqual([c["reservedRecord"] for c in colisoes], [1, 2])
         self.assertEqual({c["candidateId"] for c in colisoes}, {"src_partilhado"})
 
     def _reservada(self, cand: Path, **campos) -> Path:
@@ -3796,6 +3801,84 @@ class HumanPoolSelectionTests(unittest.TestCase):
             reservada = self._reservada(cand, family="carolina_judicial_branch")
             colhidas = load_humans(cand, reservada)
         self.assertEqual([r["candidateId"] for r in colhidas], ["src_do_pool"])
+
+    def test_an_abort_after_a_valid_drop_KEEPS_the_evidence_of_that_drop(self) -> None:
+        from assemble_corpus import (
+            HUMAN_POOL_FILES,
+            ReservedTextDiffersFromThePool,
+            load_humans,
+        )
+
+        # PUBLICAR NO FIM PERDIA EVIDENCIA. Com uma queda valida seguida de uma colisao de
+        # texto divergente, o `extend` no fim nunca corria: o sink ficava intocado e a queda
+        # JA DECIDIDA desaparecia — evidencia nao monotonica diante de recusa posterior. O
+        # registro passou a ser incremental.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_igual", "src_divergente"])
+            reservada = cand / "reservada.jsonl"
+            reservada.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "id": rid,
+                            "text": texto,
+                            "label": 0,
+                            "family": "ptwiki_lead",
+                            "wordCount": 60,
+                        }
+                    )
+                    for rid, texto in (
+                        ("src_igual", PROSE_60),
+                        ("src_divergente", PROSE_60 + " corpo outro"),
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            colisoes: list[dict] = []
+            with self.assertRaises(ReservedTextDiffersFromThePool):
+                load_humans(cand, reservada, collision_sink=colisoes)
+        self.assertEqual([c["candidateId"] for c in colisoes], ["src_igual"])
+
+    def test_an_abort_without_a_sink_still_PRINTS_the_drops_already_decided(self) -> None:
+        from assemble_corpus import (
+            HUMAN_POOL_FILES,
+            ReservedTextDiffersFromThePool,
+            load_humans,
+        )
+
+        # A outra metade da mesma invariante: sem sink, a impressao tem de sair mesmo que a
+        # travessia aborte depois — e e por isso que ela vive num `finally` e nao no fim.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_igual", "src_divergente"])
+            reservada = cand / "reservada.jsonl"
+            reservada.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "id": rid,
+                            "text": texto,
+                            "label": 0,
+                            "family": "ptwiki_lead",
+                            "wordCount": 60,
+                        }
+                    )
+                    for rid, texto in (
+                        ("src_igual", PROSE_60),
+                        ("src_divergente", PROSE_60 + " corpo outro"),
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            saida = io.StringIO()
+            with contextlib.redirect_stdout(saida):
+                with self.assertRaises(ReservedTextDiffersFromThePool):
+                    load_humans(cand, reservada)
+        self.assertIn("caidas", saida.getvalue())
+        self.assertIn("1", saida.getvalue())
 
     def test_the_selection_main_opens_is_the_flag_or_the_default(self) -> None:
         from assemble_corpus import HUMAN_POOL_FILES, human_pool_selection
@@ -9366,6 +9449,35 @@ class AssemblyRunTests(unittest.TestCase):
             (out / "governance-inputs.json").read_text(encoding="utf-8")
         )
         return records, governance
+
+    def test_main_PRINTS_the_reserved_rows_a_pool_already_offered(self) -> None:
+        """O SITIO: a queda por colisao chega ao stdout de `main()`, e nao so ao sink.
+
+        A guarda tem bateria no chamador directo, mas `main` e quem escolhe o canal — passa
+        o sink e imprime a cardinalidade dele. Sem este caso, «main imprime a contagem» era
+        afirmacao sem perna, e foi nomeada como falta em duas rodadas de revisao.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp)
+            (tmp / "dataset").mkdir(parents=True, exist_ok=True)
+            # MESMO id e MESMO texto de uma linha que o pool ja anexa: a colisao cai, e cai
+            # porque o texto e igual — divergente recusaria a corrida, que e outro caso.
+            self._write(
+                tmp / "dataset" / "reserved.jsonl",
+                [
+                    {
+                        "id": "cand_ptwiki_lead_0000",
+                        "text": self._prose("hptwiki_lead0"),
+                        "label": 0,
+                        "family": "ptwiki_lead",
+                        "wordCount": 60,
+                    }
+                ],
+            )
+            with contextlib.suppress(Exception):
+                self._main(tmp, seen_texts=[])
+        self.assertIn("reservadas caidas por id que um pool ja anexou: 1", self.stdout)
 
     def test_a_pool_the_extractor_never_stamped_is_counted_out_by_the_run(self) -> None:
         """THE CALL SITE: the run guard bites from `main()`, not only from a direct call.
