@@ -2807,9 +2807,12 @@ class AssemblerRealGroupTests(unittest.TestCase):
                 # Read by module constant, so a test that did not redirect it would load
                 # the real reserved pool instead of this one row.
                 assemble_corpus.DATASET = tmp / "dataset"
+                # SELECAO VAZIA: este caso e sobre a linha RESERVADA, e o diretorio
+                # nao carrega pool fresco nenhum. Herdar a default pediria um arquivo que
+                # o fixture nao escreve, e a recusa seria sobre outra coisa.
                 rows = [
                     r
-                    for r in load_humans(tmp / "candidates")
+                    for r in load_humans(tmp / "candidates", pools=())
                     if r["candidateId"] == "res_0001"
                 ]
             finally:
@@ -3501,6 +3504,103 @@ class HumanPoolSelectionTests(unittest.TestCase):
         self.assertIn("pool_a", mensagem)
         self.assertIn("pool_b", mensagem)
         self.assertNotIn("src_so_de_a", mensagem)
+
+
+    def test_a_requested_pool_that_is_absent_REFUSES(self) -> None:
+        from assemble_corpus import MissingHumanPool, load_humans
+
+        # `read_jsonl` devolve [] para arquivo ausente, entao a selecao que nomeia um pool
+        # que nao esta no diretorio colhia ZERO linhas em silencio. Medido no checkout: a
+        # default pede `wikipedia_fresh_v2`, `CAND` e `benchmark/data/candidates`, e o
+        # arquivo vive em `candidates-f3` — uma corrida sem `--candidates-dir` montava
+        # sobre classe humana vazia sem nada a apontar a causa.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            with self.assertRaises(MissingHumanPool) as erro:
+                load_humans(
+                    cand, cand / "sem-reservadas.jsonl", pools=("pool_que_nao_existe",)
+                )
+        self.assertIn("pool_que_nao_existe.jsonl", str(erro.exception))
+        self.assertIn(str(cand), str(erro.exception))
+
+    def test_the_overlap_is_caught_ACROSS_the_frame_boundary(self) -> None:
+        from assemble_corpus import OverlappingHumanPools, load_humans
+
+        # A contagem de origem tem de correr sobre TODA linha lida, e nao sobre as que
+        # passam `REGISTER`: identidade de material nao depende da moldura, e com o teste
+        # a jusante do filtro o mesmo id num pool em moldura e noutro fora dela nao
+        # levantava em nenhuma das duas ordens.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, "pool_em_moldura", ["src_partilhado"])
+            (cand / "pool_fora_da_moldura.jsonl").write_text(
+                json.dumps(
+                    dict(self._row("src_partilhado"), domainSource="b2w_reviews")
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            for ordem in (
+                ("pool_em_moldura", "pool_fora_da_moldura"),
+                ("pool_fora_da_moldura", "pool_em_moldura"),
+            ):
+                with self.subTest(ordem=ordem):
+                    with self.assertRaises(OverlappingHumanPools):
+                        load_humans(
+                            cand, cand / "sem-reservadas.jsonl", pools=ordem
+                        )
+
+    def test_a_reserved_row_whose_id_a_pool_offers_is_DROPPED_and_not_appended(
+        self,
+    ) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        # NAO se recusa aqui, e a razao e medida no material real: 66 dos 4.054 ids das
+        # reservadas sao tambem ids do pool de registro, com TEXTO IDENTICO nos 66. Recusar
+        # bloquearia a montagem; deixar as duas entrarem faz a ORDEM decidir qual sobrevive
+        # ao dedup por texto, e a copia reservada e a que `human_record` recusa
+        # (`MissingDocumentLicense`). Cair no load remove a dependencia de ordem.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_partilhado"])
+            reservada = cand / "reservada.jsonl"
+            reservada.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "id": rid,
+                            "text": PROSE_60,
+                            "label": 0,
+                            "family": "ptwiki_lead",
+                        }
+                    )
+                    for rid in ("src_partilhado", "src_so_da_reserva")
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            saida = io.StringIO()
+            with contextlib.redirect_stdout(saida):
+                colhidas = load_humans(cand, reservada)
+        # A QUEDA E CONTADA, e nao silenciosa: queda sem numero e a familia de defeito
+        # que esta unidade existe para fechar.
+        self.assertIn("caidas no load: 1", saida.getvalue())
+        contagem = Counter(r["candidateId"] for r in colhidas)
+        self.assertEqual(contagem["src_partilhado"], 1)
+        self.assertEqual(contagem["src_so_da_reserva"], 1)
+        # E a que ficou e a do POOL, nao a reservada: a reservada nao carrega licenca.
+        do_pool = next(r for r in colhidas if r["candidateId"] == "src_partilhado")
+        self.assertIn("licenseId", do_pool)
+
+    def test_the_selection_main_opens_is_the_flag_or_the_default(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, human_pool_selection
+
+        # A pergunta da CLI respondida numa funcao NOMEADA e nao numa expressao dentro de
+        # `main`: uma expressao ali so seria exercitada por uma montagem completa.
+        self.assertEqual(human_pool_selection(None), HUMAN_POOL_FILES)
+        self.assertEqual(human_pool_selection([]), HUMAN_POOL_FILES)
+        self.assertEqual(human_pool_selection(["um"]), ("um",))
+        self.assertEqual(human_pool_selection(["um", "dois"]), ("um", "dois"))
 
 
 class CollectionTargetTests(unittest.TestCase):
@@ -7812,8 +7912,14 @@ class GeneratorVersionIsTheFamilyTests(unittest.TestCase):
         # então `enforce_unique_keys`. Sem os 295 renomeios os ids colidem entre lanes, e
         # `nearDuplicate` — que é o id da linha — deixaria de ter uma identidade por linha.
         seen: set[str] = set()
+        # A SELECAO E EXPLICITA, e nomeia o pool que esta classe sempre mediu: o
+        # diretorio default e `benchmark/data/candidates`, cujo pool humano e o de antes do
+        # carimbo. A default da montagem aponta para outro arquivo, noutro diretorio, e
+        # herda-la aqui moveria a populacao de um teste que compara linhas reais.
         cls.humans = assemble_corpus.dedup(
-            assemble_corpus.load_humans(), lambda r: r["text"], seen
+            assemble_corpus.load_humans(pools=("wikipedia_fresh",)),
+            lambda r: r["text"],
+            seen,
         )
         cls.ai_pool = assemble_corpus.dedup(
             assemble_corpus.load_ai(), lambda r: r["text"], seen

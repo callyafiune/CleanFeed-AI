@@ -3826,6 +3826,20 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
 HUMAN_POOL_FILES: tuple[str, ...] = ("wikipedia_fresh_v2",)
 
 
+class MissingHumanPool(RuntimeError):
+    """Um pool humano PEDIDO nao esta no diretorio de candidatos.
+
+    `read_jsonl` devolve [] para arquivo ausente, entao uma selecao que nomeia um arquivo
+    que nao existe colhia zero linha em silencio. Medido no checkout: `CAND` e
+    `benchmark/data/candidates` e o pool de registro vive em `candidates-f3`, logo a
+    default sobre o diretorio default rende 0 — e a montagem seguia para morrer mais
+    tarde num gate de cota, que nao nomeia esta causa.
+
+    A ausencia do arquivo das RESERVADAS continua legitima e tem teste proprio: o pool
+    delas e opcional, e um pedido explicito nao e.
+    """
+
+
 class OverlappingHumanPools(RuntimeError):
     """Dois pools da selecao oferecem o mesmo `candidateId`.
 
@@ -3835,6 +3849,16 @@ class OverlappingHumanPools(RuntimeError):
     ids e a unica chave que difere e `meta.extractionRun`, entao a ordem decidiria entre
     4.100 registros e zero — e o resultado nao mudaria de forma visivel, so de contagem.
     """
+
+
+def human_pool_selection(flag: list[str] | None) -> tuple[str, ...]:
+    """A selecao que a corrida abre: o que `--human-pool` pediu, ou a default.
+
+    Funcao nomeada e nao expressao dentro de `main`: ali ela so seria exercitada por uma
+    montagem completa, e a propagacao da flag e exactamente o que decide quais arquivos
+    a corrida le.
+    """
+    return tuple(flag) if flag else HUMAN_POOL_FILES
 
 
 def load_humans(
@@ -3862,20 +3886,29 @@ def load_humans(
     "Descarte", and reading from a fresh directory is how C2 proves the identity
     comes out right end to end without destroying the evidence of the diagnosis."""
     rows: list[dict] = []
-    origem: dict[str, str] = {}
+    # A ORIGEM E CONTADA SOBRE TODA LINHA LIDA, e nao sobre as que passam `REGISTER`:
+    # identidade de material nao depende da moldura, e a jusante do filtro o mesmo id num
+    # pool em moldura e noutro fora dela nao levantava em nenhuma das duas ordens.
+    origem: dict[str, Path] = {}
     for fname in pools:
-        for r in read_jsonl(cand / f"{fname}.jsonl"):
+        arquivo = cand / f"{fname}.jsonl"
+        if not arquivo.exists():
+            raise MissingHumanPool(
+                f"o pool humano `{arquivo}` foi pedido e nao esta no diretorio: "
+                "arquivo ausente rende zero linha em silencio, e a montagem seguiria "
+                "para morrer num gate de cota que nao nomeia esta causa"
+            )
+        for r in read_jsonl(arquivo):
+            anterior = origem.get(r["candidateId"])
+            if anterior is not None:
+                raise OverlappingHumanPools(
+                    f"o candidato {r['candidateId']!r} e oferecido por "
+                    f"`{anterior}` e por `{arquivo}`: com pools sobrepostos e a "
+                    "ordem da selecao que decide qual linha sobrevive ao dedup por texto, "
+                    "e as duas podem diferir no carimbo que decide se ela e expressavel"
+                )
+            origem[r["candidateId"]] = arquivo
             if r["domainSource"] in REGISTER:
-                anterior = origem.get(r["candidateId"])
-                if anterior is not None:
-                    raise OverlappingHumanPools(
-                        f"o candidato {r['candidateId']!r} e oferecido por "
-                        f"{anterior!r} e por {fname!r}: com pools sobrepostos e a ordem "
-                        "da selecao que decide qual linha sobrevive ao dedup por texto, "
-                        "e as duas podem diferir no carimbo que decide se ela e "
-                        "expressavel"
-                    )
-                origem[r["candidateId"]] = fname
                 # NOTHING is stamped here, and the absence is the point. This loader knows
                 # which FILE it opened, and a file is not an execution: `CandidateWriter`
                 # takes `append=True`/`start_sequence`, so one pool file can hold the lines
@@ -3895,7 +3928,17 @@ def load_humans(
     for f in ("mixed_candidates.jsonl", "mixed_from_pairs.jsonl"):
         for r in read_jsonl(cand / f):
             parents.add(r["parentId"])
+    # A RESERVADA CUJO ID UM POOL JA OFERECE CAI AQUI, e nao se recusa: medido no
+    # material real, 66 dos 4.054 ids das reservadas sao tambem ids do pool de registro,
+    # com TEXTO IDENTICO nos 66 — recusar bloquearia a montagem. Deixar as duas entrarem
+    # poe a ORDEM a decidir qual sobrevive ao dedup por texto, e a copia reservada e a que
+    # `human_record` recusa (nao carrega licenca de documento), logo a ordem inversa
+    # perderia as 66 linhas em silencio.
+    reservadas_que_um_pool_ja_oferece = 0
     for r in read_jsonl(reserved if reserved is not None else DATASET / "reserved.jsonl"):
+        if r["id"] in origem:
+            reservadas_que_um_pool_ja_oferece += 1
+            continue
         if r.get("label") == 0 and r["id"] not in parents:
             fam = r.get("family", "?")
             if fam in REGISTER:
@@ -3917,6 +3960,11 @@ def load_humans(
                         "meta": {},
                     }
                 )
+    if reservadas_que_um_pool_ja_oferece:
+        print(
+            f"reservadas que um pool ja oferece, caidas no load: "
+            f"{reservadas_que_um_pool_ja_oferece}"
+        )
     return rows
 
 
@@ -5106,7 +5154,7 @@ def main() -> None:
         load_humans(
             args.candidates_dir,
             args.reserved,
-            tuple(args.human_pool) if args.human_pool else HUMAN_POOL_FILES,
+            human_pool_selection(args.human_pool),
         ),
         lambda r: r["text"],
         seen,

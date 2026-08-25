@@ -12935,3 +12935,65 @@ default mudou. Agora o fixture lê o nome da produção, e um `assertEqual` de a
 
 Nada de novo. «O caminho é argumento» é lição já registrada nesta árvore, e esta unidade é a segunda
 aplicação dela.
+
+## R1 do cross-review sobre a lista de pools: REPROVA, e o achado mais grave era meu (2026-08-25)
+
+Uma rodada de codex (`--sandbox read-only`, `gpt-5.6-sol`, `xhigh`, `EXIT=0`, 201 mil tokens) sobre
+`39556dd`. **REPROVA**, quatro achados ordenados. Arbitrei os quatro; três procedem contra mim e o
+quarto confirma o escopo derrubando a razão que eu tinha registrado.
+
+**1 — a default apontava para arquivo inexistente no diretório default, em silêncio.** Confirmado por
+medição no checkout: `CAND` é `benchmark/data/candidates`, a default pedia `wikipedia_fresh_v2`, e o
+arquivo vive em `candidates-f3` — `read_jsonl` devolve `[]` para arquivo ausente, então uma corrida
+sem `--candidates-dir` montava sobre classe humana vazia e morria mais tarde num gate de cota que não
+nomeia esta causa. Este defeito eu **introduzi**: antes da unidade, a default nomeava um arquivo que
+existia no diretório default. Consertado com `MissingHumanPool`, que recusa o pool PEDIDO e ausente
+nomeando o path. **A ausência do pool das reservadas continua legítima** — é opcional e tem teste
+próprio; pedido explícito não é.
+
+**Alinhar `CAND` em vez disso foi recusado, e a razão é medida:** `load_ai` e `load_mixed` leem o
+diretório antigo e silenciam arquivo ausente do mesmo modo, então mover `CAND` trocaria uma recusa
+alta na classe humana por vazio silencioso nas duas classes geradas. A recusa fica; o alinhamento
+espera o diretório único.
+
+**2 — a guarda de sobreposição não cobria `REGISTER` nem as reservadas.** Confirmado por reprodução do
+revisor: o mesmo id num pool em moldura e noutro fora dela não levantava em nenhuma das duas ordens, e
+pool + reservada com o mesmo id punha duas linhas em `rows`. A primeira metade foi consertada como ele
+propôs — a origem passa a ser contada sobre **toda linha lida**, porque identidade de material não
+depende da moldura.
+
+**A segunda metade foi resolvida DIFERENTE do que ele propôs, e a medição é o motivo.** Ele sugeriu
+conferir também as reservadas. Medi antes de aplicar: **66 dos 4.054 ids das reservadas são também ids
+do pool de registro**, com **texto idêntico nos 66**, `label` 0 e `family` em moldura. Recusar
+bloquearia a montagem real. Então a colisão é **resolvida** em vez de recusada: a reservada cujo id um
+pool já oferece cai no load, contada em voz alta. A escolha de qual cai não é arbitrária — a cópia
+reservada é a que `human_record` recusa, porque não carrega licença de documento. **O que isso compra,
+medido:** antes, o `dedup` por texto absorvia as 66 e a ordem de anexação decidia qual sobrevivia;
+depois, o dedup remove **zero** e a dependência de ordem morreu na origem, não a jusante.
+
+**3 — fixtures derivados da constante mascaram default errada.** Confirmado, e o conserto do achado 1
+fecha a maior parte: `HUMAN_POOL_FILES = ("arquivo_inexistente",)` passava os quatro testes e agora
+**recusa**. O resíduo real — com tupla de mais de um elemento os cinco chassis medem o primeiro pool —
+fica declarado na § 7 em vez de consertado: fixture por elemento em cinco chassis é custo sem
+consequência medida enquanto a default for unitária.
+
+**4 — a minha justificativa documental era falsa.** Eu escrevi que `IN_FRAME_POOLS` e
+`ner_pilot.DEFAULT_POOLS` «já são default de argumento». É verdade do segundo (`--pools`) e **falso do
+primeiro**: `IN_FRAME_POOLS` só entra quando `--in-frame-pools` é passado, e sem a flag a sonda lê o
+diretório inteiro. A decisão de escopo sobrevive por outra razão, que é a que fica escrita: as duas são
+**receitas históricas** e não autoridades da montagem, e `IN_FRAME_POOLS` reproduz taxas publicadas.
+
+**Também confirmado, e aceito como precondição declarada:** exigir disjunção bloqueia união
+incremental de duas re-extrações parciais, que `candidateId` estável permitiria. Não existe união
+incremental nesta árvore; a precondição está na mensagem da recusa e a resolução explícita (precedência
+ou igualdade obrigatória dos campos imutáveis) fica **não construída** e nomeada aqui.
+
+**A prova do conserto:** bateria de **cinco** mutações, cinco mortas, restauração por sha256 do arquivo
+inteiro — a recusa de pool ausente, a origem fora do filtro de moldura, a queda da reservada, a
+contagem impressa dela, e a selecção da CLI. Lab 986 passed / 972 subtests. Sobre o material real:
+default em `candidates-f3` colhe 4.614 com 66 caídas, dedup remove zero, constrói 4.100; default em
+`CAND` recusa nomeando o path.
+
+### Referências
+
+Nada de novo.
