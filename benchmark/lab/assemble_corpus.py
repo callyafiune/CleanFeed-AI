@@ -3826,6 +3826,19 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
 HUMAN_POOL_FILES: tuple[str, ...] = ("wikipedia_fresh_v2",)
 
 
+class ReservedTextDiffersFromThePool(RuntimeError):
+    """Uma reservada ELEGIVEL colide com um id que um pool ja anexou, e o texto difere.
+
+    A queda da reservada colidente e segura sob UMA condicao, e ela foi medida: as 66
+    colisoes do material real tem texto IDENTICO, o que torna a copia reservada
+    descartavel — ela nao carrega licenca de documento e `human_record` recusa-a de todo
+    modo. Derrubar por igualdade de ID sozinha nao e essa condicao: com textos distintos, a
+    linha reservada desaparece e nada no resultado diz que houve escolha. Duas linhas
+    diferentes sob um id e um conflito de material, e escolher uma delas em silencio e a
+    familia de defeito que a queda existe para fechar.
+    """
+
+
 class MissingHumanPool(RuntimeError):
     """Um pool humano PEDIDO nao esta no diretorio de candidatos.
 
@@ -3865,6 +3878,7 @@ def load_humans(
     cand: Path = CAND,
     reserved: Path | None = None,
     pools: tuple[str, ...] = HUMAN_POOL_FILES,
+    collision_sink: list | None = None,
 ) -> list[dict]:
     """Fresh pools + reserved-clean humans, each tagged with its quota cell.
 
@@ -3937,20 +3951,35 @@ def load_humans(
     for f in ("mixed_candidates.jsonl", "mixed_from_pairs.jsonl"):
         for r in read_jsonl(cand / f):
             parents.add(r["parentId"])
-    # A RESERVADA CUJO ID UM POOL JA OFERECE CAI AQUI, e nao se recusa: medido no
-    # material real, 66 dos 4.054 ids das reservadas sao tambem ids do pool de registro,
-    # com TEXTO IDENTICO nos 66 — recusar bloquearia a montagem. Deixar as duas entrarem
-    # poe a ORDEM a decidir qual sobrevive ao dedup por texto, e a copia reservada e a que
+    # A RESERVADA CUJO ID UM POOL JA ANEXOU CAI AQUI, e nao se recusa: medido no material
+    # real, 66 dos 4.054 ids das reservadas sao tambem ids do pool de registro, com TEXTO
+    # IDENTICO nos 66 — recusar bloquearia a montagem. Deixar as duas entrarem poe a ORDEM
+    # a decidir qual sobrevive ao dedup por texto, e a copia reservada e a que
     # `human_record` recusa (nao carrega licenca de documento), logo a ordem inversa
     # perderia as 66 linhas em silencio.
-    reservadas_que_um_pool_ja_oferece = 0
+    #
+    # A ELEGIBILIDADE VEM PRIMEIRO. Contar a colisao antes dos predicados reportava perda
+    # onde nao havia — uma reservada de `label` 1 nunca seria anexada — e tirava-lhes a
+    # palavra sobre a linha, que e invariante que existia antes desta guarda.
+    textos_anexados: dict[str, str] = {r["candidateId"]: r["text"] for r in rows}
     for r in read_jsonl(reserved if reserved is not None else DATASET / "reserved.jsonl"):
-        if r["id"] in oferecidos:
-            reservadas_que_um_pool_ja_oferece += 1
-            continue
         if r.get("label") == 0 and r["id"] not in parents:
             fam = r.get("family", "?")
             if fam in REGISTER:
+                if r["id"] in oferecidos:
+                    anexado = textos_anexados[r["id"]]
+                    if r["text"] != anexado:
+                        raise ReservedTextDiffersFromThePool(
+                            f"a reservada {r['id']!r} colide com um id que um pool ja "
+                            "anexou e o TEXTO difere: duas linhas distintas sob um id sao "
+                            "conflito de material, e derrubar uma delas por igualdade de "
+                            "id apagaria conteudo em silencio"
+                        )
+                    if collision_sink is not None:
+                        collision_sink.append(
+                            {"candidateId": r["id"], "pool": str(origem[r["id"]])}
+                        )
+                    continue
                 rows.append(
                     {
                         "candidateId": r["id"],
@@ -3969,11 +3998,6 @@ def load_humans(
                         "meta": {},
                     }
                 )
-    if reservadas_que_um_pool_ja_oferece:
-        print(
-            f"reservadas que um pool ja oferece, caidas no load: "
-            f"{reservadas_que_um_pool_ja_oferece}"
-        )
     return rows
 
 
@@ -5159,15 +5183,22 @@ def main() -> None:
     )
 
     seen: set[str] = set()
+    colisoes_de_reservadas: list[dict] = []
     humans = dedup(
         load_humans(
             args.candidates_dir,
             args.reserved,
             human_pool_selection(args.human_pool),
+            collision_sink=colisoes_de_reservadas,
         ),
         lambda r: r["text"],
         seen,
     )
+    if colisoes_de_reservadas:
+        print(
+            f"reservadas caidas por id que um pool ja anexou: "
+            f"{len(colisoes_de_reservadas)}"
+        )
     ai = dedup(load_ai(args.candidates_dir), lambda r: r["text"], seen)
     mixed = dedup(load_mixed(args.candidates_dir), lambda r: r["text"], seen)
     print(f"pools (dedup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")

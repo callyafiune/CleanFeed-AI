@@ -13011,3 +13011,54 @@ quando ele correu.
 ### Referências
 
 Nada de novo.
+
+## R2 do cross-review: REPROVA, e o achado principal é a minha prosa mais forte que o código (2026-08-25)
+
+Segunda rodada de codex sobre `a7a0e70`+`d180d38` (`EXIT=0`, 142 mil tokens, com dois revisores
+internos e três contraexemplos executados). **REPROVA**, ordem 2 → 5 → 7 → 6. Confirmou a separação
+`origem`/`oferecidos` (item 1) e a cobertura de `MissingHumanPool` (item 3), e refutou quatro.
+
+**2 — a queda derrubava por ID enquanto a minha justificativa era TEXTO IDÊNTICO.** Este é o achado que
+importa, e é a família de defeito que esta árvore já nomeou: a prosa afirmava uma condição que o código
+não impunha. Eu registrei «66 colisões, texto idêntico nos 66» como razão para derrubar, e escrevi um
+`if r["id"] in oferecidos` que aceita `pools`/`reserved` arbitrários. O revisor reproduziu: mesmo id com
+textos distintos, só a linha do pool volta e a reservada desaparece sem sinal. O teste que eu tinha
+plantava exclusivamente textos iguais, logo não podia pegar. Consertado: a queda exige igualdade de
+texto, e **texto divergente recusa** (`ReservedTextDiffersFromThePool`) — duas linhas distintas sob um
+id são conflito de material, e escolher uma por igualdade de id apaga conteúdo.
+
+**5 — a contagem corria antes da elegibilidade, e isso afrouxava uma invariante de `39556dd`.**
+Reproduzido: uma reservada de `label` 1 era contada como caída embora nunca fosse anexada. Pior do que
+o número errado é o que ele denuncia — em `39556dd` toda reservada elegível passava pelos predicados, e
+a minha guarda interrompia antes deles. A elegibilidade voltou para a frente; a colisão só é avaliada
+sobre linha que seria anexada.
+
+**6 — `print` dentro de um loader.** Aceito: estatística que só existe como texto obriga o chamador a
+ler stdout, e o próprio teste tinha de redirecionar stdout para a observar. A saída passa por um
+`collision_sink` — o idioma que `human_record(..., evidence_sink=...)` já usa neste arquivo —, `main`
+imprime, e o sink **nomeia** as linhas em vez de as contar, o que resolve de graça o «linhas ou ids?»
+que o revisor também levantou.
+
+**7 — três afirmações minhas no ESTADO estavam falsas ou ambíguas:** «três recusas» sobre duas
+enumeradas; «todas contadas», falso pelo item 5; «ausência de arquivo» posta sob a mesma razão de dedup
+que não a explica; o resíduo dos fixtures descrito como `[]` silencioso quando `MissingHumanPool` já o
+tornou recusa; e «default colhe 4.100» sem dizer sobre qual diretório. Corrigidas as cinco. As duas
+frases que eu tinha corrigido na R1 — `IN_FRAME_POOLS` só com `--in-frame-pools`, e
+`load_ai`/`load_mixed` a silenciar ausente — foram **confirmadas** como verdadeiras.
+
+**4 — `pools=()` passa.** Confirmado que a produção não o alcança: sem a flag, `human_pool_selection`
+devolve a default não vazia. Fica como configuração legítima de «só reservadas», que é o que um teste
+usa, e **não** se recusa — declarado aqui em vez de fechado.
+
+**A prova:** bateria de três mutações, três mortas, restauração por sha256 — a recusa por texto
+divergente, o registro no sink, e a elegibilidade antes da colisão. Lab 989 passed / 972 subtests.
+Material real inalterado: 66 quedas, todas de texto idêntico, dedup remove zero, constrói 4.100.
+
+**O que as duas rodadas ensinaram, e vale além desta unidade:** os dois achados mais graves das duas
+foram meus e do mesmo tipo — uma condição afirmada em prosa e não imposta em código (a default que
+apontava para arquivo ausente; a queda por id sob justificativa de texto). Nenhuma bateria de mutação
+pega isso, porque a mutação testa o que o código diz, não o que a prosa promete.
+
+### Referências
+
+Nada de novo.

@@ -713,7 +713,9 @@ class OCaminhoDasReservadas(unittest.TestCase):
         import inspect
 
         parametros = list(inspect.signature(ac.load_humans).parameters)
-        self.assertEqual(parametros, ["cand", "reserved", "pools"])
+        self.assertEqual(
+            parametros, ["cand", "reserved", "pools", "collision_sink"]
+        )
 
     def test_reservada_de_um_caminho_dado_entra_no_pool(self) -> None:
         import json

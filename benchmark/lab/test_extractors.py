@@ -3579,12 +3579,16 @@ class HumanPoolSelectionTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            colisoes: list[dict] = []
             saida = io.StringIO()
             with contextlib.redirect_stdout(saida):
-                colhidas = load_humans(cand, reservada)
-        # A QUEDA E CONTADA, e nao silenciosa: queda sem numero e a familia de defeito
-        # que esta unidade existe para fechar.
-        self.assertIn("caidas no load: 1", saida.getvalue())
+                colhidas = load_humans(cand, reservada, collision_sink=colisoes)
+        # A QUEDA E REGISTRADA NO SINK, e nao no stdout: estatistica que so existe como
+        # texto impresso obriga o chamador a ler stdout para saber o que aconteceu, e o
+        # proprio teste tinha de redirecionar stdout para a observar. O sink nomeia as
+        # linhas, entao a contagem e derivada e "linha ou id?" deixa de ser ambiguo.
+        self.assertEqual([c["candidateId"] for c in colisoes], ["src_partilhado"])
+        self.assertEqual(saida.getvalue(), "")
         contagem = Counter(r["candidateId"] for r in colhidas)
         self.assertEqual(contagem["src_partilhado"], 1)
         self.assertEqual(contagem["src_so_da_reserva"], 1)
@@ -3628,6 +3632,68 @@ class HumanPoolSelectionTests(unittest.TestCase):
             )
             colhidas = load_humans(cand, reservada)
         self.assertEqual([r["candidateId"] for r in colhidas], ["src_colide"])
+
+    def test_a_colliding_reserved_row_whose_TEXT_DIFFERS_refuses(self) -> None:
+        from assemble_corpus import (
+            HUMAN_POOL_FILES,
+            ReservedTextDiffersFromThePool,
+            load_humans,
+        )
+
+        # A QUEDA SO E SEGURA SOB A CONDICAO QUE A MEDICAO ESTABELECEU. As 66 colisoes do
+        # material real tem TEXTO IDENTICO, e e isso que torna a copia reservada
+        # descartavel. Derrubar por id sozinho apagaria material: com textos distintos, a
+        # linha reservada desaparece e nada diz que houve escolha.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_partilhado"])
+            reservada = cand / "reservada.jsonl"
+            reservada.write_text(
+                json.dumps(
+                    {
+                        "id": "src_partilhado",
+                        "text": PROSE_60 + " outro corpo",
+                        "label": 0,
+                        "family": "ptwiki_lead",
+                        "wordCount": 62,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ReservedTextDiffersFromThePool) as erro:
+                load_humans(cand, reservada)
+        self.assertIn("src_partilhado", str(erro.exception))
+
+    def test_an_INELIGIBLE_colliding_reserved_row_is_not_counted_as_dropped(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        # A ELEGIBILIDADE VEM ANTES DA COLISAO, e a ordem inversa afrouxava uma invariante:
+        # uma reservada de `label` 1 nunca seria anexada, entao contar a colisao dela como
+        # "queda" reporta uma perda que nao houve — e interromper antes dos predicados
+        # tirava-lhes a palavra sobre a linha.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_partilhado"])
+            reservada = cand / "reservada.jsonl"
+            reservada.write_text(
+                json.dumps(
+                    {
+                        "id": "src_partilhado",
+                        "text": PROSE_60 + " corpo bem diferente",
+                        "label": 1,
+                        "family": "ptwiki_lead",
+                        "wordCount": 63,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            colisoes: list[dict] = []
+            colhidas = load_humans(cand, reservada, collision_sink=colisoes)
+        # Nem queda contada, nem recusa: a linha nao entraria de nenhum modo.
+        self.assertEqual(colisoes, [])
+        self.assertEqual([r["candidateId"] for r in colhidas], ["src_partilhado"])
 
     def test_the_selection_main_opens_is_the_flag_or_the_default(self) -> None:
         from assemble_corpus import HUMAN_POOL_FILES, human_pool_selection
