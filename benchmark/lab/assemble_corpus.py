@@ -3886,10 +3886,18 @@ def load_humans(
     "Descarte", and reading from a fresh directory is how C2 proves the identity
     comes out right end to end without destroying the evidence of the diagnosis."""
     rows: list[dict] = []
-    # A ORIGEM E CONTADA SOBRE TODA LINHA LIDA, e nao sobre as que passam `REGISTER`:
-    # identidade de material nao depende da moldura, e a jusante do filtro o mesmo id num
-    # pool em moldura e noutro fora dela nao levantava em nenhuma das duas ordens.
+    # DUAS PERGUNTAS, DOIS CONJUNTOS, e confundi-los custou uma linha do corpus.
+    #
+    # `origem` responde «que arquivo OFERECE este id?» e e contada sobre TODA linha lida,
+    # porque identidade de material nao depende da moldura: a jusante do filtro, o mesmo id
+    # num pool em moldura e noutro fora dela nao levantava em nenhuma das duas ordens.
+    #
+    # `oferecidos` responde «este id JA ENTROU em `rows`?» e e o conjunto das linhas de
+    # facto anexadas. E ele, e nao `origem`, que decide a queda da reservada: uma linha de
+    # pool que `REGISTER` descartou nao entrou, e derrubar a reservada de mesmo id tirava o
+    # documento do corpus por inteiro enquanto a contagem dizia que um pool o oferecia.
     origem: dict[str, Path] = {}
+    oferecidos: set[str] = set()
     for fname in pools:
         arquivo = cand / f"{fname}.jsonl"
         if not arquivo.exists():
@@ -3909,6 +3917,7 @@ def load_humans(
                 )
             origem[r["candidateId"]] = arquivo
             if r["domainSource"] in REGISTER:
+                oferecidos.add(r["candidateId"])
                 # NOTHING is stamped here, and the absence is the point. This loader knows
                 # which FILE it opened, and a file is not an execution: `CandidateWriter`
                 # takes `append=True`/`start_sequence`, so one pool file can hold the lines
@@ -3936,7 +3945,7 @@ def load_humans(
     # perderia as 66 linhas em silencio.
     reservadas_que_um_pool_ja_oferece = 0
     for r in read_jsonl(reserved if reserved is not None else DATASET / "reserved.jsonl"):
-        if r["id"] in origem:
+        if r["id"] in oferecidos:
             reservadas_que_um_pool_ja_oferece += 1
             continue
         if r.get("label") == 0 and r["id"] not in parents:

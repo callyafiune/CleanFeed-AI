@@ -3592,6 +3592,43 @@ class HumanPoolSelectionTests(unittest.TestCase):
         do_pool = next(r for r in colhidas if r["candidateId"] == "src_partilhado")
         self.assertIn("licenseId", do_pool)
 
+    def test_a_reserved_row_is_NOT_dropped_by_a_pool_row_the_frame_FILTERED_OUT(
+        self,
+    ) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        # DUAS PERGUNTAS, DOIS CONJUNTOS. A recusa de sobreposicao pergunta «que arquivo
+        # OFERECE este id?» e corre sobre toda linha lida, porque identidade de material
+        # nao depende da moldura. A queda da reservada pergunta «este id JA ENTROU?» e tem
+        # de correr sobre as linhas de facto anexadas: uma linha de pool que `REGISTER`
+        # descartou nao entrou, logo nao pode derrubar a reservada de mesmo id — o
+        # documento sairia do corpus por inteiro e a contagem diria que um pool o oferecia.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            (cand / f"{HUMAN_POOL_FILES[0]}.jsonl").write_text(
+                json.dumps(
+                    dict(self._row("src_colide"), domainSource="b2w_reviews")
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            reservada = cand / "reservada.jsonl"
+            reservada.write_text(
+                json.dumps(
+                    {
+                        "id": "src_colide",
+                        "text": PROSE_60,
+                        "label": 0,
+                        "family": "ptwiki_lead",
+                        "wordCount": 60,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            colhidas = load_humans(cand, reservada)
+        self.assertEqual([r["candidateId"] for r in colhidas], ["src_colide"])
+
     def test_the_selection_main_opens_is_the_flag_or_the_default(self) -> None:
         from assemble_corpus import HUMAN_POOL_FILES, human_pool_selection
 

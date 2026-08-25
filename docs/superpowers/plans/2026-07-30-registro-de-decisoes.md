@@ -12994,6 +12994,20 @@ contagem impressa dela, e a selecção da CLI. Lab 986 passed / 972 subtests. So
 default em `candidates-f3` colhe 4.614 com 66 caídas, dedup remove zero, constrói 4.100; default em
 `CAND` recusa nomeando o path.
 
+### E um defeito que o conserto do achado 2 introduziu, achado por mim no mesmo dia
+
+Mover a contagem de origem para fora do filtro de moldura foi certo para a RECUSA e errado para a
+QUEDA, porque as duas perguntas não são a mesma e eu as apoiei no mesmo conjunto. «Que arquivo oferece
+este id?» corre sobre toda linha lida; «este id já entrou em `rows`?» corre sobre as de facto
+anexadas. Com o conjunto único, uma linha de pool que `REGISTER` descartou derrubava a reservada de
+mesmo id — **reproduzido: 0 linhas colhidas onde a reservada era a única candidata** —, e a contagem
+impressa dizia que um pool oferecia o documento que ninguém oferecia. Dois conjuntos, `origem` e
+`oferecidos`, e duas mutações a provar a distinção.
+
+**A lição de forma:** a mesma estrutura de dados a responder duas perguntas parecidas é onde o
+conserto de um achado planta o seguinte. O cross-review não teria pegado isto — o caso não existia
+quando ele correu.
+
 ### Referências
 
 Nada de novo.
