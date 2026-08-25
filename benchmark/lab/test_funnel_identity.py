@@ -271,6 +271,27 @@ class ALigacaoAlcancaAsDuasClasses(unittest.TestCase):
         self.assertEqual(len(kept), 2)
         self.assertEqual(absent["parent-absent"], 0)
 
+    def test_a_ligacao_e_IDEMPOTENTE_e_a_segunda_passagem_nao_orfana(self) -> None:
+        # MEDIDO antes de existir: depois da primeira passagem `named_seed_identity`
+        # devolve o CARIMBO, que e a identidade, e um mapa chaveado so por referencias
+        # nao o encontrava — a segunda chamada reportava `unresolved: 1` e o corte de
+        # orfas dropava uma geracao que a primeira tinha resolvido.
+        colidente = self._ai("src_ptwiki_p1", "src_ptwiki_ausente")
+        humans = [human_candidate("src_ptwiki_p1", "pagina_1")]
+        gerada = self._ai("src_ai_0002", "src_ptwiki_p1")
+        ai = [colidente, gerada]
+        ac.enforce_unique_keys([ai, [], humans])
+        primeira = ac.link_derived_to_parents(ai, [], humans)
+        segunda = ac.link_derived_to_parents(ai, [], humans)
+        self.assertEqual(primeira["resolved"], 1)
+        self.assertEqual(segunda["resolved"], 1)
+        self.assertEqual(segunda["unresolved"], primeira["unresolved"])
+        # E o repontamento conta UMA vez: a segunda passagem nao move nada.
+        self.assertEqual(primeira["repointed"], 1)
+        self.assertEqual(segunda["repointed"], 0)
+        ai_left, _mixed, _orphans = ac.drop_orphan_derived_rows(humans, ai, [])
+        self.assertIn(gerada, ai_left)
+
     def test_semente_que_resolve_em_DUAS_humanas_RECUSA(self) -> None:
         humans = [
             human_candidate("src_ptwiki_p1", "pagina_1"),

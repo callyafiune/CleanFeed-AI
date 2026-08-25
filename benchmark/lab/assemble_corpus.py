@@ -4201,11 +4201,16 @@ def link_derived_to_parents(
     linha derivada, e `unresolved` e o que o corte de orfas vai tirar.
     """
     counts = {"resolved": 0, "repointed": 0, "unresolved": 0}
+    # CHAVEADO PELA REFERENCIA **E** PELA IDENTIDADE, e a segunda chave e o que faz desta
+    # funcao idempotente: depois da primeira passagem `named_seed_identity` devolve o
+    # carimbo, que e a IDENTIDADE, e um mapa so de referencias nao o encontraria — a
+    # segunda chamada reportaria como orfa uma linha que a primeira resolveu, e o corte
+    # de orfas dropava uma geracao boa. Medido antes de existir.
     identity_by_reference: dict[str, list[str]] = {}
     for human in humans:
-        identity_by_reference.setdefault(
-            group_axes.axis_token(human["candidateId"]), []
-        ).append(funnel_key(human))
+        identidade = funnel_key(human)
+        for chave in {group_axes.axis_token(human["candidateId"]), identidade}:
+            identity_by_reference.setdefault(chave, []).append(identidade)
     for row in ai:
         seed = named_seed_identity(row)
         if seed is None:
