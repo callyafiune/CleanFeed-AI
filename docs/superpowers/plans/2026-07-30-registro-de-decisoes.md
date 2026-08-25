@@ -13152,3 +13152,157 @@ Material real inalterado: 66 quedas com 66 ordinais distintos, dedup remove zero
 ### Referências
 
 Nada de novo.
+
+## R5: REPROVA, e a solução é uma autoridade só — a regra que eu escrevi na R4 tinha o buraco (2026-08-25)
+
+Quinta rodada de codex sobre `da01329` (`gpt-5.6-sol`, `xhigh`, `--sandbox read-only`, `EXIT=0`,
+dezenove comandos de vinte), pedida pelo operador com uma pergunta que as quatro anteriores não
+tinham: **existe solução definitiva, ou cada conserto vai continuar a abrir o seguinte?** Veredito
+**REPROVA**, e ele acertou no que mais importava. O que segue é a arbitragem, e a maior parte da
+medição é minha porque a dele não podia existir: **o sandbox read-only não tem diretório temporário
+utilizável**, e as fixtures deste arquivo são todas `tempfile` — ele leu, não reproduziu. Fica
+registado como limitação do método, não dele.
+
+### Primeiro, a pergunta do operador respondida como pergunta de facto
+
+«A R4 ainda está como REPROVA?» — sim, e o veredito dela não muda: é história. O que não existia era
+uma rodada que **validasse** o conserto da R4, e o padrão que ela própria registrou (três de quatro
+rodadas acharam regressão do conserto anterior) tornava a suspeita do operador a hipótese certa.
+
+### O defeito alto, e as duas medições concordam
+
+**A publicação da queda dependia do retorno normal do chamador.** `main` passa o sink e consome-o
+**depois** do retorno; o piso do loader calava-se por haver sink. Então uma queda válida seguida de
+recusa por texto divergente ficava **decidida e não publicada em canal nenhum**. Medido no sítio de
+produção, com o teste novo a falhar contra `da01329`: `stdout` vazio. O codex chegou ao mesmo ponto
+por leitura e chamou-lhe «V5 não imposta fim a fim».
+
+**E ele corrigiu-me numa coisa que eu tinha dito ao operador:** isto **não** é regressão do conserto
+da R4. Antes dela o `extend` no fim também não corria no abort, então a fronteira de `main` estava
+igualmente quebrada. O conserto da R4 fortaleceu o sink e **deixou a fronteira incompleta** — o que
+quebra o padrão em vez de o continuar: a R4 não plantou nada. Eu tinha escrito «o defeito da R4
+sobreviveu um nível acima», e a formulação certa é «a R4 não fechou a fronteira que existia antes
+dela».
+
+### O defeito grave, e este é meu e só meu — o codex não o viu
+
+**Duas reservadas sob o mesmo id, nenhuma delas oferecida por pool, entravam AS DUAS em silêncio.**
+Medido: 3 linhas colhidas, `{'src_do_pool': 1, 'src_repetido': 2}`, textos diferentes, sink vazio,
+stdout vazio. E a jusante não morre — é pior: `enforce_unique_keys` **renomeia** a segunda
+(`src_repetido` → `src_repetido_ee7ebd4a`), então **duas linhas humanas viram dois documentos**, e o
+`main` anuncia isso como `"ids desambiguados (colisao entre lanes): 1"`. Não houve lane nenhuma: é
+material humano reservado. A desambiguação existe para o caso legítimo de duas lanes `ai` que pediram
+o mesmo pai; aplicada a material humano, ela **fabrica um documento** onde a identidade oferecia um.
+
+Isto passou nas quatro rodadas porque **não estava na lista de invariantes que eu dei ao revisor** —
+eu enumerei seis, e as seis eram sobre os pareamentos que já tinham guarda. A lição de método: uma
+lista de invariantes escrita por quem fez o conserto herda os pontos cegos do conserto.
+
+Incidência no material de hoje: **zero**. `reserved.jsonl` tem 4.054 registros e 4.054 ids distintos,
+medido. É exactamente o mesmo padrão com que a R2 construiu a recusa por texto divergente para um
+caso que também não ocorre — 66 colisões, 66 textos idênticos, zero divergentes.
+
+### O mecanismo, e é a resposta à pergunta «existe solução definitiva?»
+
+As duas medições convergem no mesmo diagnóstico. O codex: «efeito colateral fora do retorno com
+autoridade repartida e publicação dependente do retorno normal do chamador». Eu, pelo outro lado: a
+**unicidade de identidade não tinha autoridade única** — estava em `origem` (pool contra pool), em
+`oferecidos` + `textos_anexados` (pool contra reservada) e em **ninguém** (reservada contra
+reservada). Cinco peças de estado, e cada rodada moveu uma e quebrou outra.
+
+**A raiz, dita exactamente:** `oferecidos` era povoado só no laço dos pools e **nunca actualizado
+quando uma reservada era anexada**. O buraco não era uma perna que faltava — era a consequência de o
+conjunto responder por metade das anexações.
+
+**A solução, e ela é definitiva na parte que importa:** um dicionário `admitidos`, que mapeia o id
+para a coordenada que o detém e o texto que entrou, actualizado em **toda** anexação. O pareamento
+reservada-contra-reservada fecha **por construção** e não por uma terceira guarda — a segunda
+reservada cai no mesmo ramo em que a primeira colisão com pool já caía, e a regra que se aplica é a
+mesma: texto idêntico cai registado, texto divergente recusa. **Uma regra, sem caso especial**, que é
+a propriedade que faz a cadeia parar. `origem` continua a existir e não se confunde com ela: responde
+sobre toda linha lida, admitida ou não.
+
+E a fronteira da publicação passou a ser do loader: o piso imprime quando **não há sink OU quando a
+corrida aborta**. As duas condições são exclusivas do retorno normal com sink, logo nunca há
+publicação dupla — e a invariante deixou de depender de o chamador ter a decência de ler a lista.
+
+### Onde eu discordo do codex, e a razão é o custo contado
+
+Ele propôs um **publicador de eventos obrigatório e síncrono** no lugar do sink, e contou 22 sítios de
+chamada (1 produtivo, 21 em testes, 17 dos quais hoje omitem o sink). A contagem dele está certa e a
+minha estava errada: eu disse ao operador «quatro sítios de produção» e três deles eram a
+`load_humans` **homónima** de `generate_ai.py`, que tem outra assinatura — o `codex_batch` importa
+essa. **Um** sítio de produção.
+
+Mas a proposta não paga, e o motivo é que ela resolve a metade errada: um publicador obrigatório não
+fecha o buraco da identidade, e a fronteira da publicação fecha-se **dentro do loader** com zero
+sítios de chamada tocados. Vinte e dois sítios para obter a mesma garantia que uma condição num
+`finally` já dá é o negócio que a regra da R4 recusa — e aqui ela recusa bem.
+
+### A LACUNA NA REGRA, e as duas medições dizem a mesma coisa
+
+A regra que eu escrevi na R4 — **«defeito medido conserta-se, forma não»** — tem o buraco que o
+operador suspeitou, e o codex nomeou-o sem eu lho apontar: ela **não decide o caso em que o defeito
+medido nasce da própria forma**, e nesse caso ela chega a **proibir a correcção definitiva**. Foi o
+que quase aconteceu: o defeito grave desta rodada só se conserta trocando a forma (um conjunto por um
+dicionário com autoridade única), e a leitura literal da regra da R4 mandaria declará-lo e não o
+fechar.
+
+**A emenda, e é ela que fica valendo:**
+
+> Defeito medido conserta-se **sempre**, inclusive quando o conserto exige trocar a forma. O que a
+> regra recusa é troca de forma **sem defeito medido**, e troca de forma cujo custo cai na
+> **fronteira** (assinatura, sítios de chamada) quando existe uma que o não faz. A pergunta certa não
+> é «isto é defeito ou forma?» — é «qual é a forma mais barata que impõe a invariante, e onde cai o
+> custo dela?».
+
+Sob a emenda, as três sugestões que a R4 declarou e não aplicou continuam recusadas — e agora pela
+razão certa, que é o custo na fronteira e não a categoria a que pertencem.
+
+### A REGRA DE PARADA, que é o que faltava
+
+O codex propôs, e eu adopto: **matriz executável** das invariantes contra `{retorno normal, abort
+posterior} × {sem sink, sink directo, main}`, exigindo evidência observável para toda queda **já
+decidida**, mais mutante morto para cada predicado, cada ordem e cada fronteira de publicação. Ele diz
+que `da01329` **não a satisfaz**, e tem razão: as duas células de abort não tinham caso nenhum.
+
+Depois desta unidade as células estão cobertas — abort sem sink (piso imprime), abort com sink (piso
+imprime), retorno normal sem sink (piso imprime), retorno normal com sink (sink e stdout vazio, e o
+mutante que remove `abortou = False` morre por publicação dupla), `main` normal e `main` com abort. A
+condição de fecho é **verificável e está verificada**, e é isso que autoriza fechar a unidade — não
+«mais uma rodada».
+
+### As duas contradições prosa/código, as duas confirmadas
+
+Ambas na § 3.3, e o codex achou as duas por leitura:
+
+- **prosa mais larga:** «`main` imprime a cardinalidade» e «a queda é publicada no canal que o
+  chamador escolheu» não valiam depois do abort. A segunda está **retratada** na § 3.3 e substituída
+  pela que o código impõe;
+- **código mais largo:** a prosa só declarava a sobreposição **entre** pools, e o código também
+  recusava id repetido **dentro** de um arquivo — nomeando o mesmo arquivo duas vezes e dando como
+  razão a ordem entre pools, que ali não existe. Recusar estava certo; a mensagem estava errada. As
+  duas bocas de `OverlappingHumanPools` estão agora declaradas e têm mensagem própria.
+
+`ReservedTextDiffersFromThePool` passou a chamar-se `ReservedTextDiffersFromTheAdmittedRow`, porque
+quem detém o id já não é necessariamente um pool. A entrada do sink trocou `pool` por **`heldBy`**,
+pela mesma razão: o valor pode nomear o arquivo das reservadas, e chamá-lo `pool` era prosa mais forte
+que o dado. Nenhum consumidor lia a chave — `main` só conta.
+
+### A prova
+
+Cinco casos novos escritos **antes** do conserto, os cinco vermelhos contra `da01329` — e o de `main`
+com `stdout` vazio, que é o achado alto no sítio de produção. Bateria de **seis** mutações, **seis
+mortas**, restauração por cópia integral conferida por sha256 e `git status` limpo dos dois arquivos
+esperados: a admissão da reservada fora de `admitidos`, o ramo do id repetido no mesmo arquivo, o
+`abortou = False` (que mata por publicação **dupla**), o piso sem `or abortou`, a igualdade de texto, e
+a coordenada da reservada a nomear o pool.
+
+Lab **1001 passed / 972 subtests**. Material real inalterado, medido depois do conserto: `load_humans`
+devolve **4.614**, **66** quedas com **66** ordinais distintos e `heldBy` a nomear
+`candidates-f3/wikipedia_fresh_v2.jsonl` nas 66, o dedup remove **zero**, e a montagem constrói
+**4.100**.
+
+### Referências
+
+Nada de novo.

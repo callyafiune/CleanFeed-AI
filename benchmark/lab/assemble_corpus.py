@@ -3826,14 +3826,18 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
 HUMAN_POOL_FILES: tuple[str, ...] = ("wikipedia_fresh_v2",)
 
 
-class ReservedTextDiffersFromThePool(RuntimeError):
-    """Uma reservada ELEGIVEL colide com um id que um pool ja anexou, e o texto difere.
+class ReservedTextDiffersFromTheAdmittedRow(RuntimeError):
+    """Uma reservada ELEGIVEL colide com um id JA ADMITIDO, e o texto difere.
 
-    A queda da reservada colidente e segura sob UMA condicao, e ela foi medida: as 66
-    colisoes do material real tem texto IDENTICO, o que torna a copia reservada
-    descartavel — ela nao carrega licenca de documento e `human_record` recusa-a de todo
-    modo. Derrubar por igualdade de ID sozinha nao e essa condicao: com textos distintos, a
-    linha reservada desaparece e nada no resultado diz que houve escolha. Duas linhas
+    A linha ja admitida pode vir de um pool ou do PROPRIO arquivo das reservadas, e a
+    regra e a mesma nos dois casos: o que decide e «este id ja entrou», e nao de que
+    arquivo veio quem entrou.
+
+    A queda da linha colidente e segura sob UMA condicao, e ela foi medida: as 66
+    colisoes entre pool e reservada no material real tem texto IDENTICO, o que torna a
+    copia descartavel — ela nao carrega licenca de documento e `human_record` recusa-a de
+    todo modo. Derrubar por igualdade de ID sozinha nao e essa condicao: com textos
+    distintos, a linha desaparece e nada no resultado diz que houve escolha. Duas linhas
     diferentes sob um id e um conflito de material, e escolher uma delas em silencio e a
     familia de defeito que a queda existe para fechar.
     """
@@ -3854,13 +3858,17 @@ class MissingHumanPool(RuntimeError):
 
 
 class OverlappingHumanPools(RuntimeError):
-    """Dois pools da selecao oferecem o mesmo `candidateId`.
+    """Dois pools da selecao oferecem o mesmo `candidateId` — ou um arquivo o repete.
 
     NAO se deduplica em silencio: `dedup` colapsa por hash de TEXTO e guarda a PRIMEIRA
     ocorrencia, logo com pools sobrepostos e a ORDEM da tupla que decide qual linha
     sobrevive. Medido nos dois pools reais de `candidates-f3`: o texto e identico nos 4.100
     ids e a unica chave que difere e `meta.extractionRun`, entao a ordem decidiria entre
     4.100 registros e zero — e o resultado nao mudaria de forma visivel, so de contagem.
+
+    O ID REPETIDO DENTRO DE UM SO ARQUIVO cai aqui tambem, e tem mensagem propria: ali nao
+    ha sobreposicao de selecao nem ordem de pools que separe as duas linhas, entao a razao
+    que a outra boca da nao descreve este estado.
     """
 
 
@@ -3900,18 +3908,25 @@ def load_humans(
     "Descarte", and reading from a fresh directory is how C2 proves the identity
     comes out right end to end without destroying the evidence of the diagnosis."""
     rows: list[dict] = []
-    # DUAS PERGUNTAS, DOIS CONJUNTOS, e confundi-los custou uma linha do corpus.
+    # DUAS PERGUNTAS DIFERENTES, E NAO SE APOIAM NO MESMO CONJUNTO.
     #
-    # `origem` responde «que arquivo OFERECE este id?» e e contada sobre TODA linha lida,
-    # porque identidade de material nao depende da moldura: a jusante do filtro, o mesmo id
-    # num pool em moldura e noutro fora dela nao levantava em nenhuma das duas ordens.
+    # `origem` responde «que arquivo OFERECE este id?», e conta-se sobre TODA linha lida,
+    # admitida ou nao, porque identidade de material nao depende da moldura: contada so
+    # sobre as que passam `REGISTER`, o mesmo id num pool em moldura e noutro fora dela nao
+    # levanta em nenhuma das duas ordens.
     #
-    # `oferecidos` responde «este id JA ENTROU em `rows`?» e e o conjunto das linhas de
-    # facto anexadas. E ele, e nao `origem`, que decide a queda da reservada: uma linha de
-    # pool que `REGISTER` descartou nao entrou, e derrubar a reservada de mesmo id tirava o
-    # documento do corpus por inteiro enquanto a contagem dizia que um pool o oferecia.
+    # `admitidos` responde «este id JA ENTROU em `rows`?», e e A AUTORIDADE UNICA sobre a
+    # identidade das linhas devolvidas: mapeia o id para a coordenada que o DETEM e para o
+    # texto que entrou, e tem de ser actualizado em TODA anexacao — a de pool e a de
+    # reservada. E ele, e nao `origem`, que decide a queda da reservada: uma linha de pool
+    # que `REGISTER` descartou nao entrou, e derrubar a reservada de mesmo id tira o
+    # documento do corpus por inteiro. Povoado so no laco dos pools, o pareamento
+    # reservada-contra-reservada fica sem guarda nenhuma: duas reservadas sob um id entram
+    # as duas, `enforce_unique_keys` renomeia a segunda a jusante, e duas linhas humanas
+    # passam a ser dois documentos sob a contagem de «colisao entre lanes» — que nao e o
+    # que sao.
     origem: dict[str, Path] = {}
-    oferecidos: set[str] = set()
+    admitidos: dict[str, tuple[str, str]] = {}
     for fname in pools:
         arquivo = cand / f"{fname}.jsonl"
         if not arquivo.exists():
@@ -3922,6 +3937,13 @@ def load_humans(
             )
         for r in read_jsonl(arquivo):
             anterior = origem.get(r["candidateId"])
+            if anterior == arquivo:
+                raise OverlappingHumanPools(
+                    f"o candidato {r['candidateId']!r} aparece duas vezes no MESMO "
+                    f"arquivo `{arquivo}`: duas linhas sob um id sao conflito de material, "
+                    "e nao sobreposicao de selecao — nao existe ordem de pools que as "
+                    "separe"
+                )
             if anterior is not None:
                 raise OverlappingHumanPools(
                     f"o candidato {r['candidateId']!r} e oferecido por "
@@ -3931,7 +3953,7 @@ def load_humans(
                 )
             origem[r["candidateId"]] = arquivo
             if r["domainSource"] in REGISTER:
-                oferecidos.add(r["candidateId"])
+                admitidos[r["candidateId"]] = (str(arquivo), r["text"])
                 # NOTHING is stamped here, and the absence is the point. This loader knows
                 # which FILE it opened, and a file is not an execution: `CandidateWriter`
                 # takes `append=True`/`start_sequence`, so one pool file can hold the lines
@@ -3962,48 +3984,51 @@ def load_humans(
     # onde nao havia — uma reservada de `label` 1 nunca seria anexada — e tirava-lhes a
     # palavra sobre a linha, que e invariante que existia antes desta guarda.
     #
-    # A QUEDA E PUBLICADA NO CANAL QUE O CHAMADOR ESCOLHEU, e a alegacao e essa e nao mais
-    # larga: passar `collision_sink` e o chamador a afirmar que o le, e nao passa-lo faz a
-    # impressao ser o piso. Trocar a impressao pelo sink sozinho deixou `collision_sink=None`
-    # a derrubar sem sinal nenhum, medido: 66 quedas e stdout vazio.
+    # A PUBLICACAO NAO PODE DEPENDER DO RETORNO NORMAL DO CHAMADOR. Quem passa
+    # `collision_sink` consome-o depois do retorno — `main` inclusive —, entao no caminho de
+    # ABORT a queda ja decidida nao alcanca canal nenhum se o piso se calar por haver sink.
+    # O piso imprime quando NAO HA SINK ou quando a corrida ABORTA; as duas condicoes sao
+    # exclusivas do retorno normal com sink, logo nunca ha publicacao dupla.
     #
-    # O REGISTRO E INCREMENTAL, e a publicacao no fim perdia evidencia: com uma queda valida
-    # seguida de uma colisao de texto divergente, o `extend` no fim nunca corria e o sink
-    # ficava intocado — a evidencia parcial da queda que JA fora decidida desaparecia. A
-    # entrada entra no sink no momento em que e decidida, e a impressao vai num `finally`.
+    # O REGISTRO E INCREMENTAL pela mesma razao: publicada no fim do laco, a evidencia da
+    # queda ja decidida vai-se embora com o abort.
     #
     # `reservedRecord` e o ORDINAL DO REGISTRO nao vazio, nao a linha fisica: `read_jsonl`
     # descarta linha em branco antes de a contagem comecar. E o que distingue duas linhas sob
     # um mesmo id, que e para o que serve; quem quiser a coordenada fisica precisa de um
     # leitor que a devolva.
-    textos_anexados: dict[str, str] = {r["candidateId"]: r["text"] for r in rows}
+    #
+    # `heldBy` e a coordenada que DETEM o id, e nao se chama `pool` porque quem o detem pode
+    # ser o proprio arquivo das reservadas.
+    arquivo_reservadas = reserved if reserved is not None else DATASET / "reserved.jsonl"
     caidas: list[dict] = []
+    abortou = True
     try:
-        for indice, r in enumerate(
-            read_jsonl(reserved if reserved is not None else DATASET / "reserved.jsonl"),
-            start=1,
-        ):
+        for indice, r in enumerate(read_jsonl(arquivo_reservadas), start=1):
             if r.get("label") == 0 and r["id"] not in parents:
                 fam = r.get("family", "?")
                 if fam in REGISTER:
-                    if r["id"] in oferecidos:
-                        anexado = textos_anexados[r["id"]]
+                    detentor = admitidos.get(r["id"])
+                    if detentor is not None:
+                        coordenada, anexado = detentor
                         if r["text"] != anexado:
-                            raise ReservedTextDiffersFromThePool(
-                                f"a reservada {r['id']!r} colide com um id que um pool ja "
-                                "anexou e o TEXTO difere: duas linhas distintas sob um id sao "
-                                "conflito de material, e derrubar uma delas por igualdade de "
-                                "id apagaria conteudo em silencio"
+                            raise ReservedTextDiffersFromTheAdmittedRow(
+                                f"a reservada {r['id']!r} colide com um id que "
+                                f"`{coordenada}` ja anexou e o TEXTO difere: duas linhas "
+                                "distintas sob um id sao conflito de material, e derrubar "
+                                "uma delas por igualdade de id apagaria conteudo em "
+                                "silencio"
                             )
                         queda = {
                             "candidateId": r["id"],
-                            "pool": str(origem[r["id"]]),
+                            "heldBy": coordenada,
                             "reservedRecord": indice,
                         }
                         caidas.append(queda)
                         if collision_sink is not None:
                             collision_sink.append(queda)
                         continue
+                    admitidos[r["id"]] = (str(arquivo_reservadas), r["text"])
                     rows.append(
                         {
                             "candidateId": r["id"],
@@ -4022,9 +4047,10 @@ def load_humans(
                             "meta": {},
                         }
                     )
+        abortou = False
     finally:
-        if caidas and collision_sink is None:
-            print(f"reservadas caidas por id que um pool ja anexou: {len(caidas)}")
+        if caidas and (collision_sink is None or abortou):
+            print(f"reservadas caidas por id ja admitido: {len(caidas)}")
     return rows
 
 
@@ -5222,10 +5248,7 @@ def main() -> None:
         seen,
     )
     if colisoes_de_reservadas:
-        print(
-            f"reservadas caidas por id que um pool ja anexou: "
-            f"{len(colisoes_de_reservadas)}"
-        )
+        print(f"reservadas caidas por id ja admitido: {len(colisoes_de_reservadas)}")
     ai = dedup(load_ai(args.candidates_dir), lambda r: r["text"], seen)
     mixed = dedup(load_mixed(args.candidates_dir), lambda r: r["text"], seen)
     print(f"pools (dedup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")

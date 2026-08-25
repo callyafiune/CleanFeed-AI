@@ -3636,7 +3636,7 @@ class HumanPoolSelectionTests(unittest.TestCase):
     def test_a_colliding_reserved_row_whose_TEXT_DIFFERS_refuses(self) -> None:
         from assemble_corpus import (
             HUMAN_POOL_FILES,
-            ReservedTextDiffersFromThePool,
+            ReservedTextDiffersFromTheAdmittedRow,
             load_humans,
         )
 
@@ -3661,7 +3661,7 @@ class HumanPoolSelectionTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(ReservedTextDiffersFromThePool) as erro:
+            with self.assertRaises(ReservedTextDiffersFromTheAdmittedRow) as erro:
                 load_humans(cand, reservada)
         self.assertIn("src_partilhado", str(erro.exception))
 
@@ -3757,6 +3757,148 @@ class HumanPoolSelectionTests(unittest.TestCase):
         self.assertEqual([c["reservedRecord"] for c in colisoes], [1, 2])
         self.assertEqual({c["candidateId"] for c in colisoes}, {"src_partilhado"})
 
+    def test_two_reserved_lines_under_one_id_with_DIVERGENT_text_are_refused(
+        self,
+    ) -> None:
+        from assemble_corpus import (
+            HUMAN_POOL_FILES,
+            ReservedTextDiffersFromTheAdmittedRow,
+            load_humans,
+        )
+
+        # O PAREAMENTO RESERVADA-CONTRA-RESERVADA, que e o terceiro e o unico em que a
+        # colisao nao envolve pool. Sem ele, duas reservadas sob um id com textos diferentes
+        # entram as duas em silencio e `enforce_unique_keys` renomeia a segunda a jusante:
+        # duas linhas humanas viram dois documentos, contados como «colisao entre lanes».
+        # `reserved.jsonl` nao tem id repetido hoje — 4.054 registros, 4.054 ids —, entao
+        # isto prende a propriedade e nao o material.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_do_pool"])
+            reservada = cand / "reservada.jsonl"
+            reservada.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "id": "src_repetido",
+                            "text": texto,
+                            "label": 0,
+                            "family": "ptwiki_lead",
+                            "wordCount": 60,
+                        }
+                    )
+                    for texto in (PROSE_60, PROSE_60 + " corpo bem diferente")
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ReservedTextDiffersFromTheAdmittedRow) as capturado:
+                load_humans(cand, reservada)
+        self.assertIn("src_repetido", str(capturado.exception))
+
+    def test_two_reserved_lines_under_one_id_with_the_SAME_text_drop_ONE(self) -> None:
+        from assemble_corpus import HUMAN_POOL_FILES, load_humans
+
+        # A MESMA REGRA, e nao uma segunda: texto identico sob id ja admitido CAI e e
+        # registado, texto divergente RECUSA. Vale para a colisao com pool e para a
+        # colisao entre duas reservadas, porque o que decide e «este id ja entrou», e nao
+        # de que arquivo veio a linha que entrou. `heldBy` nomeia a coordenada que detem o
+        # id — e por isso nao se chama `pool`: aqui quem o detem e o proprio arquivo das
+        # reservadas.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_do_pool"])
+            reservada = cand / "reservada.jsonl"
+            uma = json.dumps(
+                {
+                    "id": "src_repetido",
+                    "text": PROSE_60,
+                    "label": 0,
+                    "family": "ptwiki_lead",
+                    "wordCount": 60,
+                }
+            )
+            reservada.write_text(uma + "\n" + uma + "\n", encoding="utf-8")
+            colisoes: list[dict] = []
+            colhidas = load_humans(cand, reservada, collision_sink=colisoes)
+        contagem = Counter(r["candidateId"] for r in colhidas)
+        self.assertEqual(contagem["src_repetido"], 1)
+        self.assertEqual([c["reservedRecord"] for c in colisoes], [2])
+        self.assertEqual(colisoes[0]["heldBy"], str(reservada))
+
+    def test_a_decided_drop_is_PRINTED_when_the_run_aborts_WITH_a_sink(self) -> None:
+        from assemble_corpus import (
+            HUMAN_POOL_FILES,
+            ReservedTextDiffersFromTheAdmittedRow,
+            load_humans,
+        )
+
+        # A FRONTEIRA DA PUBLICACAO NO CAMINHO DE ABORT. Quem passa o sink consome-o depois
+        # do retorno, entao uma queda valida seguida de recusa por texto divergente fica
+        # decidida e sem canal se o piso se calar por haver sink. O piso imprime no abort e
+        # nao imprime no retorno normal — a outra perna esta no teste da queda com sink, e
+        # e ela que prende a ausencia de publicacao dupla.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            self._write(cand, HUMAN_POOL_FILES[0], ["src_igual", "src_divergente"])
+            reservada = cand / "reservada.jsonl"
+            reservada.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "id": rid,
+                            "text": texto,
+                            "label": 0,
+                            "family": "ptwiki_lead",
+                            "wordCount": 60,
+                        }
+                    )
+                    for rid, texto in (
+                        ("src_igual", PROSE_60),
+                        ("src_divergente", PROSE_60 + " corpo bem diferente"),
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            colisoes: list[dict] = []
+            saida = io.StringIO()
+            with contextlib.redirect_stdout(saida):
+                with self.assertRaises(ReservedTextDiffersFromTheAdmittedRow):
+                    load_humans(cand, reservada, collision_sink=colisoes)
+        self.assertEqual([c["candidateId"] for c in colisoes], ["src_igual"])
+        self.assertIn("1", saida.getvalue())
+        self.assertIn("caidas", saida.getvalue())
+
+    def test_a_pool_file_that_repeats_a_candidateId_is_refused_naming_ONE_file(
+        self,
+    ) -> None:
+        from assemble_corpus import (
+            HUMAN_POOL_FILES,
+            OverlappingHumanPools,
+            load_humans,
+        )
+
+        # O ID REPETIDO DENTRO DE UM ARQUIVO SO recusa pela mesma excepcao da sobreposicao
+        # entre pools, e precisa de mensagem propria: aqui nao existe ordem de pools que
+        # separe as duas linhas, e nomear o arquivo duas vezes nao descreve o estado.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            arquivo = cand / f"{HUMAN_POOL_FILES[0]}.jsonl"
+            arquivo.write_text(
+                "\n".join(
+                    json.dumps(self._row("src_dup") | {"text": texto})
+                    for texto in (PROSE_60, PROSE_60 + " corpo bem diferente")
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(OverlappingHumanPools) as capturado:
+                load_humans(cand, cand / "sem-reservadas.jsonl")
+        mensagem = str(capturado.exception)
+        self.assertIn("no MESMO arquivo", mensagem)
+        self.assertEqual(mensagem.count(str(arquivo)), 1)
+
     def _reservada(self, cand: Path, **campos) -> Path:
         caminho = cand / "reservada.jsonl"
         linha = {
@@ -3805,7 +3947,7 @@ class HumanPoolSelectionTests(unittest.TestCase):
     def test_an_abort_after_a_valid_drop_KEEPS_the_evidence_of_that_drop(self) -> None:
         from assemble_corpus import (
             HUMAN_POOL_FILES,
-            ReservedTextDiffersFromThePool,
+            ReservedTextDiffersFromTheAdmittedRow,
             load_humans,
         )
 
@@ -3837,14 +3979,14 @@ class HumanPoolSelectionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             colisoes: list[dict] = []
-            with self.assertRaises(ReservedTextDiffersFromThePool):
+            with self.assertRaises(ReservedTextDiffersFromTheAdmittedRow):
                 load_humans(cand, reservada, collision_sink=colisoes)
         self.assertEqual([c["candidateId"] for c in colisoes], ["src_igual"])
 
     def test_an_abort_without_a_sink_still_PRINTS_the_drops_already_decided(self) -> None:
         from assemble_corpus import (
             HUMAN_POOL_FILES,
-            ReservedTextDiffersFromThePool,
+            ReservedTextDiffersFromTheAdmittedRow,
             load_humans,
         )
 
@@ -3875,7 +4017,7 @@ class HumanPoolSelectionTests(unittest.TestCase):
             )
             saida = io.StringIO()
             with contextlib.redirect_stdout(saida):
-                with self.assertRaises(ReservedTextDiffersFromThePool):
+                with self.assertRaises(ReservedTextDiffersFromTheAdmittedRow):
                     load_humans(cand, reservada)
         self.assertIn("caidas", saida.getvalue())
         self.assertIn("1", saida.getvalue())
@@ -9477,7 +9619,41 @@ class AssemblyRunTests(unittest.TestCase):
             )
             with contextlib.suppress(Exception):
                 self._main(tmp, seen_texts=[])
-        self.assertIn("reservadas caidas por id que um pool ja anexou: 1", self.stdout)
+        self.assertIn("reservadas caidas por id ja admitido: 1", self.stdout)
+
+    def test_main_PUBLISHES_a_decided_drop_even_when_the_run_ABORTS(self) -> None:
+        """O SITIO da fronteira: `main` passa o sink e consome-o DEPOIS do retorno.
+
+        Com uma queda valida seguida de recusa por texto divergente, `main` nunca alcanca a
+        propria impressao, entao a garantia tem de vir do loader. Asserir isto pelo chamador
+        directo prova o critério e nada sobre o sitio.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp)
+            (tmp / "dataset").mkdir(parents=True, exist_ok=True)
+            self._write(
+                tmp / "dataset" / "reserved.jsonl",
+                [
+                    {
+                        "id": "cand_ptwiki_lead_0000",
+                        "text": self._prose("hptwiki_lead0"),
+                        "label": 0,
+                        "family": "ptwiki_lead",
+                        "wordCount": 60,
+                    },
+                    {
+                        "id": "cand_ptwiki_lead_0001",
+                        "text": self._prose("hptwiki_lead1") + " corpo bem diferente",
+                        "label": 0,
+                        "family": "ptwiki_lead",
+                        "wordCount": 63,
+                    },
+                ],
+            )
+            with contextlib.suppress(Exception):
+                self._main(tmp, seen_texts=[])
+        self.assertIn("reservadas caidas por id ja admitido: 1", self.stdout)
 
     def test_a_pool_the_extractor_never_stamped_is_counted_out_by_the_run(self) -> None:
         """THE CALL SITE: the run guard bites from `main()`, not only from a direct call.
